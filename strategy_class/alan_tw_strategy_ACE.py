@@ -85,12 +85,12 @@ class AlanTWStrategyACE:
         dealer_self_net_buy_ratio = self.dealer_self_net_buy_shares / self.shares_outstanding
 
         # 計算累積買超比例
-        foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2, min_periods=1).sum()
-        foreign_net_buy_ratio_3d_sum = foreign_net_buy_ratio.rolling(3, min_periods=1).sum()
-        investment_trust_net_buy_ratio_2d_sum = investment_trust_net_buy_ratio.rolling(2, min_periods=1).sum()
-        investment_trust_net_buy_ratio_3d_sum = investment_trust_net_buy_ratio.rolling(3, min_periods=1).sum()
-        dealer_self_net_buy_ratio_2d_sum = dealer_self_net_buy_ratio.rolling(2, min_periods=1).sum()
-        dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3, min_periods=1).sum()
+        foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2).sum()
+        foreign_net_buy_ratio_3d_sum = foreign_net_buy_ratio.rolling(3).sum()
+        investment_trust_net_buy_ratio_2d_sum = investment_trust_net_buy_ratio.rolling(2).sum()
+        investment_trust_net_buy_ratio_3d_sum = investment_trust_net_buy_ratio.rolling(3).sum()
+        dealer_self_net_buy_ratio_2d_sum = dealer_self_net_buy_ratio.rolling(2).sum()
+        dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3).sum()
 
         # 外資條件
         foreign_top_1d_ratio = foreign_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -117,8 +117,8 @@ class AlanTWStrategyACE:
 
         net_buy_shares = (top15_buy_shares - top15_sell_shares) * 1000
         net_buy_ratio = net_buy_shares / self.shares_outstanding
-        net_buy_ratio_2d_sum = net_buy_ratio.rolling(2, min_periods=1).sum()
-        net_buy_ratio_3d_sum = net_buy_ratio.rolling(3, min_periods=1).sum()
+        net_buy_ratio_2d_sum = net_buy_ratio.rolling(2).sum()
+        net_buy_ratio_3d_sum = net_buy_ratio.rolling(3).sum()
 
         # 主力籌碼條件
         main_force_top_1d_buy = net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -142,14 +142,14 @@ class AlanTWStrategyACE:
                                        bias_60_range, bias_120_range, bias_240_range,
                                        new_high_days=120):
         """建立技術面條件"""
-        # 計算均線 (使用 finlab API)
-        ma3 = self.adj_close.average(3)
-        ma5 = self.adj_close.average(5)
-        ma10 = self.adj_close.average(10)
-        ma20 = self.adj_close.average(20)
-        ma60 = self.adj_close.average(60)
-        ma120 = self.adj_close.average(120)
-        ma240 = self.adj_close.average(240)
+        # 計算均線
+        ma3 = self.adj_close.rolling(3).mean()
+        ma5 = self.adj_close.rolling(5).mean()
+        ma10 = self.adj_close.rolling(10).mean()
+        ma20 = self.adj_close.rolling(20).mean()
+        ma60 = self.adj_close.rolling(60).mean()
+        ma120 = self.adj_close.rolling(120).mean()
+        ma240 = self.adj_close.rolling(240).mean()
 
         # 均線上升
         ma_up_buy_condition = (
@@ -216,7 +216,7 @@ class AlanTWStrategyACE:
         macd_dif_buy_condition = dif > dif.shift(1)
 
         # 創新高
-        high_n = self.adj_close.rolling(window=new_high_days, min_periods=1).max()
+        high_n = self.adj_close.rolling(window=new_high_days).max()
         new_high_condition = self.adj_close >= high_n
 
         # 技術面綜合條件
@@ -246,7 +246,7 @@ class AlanTWStrategyACE:
 
     def _build_sell_condition(self):
         """建立賣出條件"""
-        ma3 = self.adj_close.average(3)
+        ma3 = self.adj_close.rolling(3).mean()
 
         with data.universe(market='TSE_OTC'):
             dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
