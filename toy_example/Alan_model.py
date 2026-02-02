@@ -23,14 +23,14 @@ def build_chip_buy_condition(top_n):
     dealer_self_net_buy_ratio = dealer_self_net_buy_shares / shares_outstanding
 
     # 計算外資、投信、自營商的2天、3天累積買超比例
-    foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2, min_periods=1).sum()
-    foreign_net_buy_ratio_3d_sum = foreign_net_buy_ratio.rolling(3, min_periods=1).sum()
+    foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2).sum()
+    foreign_net_buy_ratio_3d_sum = foreign_net_buy_ratio.rolling(3).sum()
 
-    investment_trust_net_buy_ratio_2d_sum = investment_trust_net_buy_ratio.rolling(2, min_periods=1).sum()
-    investment_trust_net_buy_ratio_3d_sum = investment_trust_net_buy_ratio.rolling(3, min_periods=1).sum()
+    investment_trust_net_buy_ratio_2d_sum = investment_trust_net_buy_ratio.rolling(2).sum()
+    investment_trust_net_buy_ratio_3d_sum = investment_trust_net_buy_ratio.rolling(3).sum()
 
-    dealer_self_net_buy_ratio_2d_sum = dealer_self_net_buy_ratio.rolling(2, min_periods=1).sum()
-    dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3, min_periods=1).sum()
+    dealer_self_net_buy_ratio_2d_sum = dealer_self_net_buy_ratio.rolling(2).sum()
+    dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3).sum()
 
 
     # 外資：取當天、前2天、前3天累積買超比例前幾
@@ -65,8 +65,8 @@ def build_chip_buy_condition(top_n):
     net_buy_ratio = net_buy_shares / shares_outstanding
 
     # 計算2天、3天買賣超差額股數佔發行股數的比
-    net_buy_ratio_2d_sum = net_buy_ratio.rolling(2, min_periods=1).sum()
-    net_buy_ratio_3d_sum = net_buy_ratio.rolling(3, min_periods=1).sum()
+    net_buy_ratio_2d_sum = net_buy_ratio.rolling(2).sum()
+    net_buy_ratio_3d_sum = net_buy_ratio.rolling(3).sum()
 
     # 主力籌碼條件
     main_force_top_1d_buy = net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -101,14 +101,14 @@ def build_technical_buy_condition(bias_5_range=(0.03, 0.13), bias_10_range=(0.05
                                   bias_120_range=(0.05, 0.26), bias_240_range=(0.08, 0.26),
                                   new_high_days=120):
 
-    # 計算均線 (使用 finlab API)
-    ma3 = adj_close.average(3)
-    ma5 = adj_close.average(5)
-    ma10 = adj_close.average(10)
-    ma20 = adj_close.average(20)
-    ma60 = adj_close.average(60)
-    ma120 = adj_close.average(120)
-    ma240 = adj_close.average(240)
+    # 計算均線
+    ma3 = adj_close.rolling(3).mean()
+    ma5 = adj_close.rolling(5).mean()
+    ma10 = adj_close.rolling(10).mean()
+    ma20 = adj_close.rolling(20).mean()
+    ma60 = adj_close.rolling(60).mean()
+    ma120 = adj_close.rolling(120).mean()
+    ma240 = adj_close.rolling(240).mean()
 
     # 均線上升
     ma_up_buy_condition = (ma5 > ma5.shift(1)) & (ma10 > ma10.shift(1)) & (ma20 > ma20.shift(1)) & (ma60 > ma60.shift(1))
@@ -199,7 +199,7 @@ def build_technical_buy_condition(bias_5_range=(0.03, 0.13), bias_10_range=(0.05
     macd_dif_buy_condition = dif > dif.shift(1)
 
     # 創新高 - 根據指定天數計算
-    high_n = adj_close.rolling(window=new_high_days, min_periods=1).max()
+    high_n = adj_close.rolling(window=new_high_days).max()
     new_high_condition = adj_close >= high_n
 
 
@@ -348,7 +348,7 @@ start_buy_date = '2017-12-31'
 buy_signal = buy_signal.loc[start_buy_date:]
 
 def build_sell_condition():
-    ma3 = adj_close.average(3)
+    ma3 = adj_close.rolling(3).mean()
     dif, macd , _  = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
 
     # 法一: 短線出場

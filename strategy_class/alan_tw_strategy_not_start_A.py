@@ -107,12 +107,12 @@ class AlanTWStrategyNotStartA:
         dealer_self_net_buy_ratio = self.dealer_self_net_buy_shares / self.shares_outstanding
 
         # 計算累積買超比例
-        foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2, min_periods=1).sum()
-        foreign_net_buy_ratio_3d_sum = foreign_net_buy_ratio.rolling(3, min_periods=1).sum()
-        investment_trust_net_buy_ratio_2d_sum = investment_trust_net_buy_ratio.rolling(2, min_periods=1).sum()
-        investment_trust_net_buy_ratio_3d_sum = investment_trust_net_buy_ratio.rolling(3, min_periods=1).sum()
-        dealer_self_net_buy_ratio_2d_sum = dealer_self_net_buy_ratio.rolling(2, min_periods=1).sum()
-        dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3, min_periods=1).sum()
+        foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2).sum()
+        foreign_net_buy_ratio_3d_sum = foreign_net_buy_ratio.rolling(3).sum()
+        investment_trust_net_buy_ratio_2d_sum = investment_trust_net_buy_ratio.rolling(2).sum()
+        investment_trust_net_buy_ratio_3d_sum = investment_trust_net_buy_ratio.rolling(3).sum()
+        dealer_self_net_buy_ratio_2d_sum = dealer_self_net_buy_ratio.rolling(2).sum()
+        dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3).sum()
 
         # 外資條件
         foreign_top_1d_ratio = foreign_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -139,8 +139,8 @@ class AlanTWStrategyNotStartA:
 
         net_buy_shares = (top15_buy_shares - top15_sell_shares) * 1000
         net_buy_ratio = net_buy_shares / self.shares_outstanding
-        net_buy_ratio_2d_sum = net_buy_ratio.rolling(2, min_periods=1).sum()
-        net_buy_ratio_3d_sum = net_buy_ratio.rolling(3, min_periods=1).sum()
+        net_buy_ratio_2d_sum = net_buy_ratio.rolling(2).sum()
+        net_buy_ratio_3d_sum = net_buy_ratio.rolling(3).sum()
 
         # 主力籌碼條件
         main_force_top_1d_buy = net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -162,13 +162,13 @@ class AlanTWStrategyNotStartA:
 
     def _build_technical_buy_condition(self):
         """建立技術面條件"""
-        # 計算均線 (使用 finlab API)
-        ma5 = self.adj_close.average(5)
-        ma10 = self.adj_close.average(10)
-        ma20 = self.adj_close.average(20)
-        ma60 = self.adj_close.average(60)
-        ma120 = self.adj_close.average(120)
-        ma240 = self.adj_close.average(240)
+        # 計算均線
+        ma5 = self.adj_close.rolling(5).mean()
+        ma10 = self.adj_close.rolling(10).mean()
+        ma20 = self.adj_close.rolling(20).mean()
+        ma60 = self.adj_close.rolling(60).mean()
+        ma120 = self.adj_close.rolling(120).mean()
+        ma240 = self.adj_close.rolling(240).mean()
 
         # 計算乖離率
         bias_5 = (self.adj_close - ma5) / ma5
@@ -196,7 +196,7 @@ class AlanTWStrategyNotStartA:
         amount_above_15m_condition = (self.close * self.volume) > 15000000
 
         # 計算收盤新高
-        close_high = self.adj_close.rolling(window=self.new_high_days, min_periods=1).max()
+        close_high = self.adj_close.rolling(window=self.new_high_days).max()
 
         # 價格在收盤新高的93%以上
         price_above_93pct_close_high_condition = self.adj_close >= (close_high * 0.93)
@@ -222,11 +222,11 @@ class AlanTWStrategyNotStartA:
 
     def _build_sell_condition(self):
         """建立賣出條件"""
-        # 計算均線 (使用 finlab API)
-        ma5 = self.adj_close.average(5)
-        ma10 = self.adj_close.average(10)
-        ma60 = self.adj_close.average(60)
-        ma240 = self.adj_close.average(240)
+        # 計算均線
+        ma5 = self.adj_close.rolling(5).mean()
+        ma10 = self.adj_close.rolling(10).mean()
+        ma60 = self.adj_close.rolling(60).mean()
+        ma240 = self.adj_close.rolling(240).mean()
 
         # 計算乖離率
         bias_5 = (self.adj_close - ma5) / ma5
@@ -235,7 +235,7 @@ class AlanTWStrategyNotStartA:
         bias_240 = (self.adj_close - ma240) / ma240
 
         # 計算收盤新高
-        close_high = self.adj_close.rolling(window=self.new_high_days, min_periods=1).max()
+        close_high = self.adj_close.rolling(window=self.new_high_days).max()
 
         # A版賣出條件:
         # 1. 5日線乖離小於-4% 或
