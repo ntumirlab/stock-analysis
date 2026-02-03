@@ -2,7 +2,7 @@ name: CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "Fix/cd-pipeline-setup" ]
 
 jobs:
   deploy:
@@ -19,15 +19,17 @@ jobs:
           port: 10220
           envs: ENV_FILE
           script: |
+            set -e
+
             cd ~/stock-analysis
 
             git fetch --all
-            git checkout main
-            git pull origin main
+            git checkout Fix/cd-pipeline-setup
+            git pull origin Fix/cd-pipeline-setup
 
             echo "$ENV_FILE" > .env
 
-            docker-compose down
-            docker-compose up -d --build
+            docker compose down
+            docker compose up -d --build
             
             docker image prune -f
