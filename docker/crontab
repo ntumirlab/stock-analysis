@@ -11,6 +11,7 @@
 20 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=PeterWuStrategy >> /app/logs/backtest.log 2>&1
 25 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=RogerTWStrategyWeekly >> /app/logs/backtest.log 2>&1
 30 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=RogerTWStrategyMonthly >> /app/logs/backtest.log 2>&1
+35 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=OscarTWStrategy >> /app/logs/backtest.log 2>&1
 
 # 每天 08:00 - 早盤下單
 0 8 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=junting --broker_name=shioaji >> /app/logs/order.log 2>&1
