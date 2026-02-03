@@ -22,6 +22,7 @@ from finlab import data
 from finlab.markets.tw import TWMarket
 from finlab.backtest import sim
 import pandas as pd
+from utils.config_loader import ConfigLoader
 
 class AdjustTWMarketInfo(TWMarket):
     """自訂市場資訊類別，用於調整交易價格為開盤價"""
@@ -41,17 +42,28 @@ class OscarTWStrategy:
         sell_signal: 賣出訊號
     """
 
-    def __init__(self, sar_max_dots=2, sar_reject_dots=3):
+    def __init__(self, sar_max_dots=2, sar_reject_dots=3, config_path="config.yaml"):
         """
         初始化策略參數
         
         Args:
             sar_max_dots: SAR連續在下方的最大天數（買進區間上限）
             sar_reject_dots: SAR連續在下方達到此天數時排除（拒絕買進）
+            config_path: 設定檔路徑，用於載入 oscar 相關配置
         """
+        # 載入配置
+        self.config_loader = ConfigLoader(config_path)
+        oscar_config = self.config_loader.config.get('oscar', {})
+        
+
         # 策略參數（可調整用於實驗）
         self.sar_max_dots = sar_max_dots
         self.sar_reject_dots = sar_reject_dots
+
+        # 成交量大於平均的比例，以及 120 日創新高比例，從設定檔讀取，可覆寫預設值
+        # 預設值保留現有行為：volume_above_avg_ratio=0.25, new_high_ratio_120=0.3
+        self.volume_above_avg_ratio = float(oscar_config.get("volume_above_avg_ratio", 0.25))
+        self.new_high_ratio_120 = float(oscar_config.get("new_high_ratio_120", 0.3))
         
         # 回測報告
         self.report = None
@@ -128,9 +140,7 @@ class OscarTWStrategy:
         high_120 = adj_close.rolling(120).max()
         is_new_high = adj_close >= high_120
         new_high_ratio_120 = is_new_high.rolling(120).mean()
-        constantly_new_high = new_high_ratio_120 > 0.3
-        print(f"總股票數量：{adj_close.shape[1]}")
-        print(f'不斷創新高股票數量：{constantly_new_high.any().sum()}')
+        constantly_new_high = new_high_ratio_120 > self.new_high_ratio_120
         
         # 買進條件: SAR在1-2個點範圍 且 不是不斷創新高的股票 且 點數不要太多
         sar_buy_condition = sar_in_buy_zone & (~constantly_new_high) 
@@ -180,10 +190,10 @@ class OscarTWStrategy:
         # 計算30日平均成交量（需完整30日資料）
         avg_volume_30 = volume.rolling(30).mean()
         
-        # 條件1: 成交量大於30日平均的50% (確保基本流動性)
+        # 條件1: 成交量大於30日平均的一定比例 (確保基本流動性)，比例由設定檔控制
         # 條件2: 30日平均成交量大於100萬股 (中大型股)
         # 條件3: 排除異常暴量 (當日成交量超過30日平均10倍可能是炒作)
-        volume_above_avg = volume > (avg_volume_30 * 0.5)
+        volume_above_avg = volume > (avg_volume_30 * self.volume_above_avg_ratio)
         sufficient_liquidity = avg_volume_30 > 1000000
         not_abnormal_volume = volume < (avg_volume_30 * 10)
         

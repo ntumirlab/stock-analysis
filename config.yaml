@@ -49,3 +49,8 @@ recommendation_tasks:
   monthly:
     drive_folder_id: "${MONTHLY_DRIVE_FOLDER_ID}"
     local_dir: "./assets/recommendations_m"
+
+# Oscar 策略專用參數
+oscar:
+  volume_above_avg_ratio: 0.25
+  new_high_ratio_120: 0.3
