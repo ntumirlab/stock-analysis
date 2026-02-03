@@ -1,0 +1,33 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [ "Chore/cd-pipeline-setup" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 10220
+          envs: ENV_FILE
+          script: |
+            cd ~/stock-analysis
+
+            git fetch --all
+            git checkout Chore/cd-pipeline-setup
+            git pull origin Chore/cd-pipeline-setup
+
+            echo "$ENV_FILE" > .env
+
+            docker-compose down
+            docker-compose up -d --build
+            
+            docker image prune -f
