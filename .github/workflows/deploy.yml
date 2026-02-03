@@ -2,7 +2,7 @@ name: CD Pipeline
 
 on:
   push:
-    branches: [ "Fix/cd-pipeline-setup" ]
+    branches: [ "main" ]
 
 jobs:
   deploy:
@@ -24,8 +24,8 @@ jobs:
             cd ~/stock-analysis
 
             git fetch --all
-            git checkout Fix/cd-pipeline-setup
-            git pull origin Fix/cd-pipeline-setup
+            git checkout main
+            git pull origin main
 
             echo "$ENV_FILE" > .env
 
