@@ -5,8 +5,9 @@ from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 
 class RogerTWStrategyBase:
-    def __init__(self, task_name, buy_weekday=1, sell_weekday=1, config_path="config.yaml"):
+    def __init__(self, task_name, max_stocks=5, buy_weekday=1, sell_weekday=5, config_path="config.yaml"):
         self.task_name = task_name  # 'weekly' or 'monthly'
+        self.max_stocks = max_stocks
         self.report = None
         self.config_loader = ConfigLoader(config_path)
 
@@ -16,6 +17,8 @@ class RogerTWStrategyBase:
         # 轉為 Pandas 的 weekday 編號 (0=星期一, 4=星期五)
         self.buy_weekday = buy_weekday - 1
         self.sell_weekday = sell_weekday - 1
+
+        
 
     def _create_position_df(self, universe):
         """
@@ -50,6 +53,9 @@ class RogerTWStrategyBase:
 
         records = []
         for aligned_date, (original_date, stock_list) in weekly_batches.items():
+            stock_list = sorted(stock_list, key=lambda x: getattr(x, 'priority', float('inf')))
+            if self.max_stocks is not None:
+                stock_list = stock_list[:self.max_stocks]
             for stock in stock_list:
                 stock_id = getattr(stock, 'id', None)
                 if not stock_id:
