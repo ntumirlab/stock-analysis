@@ -25,7 +25,8 @@ class RogerTWStrategyBase:
         dao = RecommendationDAO(frequency=self.task_name)
         recommendation_records = dao.load()
 
-        records = []
+        weekly_batches = {}
+
         for record in recommendation_records:
             date = record.date
             stocks = record.stocks
@@ -33,12 +34,28 @@ class RogerTWStrategyBase:
                 continue
 
             dt = pd.to_datetime(date)
-            for stock in stocks:
+            
+            days_to_sunday = 6 - dt.weekday()
+            aligned_date = dt + pd.Timedelta(days=days_to_sunday)
+            if days_to_sunday > 0:
+                print(f"原始日期: {dt.date()} (週{'一二三四五六日'[dt.weekday()]})，對齊後日期: {aligned_date.date()} (週{'一二三四五六日'[aligned_date.weekday()]})")
+
+            if aligned_date in weekly_batches:
+                existing_original_date, _ = weekly_batches[aligned_date]
+                if dt > existing_original_date:
+                    weekly_batches[aligned_date] = (dt, stocks)
+                    print(f"更新對齊日期 {aligned_date.date()} (週{'一二三四五六日'[aligned_date.weekday()]}) 的推薦，使用較新的原始日期 {dt.date()} (週{'一二三四五六日'[dt.weekday()]})")
+            else:
+                weekly_batches[aligned_date] = (dt, stocks)
+
+        records = []
+        for aligned_date, (original_date, stock_list) in weekly_batches.items():
+            for stock in stock_list:
                 stock_id = getattr(stock, 'id', None)
                 if not stock_id:
                     continue
                 records.append({
-                    'date': dt,
+                    'date': aligned_date,
                     'stock_id': str(stock_id),
                     'signal': 1
                 })
