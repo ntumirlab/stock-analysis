@@ -5,20 +5,17 @@ from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 
 class RogerTWStrategyBase:
-    def __init__(self, task_name, max_stocks=5, buy_weekday=1, sell_weekday=5, config_path="config.yaml"):
+    def __init__(self, task_name, config_path="config.yaml"):
         self.task_name = task_name  # 'weekly' or 'monthly'
-        self.max_stocks = max_stocks
         self.report = None
         self.config_loader = ConfigLoader(config_path)
+        roger_config = self.config_loader.config.get('roger', {}).get(task_name, {})
 
-        if not buy_weekday in range(1, 6) or not sell_weekday in range(1, 6):
-            raise ValueError("buy_weekday 及 sell_weekday 必須介於 1 (星期一) 到 5 (星期五) 之間")
+        self.max_stocks = roger_config.get('max_stocks', 5)
+        self.buy_weekday = roger_config.get('buy_weekday', 1) - 1
+        self.sell_weekday = roger_config.get('sell_weekday', 5) - 1
 
-        # 轉為 Pandas 的 weekday 編號 (0=星期一, 4=星期五)
-        self.buy_weekday = buy_weekday - 1
-        self.sell_weekday = sell_weekday - 1
-
-        
+        print(f"[{task_name}] 策略參數: 週{'一二三四五六日'[self.buy_weekday]}買, 週{'一二三四五六日'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
 
     def _create_position_df(self, universe):
         """
