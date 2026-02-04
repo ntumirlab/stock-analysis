@@ -5,10 +5,17 @@ from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 
 class RogerTWStrategyBase:
-    def __init__(self, task_name, config_path="config.yaml"):
+    def __init__(self, task_name, buy_weekday=1, sell_weekday=1, config_path="config.yaml"):
         self.task_name = task_name  # 'weekly' or 'monthly'
         self.report = None
         self.config_loader = ConfigLoader(config_path)
+
+        if not buy_weekday in range(1, 6) or not sell_weekday in range(1, 6):
+            raise ValueError("buy_weekday 及 sell_weekday 必須介於 1 (星期一) 到 5 (星期五) 之間")
+
+        # 轉為 Pandas 的 weekday 編號 (0=星期一, 4=星期五)
+        self.buy_weekday = buy_weekday - 1
+        self.sell_weekday = sell_weekday - 1
 
     def _create_position_df(self, universe):
         """
@@ -59,11 +66,36 @@ class RogerTWStrategyBase:
         
         return position.astype(bool)
 
+    def _apply_trading_window(self, position):
+        """
+        根據買賣星期幾設定交易視窗
+        """
+        dow = position.index.dayofweek
+        buy = self.buy_weekday
+        sell = self.sell_weekday
+
+        if buy == sell:
+            return position
+        elif buy < sell:
+            mask = (dow >= buy) & (dow < sell)
+        else:
+            mask = (dow >= buy) | (dow < sell)
+
+        position = position.loc[mask].reindex(position.index, fill_value=False)
+        return position
+
     def run_strategy(self):
         universe = data.get('price:收盤價')
         position = self._create_position_df(universe)
-        self.report = sim(position=position, resample='W-MON', fee_ratio=1.425/1000, tax_ratio=3/1000, upload=False)
+
+        if self.buy_weekday != self.sell_weekday:
+            position = self._apply_trading_window(position)
         
+        # 由於此策略在買賣日「前一天」即決定隔天是否買賣，因此將 position 向前移動一天
+        position = position.shift(-1)
+            
+        self.report = sim(position=position, resample=None, fee_ratio=1.425/1000, tax_ratio=3/1000, upload=False)
+       
         return self.report
 
     def get_report(self):
