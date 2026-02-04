@@ -15,7 +15,7 @@ class RogerTWStrategyBase:
         self.buy_weekday = roger_config.get('buy_weekday', 1) - 1
         self.sell_weekday = roger_config.get('sell_weekday', 5) - 1
 
-        print(f"[{task_name}] 策略參數: 週{'一二三四五六日'[self.buy_weekday]}買, 週{'一二三四五六日'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
+        print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
 
     def _create_position_df(self, universe):
         """
