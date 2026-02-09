@@ -1,5 +1,11 @@
 # Stock Analysis
 
+[![CI/CD Pipeline](https://github.com/YOUR_USERNAME/stock-analysis/actions/workflows/deploy.yml/badge.svg)](https://github.com/YOUR_USERNAME/stock-analysis/actions/workflows/deploy.yml)
+[![Latest Release](https://img.shields.io/github/v/release/YOUR_USERNAME/stock-analysis?label=deployed)](https://github.com/YOUR_USERNAME/stock-analysis/releases/latest)
+[![Production Status](https://img.shields.io/badge/status-production-success)](https://github.com/YOUR_USERNAME/stock-analysis/deployments)
+
+> 💡 **Quick Status Check**: Latest deployed version is shown in the badge above. Click for deployment details.
+
 此專案利用 FinLab 提供的即時財經資料，設計股票交易策略並進行歷史回測。透過自動化流程，每日定時執行回測與下單，並將結果以表格與圖表形式展示於 Dashboard 上。Dashboard 內容包含詳細下單資訊、帳戶資金水位變化圖及每月實際回報率圖表。
 
 ## 功能
