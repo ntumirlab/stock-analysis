@@ -50,6 +50,18 @@ recommendation_tasks:
     drive_folder_id: "${MONTHLY_DRIVE_FOLDER_ID}"
     local_dir: "./assets/recommendations_m"
 
+# Roger 策略專用參數
+roger:
+  weekly:
+    buy_weekday: 1   # 買入日：週一 ~ 週五 (1-5)
+    sell_weekday: 1  # 賣出日：週一 ~ 週五 (1-5)
+    max_stocks: 5    # 最大持股數
+    
+  monthly:
+    buy_weekday: 1   # 買入日：週一 ~ 週五 (1-5)
+    sell_weekday: 1  # 賣出日：週一 ~ 週五 (1-5)
+    max_stocks: 5    # 最大持股數
+
 # Oscar 策略專用參數
 oscar:
   volume_above_avg_ratio: 0.25
