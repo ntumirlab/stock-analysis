@@ -20,10 +20,10 @@ apply_finlab_patches()
 logger = logging.getLogger(__name__)
 
 class OrderExecutor:
-    def __init__(self, user_name, broker_name, extra_bid_pct, view_only, config_path="config.yaml", base_log_directory="logs"):
+    def __init__(self, user_name, market_order, broker_name, view_only, config_path="config.yaml", base_log_directory="logs"):
         self.user_name = user_name
+        self.market_order = market_order
         self.broker_name = broker_name
-        self.extra_bid_pct = extra_bid_pct
         self.view_only = view_only
 
         self.config_loader = ConfigLoader(config_path)
@@ -78,7 +78,7 @@ class OrderExecutor:
             self._handle_alerting_stocks_reservation()
 
         # 執行同步下單（會打印完整下單資訊）
-        pm.sync(self.account, extra_bid_pct=self.extra_bid_pct, view_only=self.view_only)
+        pm.sync(self.account, market_order=self.market_order, view_only=self.view_only)
         logger.info("Portfolio synced")
 
         order_logs = self.logger_manager.extract_order_logs(self.log_file)
@@ -127,8 +127,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run OrderExecutor")
     parser.add_argument("--user_name", required=True, help="User name (e.g., junting)")
     parser.add_argument("--broker_name", required=True, help="Broker name (e.g., fugle)")
-    parser.add_argument("--extra_bid_pct", type=float, default=0.0,
-                        help="Extra bid percentage (e.g., 0.01)")
     parser.add_argument("--view_only", action='store_true', help="Run in view-only mode")
 
     args = parser.parse_args()
@@ -141,8 +139,8 @@ if __name__ == "__main__":
     try:
         order_executor = OrderExecutor(
             user_name=args.user_name,
+            market_order=True,
             broker_name=args.broker_name,
-            extra_bid_pct=args.extra_bid_pct,
             view_only=args.view_only,
             config_path = os.path.join(root_dir, "config.yaml"),
             base_log_directory = os.path.join(root_dir, "logs")
@@ -152,15 +150,14 @@ if __name__ == "__main__":
         logger.exception(e)
 
         # 發送錯誤通知
-        task_name = "尾盤下單" if args.extra_bid_pct > 0 else "早盤下單"
         notifier.send_error(
-            task_name=task_name,
+            task_name="早盤下單",
             error_message=str(e),
             user_name=args.user_name,
             broker_name=args.broker_name,
             error_traceback=traceback.format_exc()
         )
 
-    # python -m jobs.order_executor --user_name junting --broker_name fugle --extra_bid_pct 0 --view_only
-    # python -m jobs.order_executor --user_name junting --broker_name shioaji --extra_bid_pct 0 --view_only
-    # python -m jobs.order_executor --user_name alan --broker_name shioaji --extra_bid_pct 0 --view_only
+    # python -m jobs.order_executor --user_name junting --broker_name fugle --view_only
+    # python -m jobs.order_executor --user_name junting --broker_name shioaji --view_only
+    # python -m jobs.order_executor --user_name alan --broker_name shioaji --view_only

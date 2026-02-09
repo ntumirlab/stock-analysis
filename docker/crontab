@@ -16,9 +16,6 @@
 # 每天 08:00 - 早盤下單
 0 8 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=junting --broker_name=shioaji >> /app/logs/order.log 2>&1
 
-# 每天 13:00 - 尾盤下單 (加價 1%)
-0 13 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=junting --broker_name=shioaji --extra_bid_pct=0.01 >> /app/logs/order.log 2>&1
-
 # 每週日 23:45 - 抓取新推薦名單.md
 45 23 * * 7 cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.drive_fetcher >> /app/logs/drive_fetcher.log 2>&1
 
