@@ -50,6 +50,65 @@
 
 ## 手冊
 
+### 開發環境設定
+
+#### 1. 安裝依賴
+```bash
+# 使用 conda 安裝環境
+conda env create -f environment.yml
+conda activate stock-analysis
+
+# 或使用 Makefile (推薦)
+make install
+```
+
+#### 2. 設定 Pre-commit Hooks (重要!)
+```bash
+# 安裝 git hooks - 提交前自動檢查程式碼品質
+make setup-hooks
+
+# 或手動安裝
+pre-commit install
+```
+
+Pre-commit 會在每次 `git commit` 前自動執行:
+- ✅ Ruff linting (程式碼品質檢查)
+- ✅ Ruff formatting (程式碼格式化)
+- ✅ Secret detection (防止提交敏感資訊)
+- ✅ YAML/JSON/TOML 格式檢查
+- ✅ Dockerfile linting
+
+#### 3. 程式碼品質檢查
+
+```bash
+# 檢查程式碼 (不修改)
+make lint
+
+# 自動修復可修復的問題
+make lint-fix
+
+# 格式化程式碼
+make format
+
+# 完整檢查 (lint + format)
+make check
+
+# 在所有檔案上執行 pre-commit
+make pre-commit-all
+```
+
+#### 4. 安全掃描
+```bash
+# 掃描硬編碼的 API keys 和密碼
+make scan-secrets
+```
+
+⚠️ **重要提醒**:
+- 提交前務必執行 `make check` 確保程式碼品質
+- 絕不在程式碼中硬編碼 API keys (使用環境變數)
+- 所有財務計算必須有類型標註
+- 所有 datetime 物件必須帶時區資訊 (使用 UTC)
+
 ### Docker 部署 (推薦)
 
 > 🚀 最簡單的部署方式,無需安裝 Python 環境,只需 Docker!
