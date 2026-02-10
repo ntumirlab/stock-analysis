@@ -3,10 +3,11 @@ import yaml
 import re
 from dotenv import load_dotenv
 
+
 class ConfigLoader:
     def __init__(self, config_path="config.yaml", env_path=".env"):
         load_dotenv(env_path)
-        
+
         with open(config_path, "r", encoding="utf-8") as file:
             loaded_config = yaml.safe_load(file)
 
@@ -21,6 +22,7 @@ class ConfigLoader:
             def replace_var(match):
                 var_name = match.group(1)
                 return os.environ.get(var_name, match.group(0))
+
             return re.sub(r'\$\{([^}]+)\}', replace_var, value)
         return value
 
@@ -55,7 +57,7 @@ class ConfigLoader:
         env_vars = broker_config.get("env", {})
         for key, value in env_vars.items():
             os.environ[key] = str(value)
-        
+
         self.user_constants = broker_config.get("constant", {})
 
     def get_user_constant(self, key):
@@ -64,13 +66,14 @@ class ConfigLoader:
     def get_env_var(self, key):
         return os.environ.get(key)
 
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root_dir)
 
     config_loader = ConfigLoader(os.path.join(root_dir, "config.yaml"))
     config_loader.load_global_env_vars()
-    
+
     config_loader.load_user_config("junting", "fugle")
 
     print("FINLAB_API_TOKEN:", os.environ.get("FINLAB_API_TOKEN"))

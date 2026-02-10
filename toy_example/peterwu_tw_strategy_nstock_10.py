@@ -32,12 +32,13 @@ revenue_growth_condition = revenue_growth_yoy > 30
 # 買入條件
 buy_condition = (
     # 技術面
-    above_ma60 &
-    ma60_rising &
-    price_break_high_3m &
+    above_ma60
+    & ma60_rising
+    & price_break_high_3m
+    &
     # 基本面
-    eps_condition &
-    revenue_growth_condition
+    eps_condition
+    & revenue_growth_condition
 )
 
 below_ma60 = adj_close < ma60
@@ -50,11 +51,7 @@ hit_drop_limit = price_change_percent <= -0.095
 
 
 # 賣出條件
-sell_condition = ( 
-    not_recover_in_5_days |
-    ma60_falling |
-    hit_drop_limit 
-)
+sell_condition = not_recover_in_5_days | ma60_falling | hit_drop_limit
 
 position = buy_condition.hold_until(sell_condition)
 

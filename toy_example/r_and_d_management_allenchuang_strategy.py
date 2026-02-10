@@ -7,6 +7,7 @@ with data.universe(market='TSE_OTC'):
     adj_open = data.get('etl:adj_open')
     volume = data.get('price:成交股數')
 
+
 def build_technical_buy_condition():
 
     # 計算均線
@@ -19,7 +20,9 @@ def build_technical_buy_condition():
     ma240 = adj_close.rolling(240).mean()
 
     # 均線上升
-    ma_up_buy_condition = (ma5 > ma5.shift(1)) & (ma10 > ma10.shift(1)) & (ma20 > ma20.shift(1)) & (ma60 > ma60.shift(1))
+    ma_up_buy_condition = (
+        (ma5 > ma5.shift(1)) & (ma10 > ma10.shift(1)) & (ma20 > ma20.shift(1)) & (ma60 > ma60.shift(1))
+    )
 
     # 5 日線大於 60/240 日線
     ma5_above_others_condition = (ma5 > ma60) & (ma5 > ma240)
@@ -35,16 +38,21 @@ def build_technical_buy_condition():
     bias_120 = (adj_close - ma120) / ma120
     bias_240 = (adj_close - ma240) / ma240
 
-
     # 設定進場乖離率
     bias_buy_condition = (
-                        (bias_5 <= 0.12) & (bias_5 >= 0.02) &
-                        (bias_10 <= 0.15) & (bias_10 >= 0.05) &
-                        (bias_20 <= 0.20) & (bias_20 >= 0.05) &
-                        (bias_60 <= 0.20) & (bias_60 >= 0.05) & 
-                        (bias_120 <= 0.25) & (bias_120 >= 0.10) &
-                        (bias_240 <= 0.25) & (bias_240 >= 0.10)
-                        )
+        (bias_5 <= 0.12)
+        & (bias_5 >= 0.02)
+        & (bias_10 <= 0.15)
+        & (bias_10 >= 0.05)
+        & (bias_20 <= 0.20)
+        & (bias_20 >= 0.05)
+        & (bias_60 <= 0.20)
+        & (bias_60 >= 0.05)
+        & (bias_120 <= 0.25)
+        & (bias_120 >= 0.10)
+        & (bias_240 <= 0.25)
+        & (bias_240 >= 0.10)
+    )
 
     # 今收盤 > 今開盤，且今收盤 > 昨收盤
     positive_close_condition = (adj_close > adj_open) & (adj_close > adj_close.shift(1))
@@ -77,7 +85,7 @@ def build_technical_buy_condition():
 
     with data.universe(market='TSE_OTC'):
         # 計算 MACD 指標
-        dif, macd , _  = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+        dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
 
     # MACD DIF 向上
     macd_dif_buy_condition = dif > dif.shift(1)
@@ -89,20 +97,21 @@ def build_technical_buy_condition():
 
     # 技術面
     technical_buy_condition = (
-        ma_up_buy_condition & 
+        ma_up_buy_condition
+        &
         # ma5_above_others_condition &
-        price_above_ma_buy_condition & 
-        bias_buy_condition & 
-        volume_condition & 
+        price_above_ma_buy_condition
+        & bias_buy_condition
+        & volume_condition
+        &
         # positive_close_condition &
-        volume_above_500_condition &
-        price_above_12_condition &
-        amount_condition &
-
-        dmi_buy_condition & 
-        kd_buy_condition & 
-        macd_dif_buy_condition &
-        new_high_condition
+        volume_above_500_condition
+        & price_above_12_condition
+        & amount_condition
+        & dmi_buy_condition
+        & kd_buy_condition
+        & macd_dif_buy_condition
+        & new_high_condition
     )
     return technical_buy_condition
 
@@ -117,26 +126,27 @@ eq_price = eq_ratio / close.reindex(eq_ratio.index, method='ffill')
 
 rebalance = eq_price.index
 
-buy_signal = eq_price[(
-    build_technical_buy_condition()
-    & (rd_pm.deadline().rank(axis=1, pct=True) > 0.5)
-).reindex(rebalance)].is_largest(50)
+buy_signal = eq_price[
+    (build_technical_buy_condition() & (rd_pm.deadline().rank(axis=1, pct=True) > 0.5)).reindex(rebalance)
+].is_largest(50)
 
 
 def build_sell_condition():
     ma3 = adj_close.rolling(3).mean()
     ma5 = adj_close.rolling(5).mean()
     ma20 = adj_close.rolling(20).mean()
-    dif, macd , _  = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+    dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
 
     # 法一: 短線出場
     # sell_condition = (ma3 < ma3.shift(1)) & (dif < dif.shift(1))
 
     # 法二: 中線出場
-    sell_condition = (ma5 < ma5.shift(1)) & (dif < dif.shift(1)) & (macd < macd.shift(1)) & (adj_close < ma20).sustain(2)
-
+    sell_condition = (
+        (ma5 < ma5.shift(1)) & (dif < dif.shift(1)) & (macd < macd.shift(1)) & (adj_close < ma20).sustain(2)
+    )
 
     return sell_condition
+
 
 sell_condition = build_sell_condition()
 position = buy_signal.hold_until(sell_condition)

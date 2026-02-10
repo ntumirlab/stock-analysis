@@ -45,11 +45,7 @@ class TelegramNotifier:
             import requests
 
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-            data = {
-                "chat_id": self.chat_id,
-                "text": message,
-                "parse_mode": parse_mode
-            }
+            data = {"chat_id": self.chat_id, "text": message, "parse_mode": parse_mode}
 
             response = requests.post(url, json=data, timeout=10)
             response.raise_for_status()
@@ -101,7 +97,7 @@ class NotificationManager:
         error_message: str,
         user_name: Optional[str] = None,
         broker_name: Optional[str] = None,
-        error_traceback: Optional[str] = None
+        error_traceback: Optional[str] = None,
     ) -> bool:
         """
         發送錯誤通知
@@ -161,8 +157,7 @@ class NotificationManager:
 
 
 def create_notification_manager(
-    config_dict: Dict[str, Any],
-    logger: Optional[logging.Logger] = None
+    config_dict: Dict[str, Any], logger: Optional[logging.Logger] = None
 ) -> NotificationManager:
     """
     從 config.yaml 的 notification 區塊建立 NotificationManager

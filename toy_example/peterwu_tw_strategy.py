@@ -34,13 +34,14 @@ revenue_growth_condition = revenue_growth_yoy > 30
 # 買入條件
 buy_condition = (
     # 技術面
-    above_ma60 &
-    ma60_rising &
-    price_break_high_3m &
+    above_ma60
+    & ma60_rising
+    & price_break_high_3m
+    &
     # 基本面
-    eps_condition &
-    market_value_condition &
-    revenue_growth_condition
+    eps_condition
+    & market_value_condition
+    & revenue_growth_condition
 )
 # 設定起始買入日期
 start_buy_date = '2024-06-25'
@@ -56,18 +57,28 @@ hit_drop_limit = price_change_percent <= -0.095
 
 
 # 賣出條件
-sell_condition = ( 
-    not_recover_in_5_days |
-    ma60_falling |
-    hit_drop_limit 
-)
+sell_condition = not_recover_in_5_days | ma60_falling | hit_drop_limit
 
 position = buy_condition.hold_until(sell_condition)
 # 排除創新版股票
 stocks_to_exclude = [
-    '2254', '2258', '2432', '3150', '6423', '6534', '6645', 
-    '6757', '6771', '6794', '6854', '6873', '6902', '6949', 
-    '6951', '8162', '8487'
+    '2254',
+    '2258',
+    '2432',
+    '3150',
+    '6423',
+    '6534',
+    '6645',
+    '6757',
+    '6771',
+    '6794',
+    '6854',
+    '6873',
+    '6902',
+    '6949',
+    '6951',
+    '8162',
+    '8487',
 ]
 position[stocks_to_exclude] = False
 

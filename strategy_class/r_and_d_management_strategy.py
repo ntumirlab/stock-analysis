@@ -1,6 +1,7 @@
 from finlab import data
 from finlab.backtest import sim
 
+
 class RAndDManagementStrategy:
     def __init__(self):
         self.report = None
@@ -18,12 +19,14 @@ class RAndDManagementStrategy:
 
         rebalance = eq_price.index
 
-        position = eq_price[(
-            (close > close.average(60))
-            & (volume > 200_000)
-            & (volume.average(10) > volume.average(60))
-            & (rd_pm.deadline().rank(axis=1, pct=True) > 0.5)
-        ).reindex(rebalance)].is_largest(20)
+        position = eq_price[
+            (
+                (close > close.average(60))
+                & (volume > 200_000)
+                & (volume.average(10) > volume.average(60))
+                & (rd_pm.deadline().rank(axis=1, pct=True) > 0.5)
+            ).reindex(rebalance)
+        ].is_largest(20)
 
         rebalance = eq_ratio.index
 
@@ -32,6 +35,7 @@ class RAndDManagementStrategy:
 
     def get_report(self):
         return self.report if self.report else "report物件為空，請先運行策略"
+
 
 # Example usage:
 if __name__ == "__main__":

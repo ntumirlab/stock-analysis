@@ -87,11 +87,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
         quantity = stock_info['quantity']
 
         # 建立合約（login 時 fetch_contract=False）
-        contract = sj.contracts.Contract(
-            security_type='STK',
-            code=stock_id,
-            exchange='TSE'
-        )
+        contract = sj.contracts.Contract(security_type='STK', code=stock_id, exchange='TSE')
 
         # 計算股數與預估價格
         shares = int(abs(quantity) * 1000)
@@ -103,12 +99,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
 
         logger.info(f"圈存資金(買入): {stock_id}, 數量={quantity}張({shares}股), 預估價格={estimated_price:.2f}")
 
-        resp = self.account.api.reserve_earmarking(
-            self.account.api.stock_account,
-            contract,
-            shares,
-            estimated_price
-        )
+        resp = self.account.api.reserve_earmarking(self.account.api.stock_account, contract, shares, estimated_price)
 
         logger.info(f"圈存資金成功: {stock_id}, 回應={resp}")
 
@@ -118,11 +109,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
         quantity = stock_info['quantity']
 
         # 建立合約（login 時 fetch_contract=False）
-        contract = sj.contracts.Contract(
-            security_type='STK',
-            code=stock_id,
-            exchange='TSE'
-        )
+        contract = sj.contracts.Contract(security_type='STK', code=stock_id, exchange='TSE')
 
         # 計算股數
         shares = int(abs(quantity) * 1000)
@@ -132,11 +119,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
 
         logger.info(f"圈存股票(賣出): {stock_id}, 數量={abs(quantity)}張({shares}股)")
 
-        resp = self.account.api.reserve_stock(
-            self.account.api.stock_account,
-            contract,
-            shares
-        )
+        resp = self.account.api.reserve_stock(self.account.api.stock_account, contract, shares)
 
         logger.info(f"圈存股票成功: {stock_id}, 回應={resp}")
 

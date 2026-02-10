@@ -11,12 +11,14 @@ market_data_low = data.get('taiex_total_index:最低指數')
 market_data_close = data.get('taiex_total_index:收盤指數')
 
 # 使用 TAIEX 的開高低收指數並篩選 2024 年之後的資料
-taiex_data = pd.DataFrame({
-    'open': market_data_open['TAIEX'].loc['2024-01-01':],
-    'high': market_data_high['TAIEX'].loc['2024-01-01':],
-    'low': market_data_low['TAIEX'].loc['2024-01-01':],
-    'close': market_data_close['TAIEX'].loc['2024-01-01':]
-})
+taiex_data = pd.DataFrame(
+    {
+        'open': market_data_open['TAIEX'].loc['2024-01-01':],
+        'high': market_data_high['TAIEX'].loc['2024-01-01':],
+        'low': market_data_low['TAIEX'].loc['2024-01-01':],
+        'close': market_data_close['TAIEX'].loc['2024-01-01':],
+    }
+)
 
 # 計算5日、10日、20日均線
 ma5 = taiex_data['close'].rolling(5).mean()
@@ -29,35 +31,42 @@ minus_di = abstract.Function('MINUS_DI')(taiex_data, timeperiod=14)
 
 # 根據均線條件計算分數
 ma_score = (
-    ((taiex_data['close'] > ma5) & (taiex_data['close'] > ma10) & (taiex_data['close'] > ma20)).astype(int) * 2 +  # 收盤價高於5、10、20日均線：+2分
-    ((taiex_data['close'] > ma5) & (taiex_data['close'] > ma10) & (taiex_data['close'] < ma20)).astype(int) * 1 +  # 收盤價高於5、10日均線但低於20日均線：+1分
-    ((taiex_data['close'] < ma5) & (taiex_data['close'] > ma10) & (taiex_data['close'] > ma20)).astype(int) * 1 +  # 收盤價低於5日但高於10、20日均線：+1分
-    ((taiex_data['close'] < ma5) & (taiex_data['close'] < ma10) & (taiex_data['close'] > ma20)).astype(int) * -1 + # 收盤價低於5、10日均線但高於20日均線：-1分
-    ((taiex_data['close'] < ma5) & (taiex_data['close'] < ma10) & (taiex_data['close'] < ma20)).astype(int) * -2   # 收盤價低於5、10、20日均線：-2分
+    ((taiex_data['close'] > ma5) & (taiex_data['close'] > ma10) & (taiex_data['close'] > ma20)).astype(int)
+    * 2  # 收盤價高於5、10、20日均線：+2分
+    + ((taiex_data['close'] > ma5) & (taiex_data['close'] > ma10) & (taiex_data['close'] < ma20)).astype(int)
+    * 1  # 收盤價高於5、10日均線但低於20日均線：+1分
+    + ((taiex_data['close'] < ma5) & (taiex_data['close'] > ma10) & (taiex_data['close'] > ma20)).astype(int)
+    * 1  # 收盤價低於5日但高於10、20日均線：+1分
+    + ((taiex_data['close'] < ma5) & (taiex_data['close'] < ma10) & (taiex_data['close'] > ma20)).astype(int)
+    * -1  # 收盤價低於5、10日均線但高於20日均線：-1分
+    + ((taiex_data['close'] < ma5) & (taiex_data['close'] < ma10) & (taiex_data['close'] < ma20)).astype(int)
+    * -2  # 收盤價低於5、10、20日均線：-2分
 )
 
 # 根據 +DI 和 -DI 計算分數
 di_score = (
-    (plus_di > 35).astype(int) * 2 +  # +DI 大於35：+2分
-    ((plus_di >= 21) & (plus_di <= 35)).astype(int) * 1 +  # +DI 在21到35之間：+1分
-    ((plus_di >= 18) & (plus_di <= 21)).astype(int) * -1 +  # +DI 在18到21之間：-1分
-    (plus_di < 18).astype(int) * -2 +  # +DI 小於18：-2分
-    (minus_di > 35).astype(int) * -2 +  # -DI 大於35：-2分
-    ((minus_di >= 21) & (minus_di <= 35)).astype(int) * -1 +  # -DI 在21到35之間：-1分
-    ((minus_di >= 18) & (minus_di <= 21)).astype(int) * 1 +  # -DI 在18到21之間：+1分
-    (minus_di < 18).astype(int) * 2  # -DI 小於18：+2分
+    (plus_di > 35).astype(int) * 2  # +DI 大於35：+2分
+    + ((plus_di >= 21) & (plus_di <= 35)).astype(int) * 1  # +DI 在21到35之間：+1分
+    + ((plus_di >= 18) & (plus_di <= 21)).astype(int) * -1  # +DI 在18到21之間：-1分
+    + (plus_di < 18).astype(int) * -2  # +DI 小於18：-2分
+    + (minus_di > 35).astype(int) * -2  # -DI 大於35：-2分
+    + ((minus_di >= 21) & (minus_di <= 35)).astype(int) * -1  # -DI 在21到35之間：-1分
+    + ((minus_di >= 18) & (minus_di <= 21)).astype(int) * 1  # -DI 在18到21之間：+1分
+    + (minus_di < 18).astype(int) * 2  # -DI 小於18：+2分
 )
 
 # 計算 MACD 和 KD 指標
 dif, macd, _ = talib.MACD(taiex_data['close'], fastperiod=12, slowperiod=26, signalperiod=9)
-k, d = talib.STOCH(taiex_data['high'], taiex_data['low'], taiex_data['close'], fastk_period=9, slowk_period=3, slowd_period=3)
+k, d = talib.STOCH(
+    taiex_data['high'], taiex_data['low'], taiex_data['close'], fastk_period=9, slowk_period=3, slowd_period=3
+)
 
 # 根據均線和 DMI 計算的總分
 total_score = ma_score + di_score
 
 # 首先保存第14點和第15點所需的條件
-adjust_down = (total_score < 5)
-adjust_up = (total_score > -5)
+adjust_down = total_score < 5
+adjust_up = total_score > -5
 
 # 第14條：當總分小於 +5 時，根據 DIF、MACD 和 KD 分別調整分數
 # DIF 向下扣 1 分
@@ -162,12 +171,24 @@ plt.figure(figsize=(12, 6))
 plt.plot(result.index, result['close'], label='TAIEX Close', color='gray')
 
 # 標記低檔轉折
-plt.scatter(result.index[result['low_turn']], result['close'][result['low_turn']],
-            label='Low Turn (Positive)', color='green', marker='^', alpha=1.0)
+plt.scatter(
+    result.index[result['low_turn']],
+    result['close'][result['low_turn']],
+    label='Low Turn (Positive)',
+    color='green',
+    marker='^',
+    alpha=1.0,
+)
 
 # 標記高檔轉折
-plt.scatter(result.index[result['high_turn']], result['close'][result['high_turn']],
-            label='High Turn (Negative)', color='red', marker='v', alpha=1.0)
+plt.scatter(
+    result.index[result['high_turn']],
+    result['close'][result['high_turn']],
+    label='High Turn (Negative)',
+    color='red',
+    marker='v',
+    alpha=1.0,
+)
 
 # 加入 x 軸設定
 # plt.xlim(pd.to_datetime('2025-03-01'), taiex_data.index[-1])

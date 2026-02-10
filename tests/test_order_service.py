@@ -6,6 +6,7 @@ from service.order_service import OrderService
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+
 class TestOrderService(unittest.TestCase):
     def setUp(self):
         self.db_path = ":memory:"

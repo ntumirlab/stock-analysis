@@ -1,4 +1,3 @@
-
 import datetime
 import logging
 import traceback
@@ -11,6 +10,7 @@ from utils.logger_manager import LoggerManager
 from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
+
 
 class Scheduler:
     def __init__(self, user_name, broker_name, config_path="config.yaml", base_log_directory="logs"):
@@ -34,7 +34,9 @@ class Scheduler:
         logger.info(f"user_name: {self.user_name}, broker_name: {self.broker_name}")
 
     def run(self):
-        inventory_fetcher = InventoryFetcher.create(self.user_name, self.broker_name, self.account, self.fetch_timestamp)
+        inventory_fetcher = InventoryFetcher.create(
+            self.user_name, self.broker_name, self.account, self.fetch_timestamp
+        )
         inventory_data = inventory_fetcher.fetch_and_save()
         balance_fetcher = BalanceFetcherBase(self.user_name, self.broker_name, self.account, self.fetch_timestamp)
         balance_data = balance_fetcher.fetch_and_save()
@@ -62,8 +64,8 @@ if __name__ == "__main__":
         scheduler = Scheduler(
             user_name=args.user_name,
             broker_name=args.broker_name,
-            config_path = os.path.join(root_dir, "config.yaml"),
-            base_log_directory = os.path.join(root_dir, "logs")
+            config_path=os.path.join(root_dir, "config.yaml"),
+            base_log_directory=os.path.join(root_dir, "logs"),
         )
         scheduler.run()
     except Exception as e:
@@ -75,9 +77,8 @@ if __name__ == "__main__":
             error_message=str(e),
             user_name=args.user_name,
             broker_name=args.broker_name,
-            error_traceback=traceback.format_exc()
+            error_traceback=traceback.format_exc(),
         )
 
     # python -m jobs.scheduler --user_name junting --broker_name fugle
     # python -m jobs.scheduler --user_name junting --broker_name shioaji
-        
