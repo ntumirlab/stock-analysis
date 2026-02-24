@@ -753,6 +753,16 @@ class SingleStockTestExecutor:
             single_stock_position[stock] = base_position[stock]
             
             # 執行回測
+            # 說明：
+            #   - 我們刻意使用 resample=None，而不是預設的 'D' (日頻率)。
+            #   - single_stock_position 已經依照 base_position.index 定義好持倉頻率
+            #     （通常為每日收盤），讓回測引擎直接依照該索引時間點進行部位調整。
+            #   - 如果改成 resample='D'，finlab.backtest.sim 會再做一次日頻率重取樣，
+            #     可能改變實際交易執行時間與再平衡節奏，導致與策略原始訊號不一致，
+            #     並且在不同資料頻率下可能產生額外的重複聚合或邏輯偏差。
+            #   - 因此這裡設定 resample=None 是「刻意為之」：讓每次調整部位的時點
+            #     完全跟 single_stock_position.index 對齊。未來若要修改此設定，
+            #     請先確認策略訊號頻率與交易假設，並重新比對回測結果。
             report = sim(
                 position=single_stock_position,
                 resample=None,
