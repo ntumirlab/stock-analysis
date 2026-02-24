@@ -235,7 +235,7 @@ class OscarTWStrategy:
         # 條件2: 30日平均成交量大於100萬股 (中大型股)
         # 條件3: 排除異常暴量 (當日成交量超過30日平均10倍可能是炒作)
         volume_above_avg = volume > (avg_volume_30 * self.volume_above_avg_ratio)
-        sufficient_liquidity = avg_volume_30 > 1000 * 000
+        sufficient_liquidity = avg_volume_30 > 1_000_000
         not_abnormal_volume = volume < (avg_volume_30 * 10)
         
         return volume_above_avg & sufficient_liquidity & not_abnormal_volume
