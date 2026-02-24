@@ -108,9 +108,9 @@ def create_trading_visualization(
     trust_buy = trust_buy.reindex(valid_dates, fill_value=False)
     dealer_buy = dealer_buy.reindex(valid_dates, fill_value=False)
     
-    # ⚠️ 重要：持倉訊號已經由 shift(1) 處理，但為了視覺化對齊，需再 shift 一天
-    # 原因：position 是「今天該持有」，但實際執行是「明天以開盤價交易」
-    # 所以綠色背景應該從「明天」開始
+    # ⚠️ 重要：這裡的 shift(1) 僅用於視覺化對齊，並不修正策略本身可能存在的 look-ahead bias
+    # 假設 position 代表「今天收盤後決定，明天該持有」，而實際交易在「明天以開盤價」執行
+    # 因此圖上的綠色背景應該從「明天」開始顯示，所以在此將 position 向後移動一天
     position_shifted = position.shift(1).reindex(valid_dates, fill_value=False).fillna(False)
     
     # 建立子圖：主圖(價格+SAR)、MACD圖
