@@ -42,7 +42,8 @@ class OscarTWStrategy:
         sell_signal: 賣出訊號
     """
 
-    def __init__(self, sar_max_dots=2, sar_reject_dots=3, config_path="config.yaml"):
+    def __init__(self, sar_max_dots=2, sar_reject_dots=3, config_path="config.yaml", 
+                 sar_params=None, macd_params=None, market_data=None):
         """
         初始化策略參數
         
@@ -50,6 +51,9 @@ class OscarTWStrategy:
             sar_max_dots: SAR連續在下方的最大天數（買進區間上限）
             sar_reject_dots: SAR連續在下方達到此天數時排除（拒絕買進）
             config_path: 設定檔路徑，用於載入 oscar 相關配置
+            sar_params: SAR指標參數字典 {'acceleration': 0.02, 'maximum': 0.2}
+            macd_params: MACD指標參數字典 {'fastperiod': 12, 'slowperiod': 26, 'signalperiod': 9}
+            market_data: 預先載入的市場數據（若提供則不重新載入）
         """
         # 載入配置
         self.config_loader = ConfigLoader(config_path)
@@ -59,6 +63,10 @@ class OscarTWStrategy:
         # 策略參數（可調整用於實驗）
         self.sar_max_dots = sar_max_dots
         self.sar_reject_dots = sar_reject_dots
+        
+        # SAR 和 MACD 指標參數
+        self.sar_params = sar_params or {'acceleration': 0.02, 'maximum': 0.2}
+        self.macd_params = macd_params or {'fastperiod': 12, 'slowperiod': 26, 'signalperiod': 9}
 
         # 成交量大於平均的比例，以及 120 日創新高比例，從設定檔讀取，可覆寫預設值
         # 預設值保留現有行為：volume_above_avg_ratio=0.25, new_high_ratio_120=0.3
@@ -68,40 +76,63 @@ class OscarTWStrategy:
         # 回測報告
         self.report = None
 
-        # 載入市場數據
-        market_data = self._load_data()
+        # 載入市場數據（若未提供則載入）
+        market_data = market_data if market_data is not None else self._load_data()
+        
+        # 儲存市場數據供視覺化使用
+        self.market_data = market_data
+        
+        # 儲存指標數據供視覺化使用
+        self.sar_values = None
+        self.macd_dif = None
+        self.macd_dea = None
+        self.macd_histogram = None
+        
+        # 儲存法人買賣超數據供視覺化使用
+        self.institutional_condition = {
+            'foreign_buy': None,
+            'trust_buy': None,
+            'dealer_buy': None
+        }
+        
+        # 儲存交易價格（開盤價）供視覺化使用
+        self.trade_price = market_data['open']
         
         # 建立買入訊號、賣出訊號
         self.buy_signal = self._build_buy_condition(market_data)
         self.sell_signal = self._build_sell_condition(market_data)
         
-        # ⚠️ 防止look-ahead bias: 訊號往後移1天
-        # Day T 的訊號 → Day T+1 才執行交易
-        # 這樣才符合真實交易：用昨天收盤資料做今天的決策
-        self.buy_signal = self.buy_signal.shift(1)
-        self.sell_signal = self.sell_signal.shift(1)
-        
         # 基礎持倉訊號（未套用持股限制）
         self.base_position = self.buy_signal.hold_until(self.sell_signal)
 
-    def _load_data(self):
+    @staticmethod
+    def load_market_data():
         """
-        載入所需數據
+        靜態方法：載入市場數據（供外部預先載入使用）
         
         Returns:
             dict: 包含所有必要數據的字典
         """
         with data.universe(market='TSE_OTC'):
             return {
-                'close': data.get("price:收盤價"),
-                'adj_close': data.get('etl:adj_close'),
-                'adj_high': data.get('etl:adj_high'),
-                'adj_low': data.get('etl:adj_low'),
+                'open': data.get('price:開盤價'),
+                'close': data.get('price:收盤價'),
+                'high': data.get('price:最高價'),
+                'low': data.get('price:最低價'),
                 'volume': data.get('price:成交股數'),
                 'foreign_net_buy_shares': data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)'),
                 'investment_trust_net_buy_shares': data.get('institutional_investors_trading_summary:投信買賣超股數'),
                 'dealer_self_net_buy_shares': data.get('institutional_investors_trading_summary:自營商買賣超股數(自行買賣)')
             }
+    
+    def _load_data(self):
+        """
+        載入所需數據（實例方法，內部調用靜態方法）
+        
+        Returns:
+            dict: 包含所有必要數據的字典
+        """
+        return self.load_market_data()
 
     def _streak(self, df: pd.DataFrame) -> pd.DataFrame:
         """計算布林值連續為 True 的天數（逐欄位）。"""
@@ -113,22 +144,28 @@ class OscarTWStrategy:
         
         return df.apply(_col_streak)
 
-    def _calculate_sar_condition(self, adj_close):
+    def _calculate_sar_condition(self, close):
         """
         計算 SAR 指標條件
         
         Args:
-            adj_close: 調整後收盤價
+            close: 收盤價
             
         Returns:
             sar_buy_condition: SAR買進條件
             sar_sell_condition: SAR賣出條件
         """
-        # 使用 finlab 的 indicator API 計算 SAR
-        sar = data.indicator('SAR', acceleration=0.02, maximum=0.2, adjust_price=True)
+        # 使用 finlab 的 indicator API 計算 SAR (使用原始價格)
+        sar = data.indicator('SAR', 
+                           acceleration=self.sar_params['acceleration'], 
+                           maximum=self.sar_params['maximum'], 
+                           adjust_price=False)
+        
+        # 儲存 SAR 值供視覺化使用
+        self.sar_values = sar
         
         # SAR 在價格下方表示看漲 (買進訊號)
-        sar_below_price = sar < adj_close
+        sar_below_price = sar < close
 
         # 使用可調參數計算 SAR 連續在下方的天數
         sar_streak = self._streak(sar_below_price)
@@ -137,8 +174,8 @@ class OscarTWStrategy:
         sar_in_buy_zone = (sar_streak >= 1) & (sar_streak <= self.sar_max_dots)
         
         # 檢測不斷創新高的股票 (120天內創新高次數過多)
-        high_120 = adj_close.rolling(120).max()
-        is_new_high = adj_close >= high_120
+        high_120 = close.rolling(120).max()
+        is_new_high = close >= high_120
         new_high_ratio_120 = is_new_high.rolling(120).mean()
         constantly_new_high = new_high_ratio_120 > self.new_high_ratio_120
         
@@ -162,13 +199,17 @@ class OscarTWStrategy:
             macd_buy_condition: MACD買進條件
             macd_sell_condition: MACD賣出條件
         """
-        # 使用 finlab 的 indicator API 計算 MACD
-        # MACD 參數: fastperiod=12, slowperiod=26, signalperiod=9
-        dif, dea, _ = data.indicator('MACD', 
-                                      fastperiod=12, 
-                                      slowperiod=26, 
-                                      signalperiod=9, 
-                                      adjust_price=True)
+        # 使用 finlab 的 indicator API 計算 MACD (使用原始價格)
+        dif, dea, histogram = data.indicator('MACD', 
+                                      fastperiod=self.macd_params['fastperiod'], 
+                                      slowperiod=self.macd_params['slowperiod'], 
+                                      signalperiod=self.macd_params['signalperiod'], 
+                                      adjust_price=False)
+        
+        # 儲存 MACD 值供視覺化使用
+        self.macd_dif = dif
+        self.macd_dea = dea
+        self.macd_histogram = histogram
         
         # 黃金交叉: DIF > MACD 且前一日 DIF <= MACD (剛形成買進訊號)
         # 死亡交叉: DIF < MACD 且前一日 DIF >= MACD
@@ -194,7 +235,7 @@ class OscarTWStrategy:
         # 條件2: 30日平均成交量大於100萬股 (中大型股)
         # 條件3: 排除異常暴量 (當日成交量超過30日平均10倍可能是炒作)
         volume_above_avg = volume > (avg_volume_30 * self.volume_above_avg_ratio)
-        sufficient_liquidity = avg_volume_30 > 1000000
+        sufficient_liquidity = avg_volume_30 > 1_000_000
         not_abnormal_volume = volume < (avg_volume_30 * 10)
         
         return volume_above_avg & sufficient_liquidity & not_abnormal_volume
@@ -212,10 +253,17 @@ class OscarTWStrategy:
             institutional_strong_condition: 三者皆買超
             institutional_weak_condition: 至少兩者買超
         """
-        # 外資買超、投信買超、自營商買超
+        # 外資買超、投信買超、自營商買賣超
         foreign_buy = foreign_net_buy > 0
         trust_buy = trust_net_buy > 0
         dealer_buy = dealer_net_buy > 0
+        
+        # 儲存法人買超數據供視覺化使用
+        self.institutional_condition = {
+            'foreign_buy': foreign_buy,
+            'trust_buy': trust_buy,
+            'dealer_buy': dealer_buy
+        }
         
         # 計算買超家數
         buy_count = foreign_buy.astype(int) + trust_buy.astype(int) + dealer_buy.astype(int)
@@ -238,20 +286,17 @@ class OscarTWStrategy:
         Returns:
             buy_condition: 綜合買進條件
         """
-        sar_buy, _ = self._calculate_sar_condition(market_data['adj_close'])
+        sar_buy, _ = self._calculate_sar_condition(market_data['close'])
         macd_buy, _ = self._calculate_macd_condition()
         volume_ok = self._calculate_volume_condition(market_data['volume'])
-        _, institutional_weak = self._calculate_institutional_condition(
+        institutional_strong, _ = self._calculate_institutional_condition(
             market_data['foreign_net_buy_shares'],
             market_data['investment_trust_net_buy_shares'],
             market_data['dealer_self_net_buy_shares']
         )
         
-        # 核心條件: SAR + MACD + Volume (三者必須同時滿足)
-        core_condition = sar_buy & macd_buy & volume_ok
-        
-        # 最終買進條件: 核心條件 + 至少兩家法人買超
-        buy_condition = core_condition & institutional_weak
+        # 最終買進條件: SAR + MACD + Volume + 三大法人皆買超
+        buy_condition = sar_buy & macd_buy & volume_ok & institutional_strong
         
         return buy_condition
 
@@ -265,7 +310,7 @@ class OscarTWStrategy:
         Returns:
             sell_condition: 綜合賣出條件
         """
-        _, sar_sell = self._calculate_sar_condition(market_data['adj_close'])
+        _, sar_sell = self._calculate_sar_condition(market_data['close'])
         _, macd_sell = self._calculate_macd_condition()
         
         # 賣出條件: SAR翻轉 或 MACD死亡交叉 (任一即賣)
@@ -273,7 +318,7 @@ class OscarTWStrategy:
         
         return sell_condition
 
-    def run_strategy(self, max_stocks=10, start_date='2020-01-01', fee_ratio=0.001425, tax_ratio=0.003):
+    def run_strategy(self, max_stocks=1000, start_date='2020-01-01', fee_ratio=0.001425, tax_ratio=0.003):
         """
         執行策略回測（套用持股限制）
         
@@ -326,10 +371,10 @@ class OscarTWStrategy:
 
 # Example usage:
 if __name__ == "__main__":
-    # 從 args 取得 stock_id
+    # 從 args 取得 stock_id (可選)
     import argparse
     parser = argparse.ArgumentParser(description='Oscar TW Strategy Executor')
-    parser.add_argument('--stock_id', type=str, required=True, help='股票代碼')
+    parser.add_argument('--stock_id', type=str, default=None, help='股票代碼 (可選，若不提供則考慮所有股票)')
     args = parser.parse_args()
     stock_id = args.stock_id
 
@@ -337,20 +382,35 @@ if __name__ == "__main__":
     strategy = OscarTWStrategy(sar_max_dots=2, sar_reject_dots=3)
     
     base_position = strategy.base_position
-    final_position = pd.DataFrame(False, index=base_position.index, columns=base_position.columns)
-
-    # 測試單一股票，並且存 report
-    final_position[stock_id] = base_position[stock_id]
-    report = sim(
-        position=final_position,
-        resample='D',
-        upload=False,
-        market=AdjustTWMarketInfo(),
-        fee_ratio=0.001425,
-        tax_ratio=0.003,
-        position_limit=1.0  # 單一股票全額投資
-    )
-
-    report.display(save_report_path=f'assets/OscarTWStrategy/{stock_id}_report.html')
+    
+    if stock_id:
+        # 單一股票模式：只買該股票
+        final_position = pd.DataFrame(False, index=base_position.index, columns=base_position.columns)
+        final_position[stock_id] = base_position[stock_id]
+        
+        report = sim(
+            position=final_position,
+            resample=None,
+            upload=False,
+            market=AdjustTWMarketInfo(),
+            fee_ratio=0.001425,
+            tax_ratio=0.003,
+            position_limit=1.0  # 單一股票全額投資
+        )
+        
+        report.display(save_report_path=f'assets/OscarTWStrategy/{stock_id}_report.html')
+    else:
+        # 全市場模式：考慮所有股票
+        report = sim(
+            position=base_position,
+            resample=None,
+            upload=False,
+            market=AdjustTWMarketInfo(),
+            fee_ratio=0.001425,
+            tax_ratio=0.003,
+            position_limit=1.0  # 全額投資所有符合條件的股票
+        )
+        
+        report.display(save_report_path=f'assets/OscarTWStrategy/all_stocks_report.html')
     
     
