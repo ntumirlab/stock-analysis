@@ -54,16 +54,16 @@ recommendation_tasks:
 roger:
   weekly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
-    sell_weekday: 1        # 賣出日：週一 ~ 週五 (1-5)
-    max_stocks: 1          # 最大持股數
+    sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
+    max_stocks: 5          # 最大持股數
     stop_loss: null        # 停損比例，若不用則設為 null
     take_profit: null      # 停利比例，若不用則設為 null
     trade_at_price: 'open' # 成交價：'open' 或 'close'
 
   monthly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
-    sell_weekday: 1        # 賣出日：週一 ~ 週五 (1-5)
-    max_stocks: 1          # 最大持股數
+    sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
+    max_stocks: 5          # 最大持股數
     stop_loss: null        # 停損比例，若不用則設為 null
     take_profit: null      # 停利比例，若不用則設為 null
     trade_at_price: 'open' # 成交價：'open' 或 'close'
