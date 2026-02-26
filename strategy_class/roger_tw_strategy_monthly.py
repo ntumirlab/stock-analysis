@@ -3,6 +3,7 @@ import pandas as pd
 from finlab import data
 from finlab.backtest import sim
 from strategy_class.roger_tw_strategy_base import RogerTWStrategyBase
+from markets.customed_tw_market import CustomedTWMarket
 
 class MultiReportWrapper:
     def __init__(self, reports_dict):
@@ -78,6 +79,7 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
                 tax_ratio=3/1000,
                 stop_loss=self.stop_loss,
                 take_profit=self.take_profit,
+                market=CustomedTWMarket(buy_weekday=self.buy_weekday),
                 trade_at_price=self.trade_at_price,
                 resample=None,
                 upload=False,

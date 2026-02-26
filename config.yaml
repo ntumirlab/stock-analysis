@@ -58,7 +58,7 @@ roger:
     max_stocks: 5          # 最大持股數
     stop_loss: null        # 停損比例，若不用則設為 null
     take_profit: null      # 停利比例，若不用則設為 null
-    trade_at_price: 'open' # 成交價：'open' 或 'close'
+    trade_at_price: 'open_close_mix'  # 成交價
 
   monthly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
@@ -66,7 +66,7 @@ roger:
     max_stocks: 5          # 最大持股數
     stop_loss: null        # 停損比例，若不用則設為 null
     take_profit: null      # 停利比例，若不用則設為 null
-    trade_at_price: 'open' # 成交價：'open' 或 'close'
+    trade_at_price: 'open_close_mix'  # 成交價
 
 # Oscar 策略專用參數
 oscar:
