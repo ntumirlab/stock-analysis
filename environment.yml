@@ -31,3 +31,6 @@ dependencies:
       - google.genai==1.59.0
       - flask-autoindex==0.6.6
       - keyring==23.5.0
+      - ruff
+      - pre-commit
+      - detect-secrets

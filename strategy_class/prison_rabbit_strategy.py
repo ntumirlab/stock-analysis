@@ -1,6 +1,7 @@
 from finlab import data
 from finlab.backtest import sim
 
+
 class PrisonRabbitStrategy:
     def __init__(self):
         self.report = None
@@ -26,11 +27,14 @@ class PrisonRabbitStrategy:
                 # 處置時間期間持有
                 position.loc[start_day:end_day, stock_id] = True
 
-        self.report = sim(position, trade_at_price="open", fee_ratio=1.425/1000/3, position_limit=0.2, name='監獄兔')
+        self.report = sim(
+            position, trade_at_price="open", fee_ratio=1.425 / 1000 / 3, position_limit=0.2, name='監獄兔'
+        )
         return self.report
 
     def get_report(self):
         return self.report if self.report else "report物件為空，請先運行策略"
+
 
 # Example usage:
 strategy = PrisonRabbitStrategy()

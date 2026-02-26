@@ -3,9 +3,11 @@ from finlab.market_info import TWMarketInfo
 from finlab.backtest import sim
 from finlab.optimize.combinations import sim_conditions
 
+
 class AdjustTWMarketInfo(TWMarketInfo):
     def get_trading_price(self, name, adj=True):
         return self.get_price(name, adj=adj).shift(1)
+
 
 with data.universe(market='TSE_OTC'):
     # 獲取三大法人的買賣超股數數據
@@ -48,14 +50,16 @@ dealer_self_top_3d_ratio = dealer_self_net_buy_ratio_3d_sum.rank(axis=1, ascendi
 dealer_self_top_5d_ratio = dealer_self_net_buy_ratio_5d_sum.rank(axis=1, ascending=False) <= top_n
 dealer_self_buy_condition = dealer_self_top_3d_ratio | dealer_self_top_5d_ratio
 
-institutional_investors_top_buy_condition = foreign_buy_condition | investment_trust_buy_condition | dealer_self_buy_condition
+institutional_investors_top_buy_condition = (
+    foreign_buy_condition | investment_trust_buy_condition | dealer_self_buy_condition
+)
 
 with data.universe(market='TSE_OTC'):
     # 獲取每檔股票的收盤價數據
     close_price = data.get('price:收盤價')
 
 # 計算三大法人的買賣超股數金額
-foreign_total_net_buy_amount = foreign_net_buy_shares  * close_price  # 外資 = 外陸資買賣超 + 外資自營商
+foreign_total_net_buy_amount = foreign_net_buy_shares * close_price  # 外資 = 外陸資買賣超 + 外資自營商
 investment_trust_net_buy_amount = investment_trust_net_buy_shares * close_price  # 投信
 dealer_total_net_buy_amount = dealer_self_net_buy_shares * close_price  # 自營商
 
@@ -126,10 +130,16 @@ bias_240 = (adj_close - ma240) / ma240
 
 
 # 設定進場條件為乖離率在正向且小於 0.14
-bias_buy_condition = ((bias_10 < 0.14) & (bias_10 > 0) &
-                      (bias_20 < 0.14) & (bias_20 > 0) &
-                      (bias_60 <= 0.21) & (bias_60 >= 0.01) & 
-                      (bias_240 <= 0.25) & (bias_240 >= 0.01))
+bias_buy_condition = (
+    (bias_10 < 0.14)
+    & (bias_10 > 0)
+    & (bias_20 < 0.14)
+    & (bias_20 > 0)
+    & (bias_60 <= 0.21)
+    & (bias_60 >= 0.01)
+    & (bias_240 <= 0.25)
+    & (bias_240 >= 0.01)
+)
 
 with data.universe(market='TSE_OTC'):
     # 獲取成交量數據
@@ -155,7 +165,7 @@ kd_buy_condition = (k > k.shift(1)) & (d > d.shift(1))
 
 with data.universe(market='TSE_OTC'):
     # 計算 MACD 指標
-    dif, macd , _  = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+    dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
 
 # MACD DIF 向上
 macd_dif_buy_condition = dif > dif.shift(1)
@@ -171,30 +181,33 @@ sell_condition_2 = (ma5 < ma5.shift(1)) & (dif < dif.shift(1)) & (minus_di > 21)
 # 合併所有賣出條件
 exits = sell_condition_1 | sell_condition_2
 
-conditions = {'c1':institutional_investors_top_buy_condition  | 
-                    total_market_top_intersection | 
-                    main_force_buy_condition, 
-            'c2':ma_up_buy_condition,
-            'c3':ma5_above_others_condition,
-            'c4':price_above_ma_buy_condition,
-            'c5':bias_buy_condition,
-            'c6':volume_buy_condition,
-            'c7':dmi_buy_condition,
-            'c8':kd_buy_condition,
-            'c9':macd_dif_buy_condition
-            }
-report_collection = sim_conditions(conditions=conditions, hold_until={'exit':exits}, resample=None, upload=False, market=AdjustTWMarketInfo())
+conditions = {
+    'c1': institutional_investors_top_buy_condition | total_market_top_intersection | main_force_buy_condition,
+    'c2': ma_up_buy_condition,
+    'c3': ma5_above_others_condition,
+    'c4': price_above_ma_buy_condition,
+    'c5': bias_buy_condition,
+    'c6': volume_buy_condition,
+    'c7': dmi_buy_condition,
+    'c8': kd_buy_condition,
+    'c9': macd_dif_buy_condition,
+}
+report_collection = sim_conditions(
+    conditions=conditions, hold_until={'exit': exits}, resample=None, upload=False, market=AdjustTWMarketInfo()
+)
 
 import pickle
+
 # 儲存 report_collection 物件至 pkl 文件
 with open('report_collection.pkl', 'wb') as f:
     pickle.dump(report_collection, f)
 
 # 策略分組指標報告
-stats_df  = report_collection.get_stats()
+stats_df = report_collection.get_stats()
 report_collection.plot_creturns().show()
 
 import finlab
+
 # 按照 'daily_mean' 排序，選取表現最好的 5 個策略
 top_strategies = stats_df.loc['daily_mean'].sort_values(ascending=False).head(5).index
 # 篩選出表現最好的前 5 個策略，並繪製累積收益圖

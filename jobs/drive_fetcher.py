@@ -18,16 +18,17 @@ logger = logging.getLogger(__name__)
 # Google Drive API 權限範圍
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
+
 class DriveFetcher:
     def __init__(self, config_path="config.yaml", base_log_directory="logs"):
         self.timestamp = datetime.now(ZoneInfo("Asia/Taipei"))
-        
+
         self.logger_manager = LoggerManager(
             base_log_directory=base_log_directory,
             current_datetime=self.timestamp,
         )
         self.log_file = self.logger_manager.setup_logging()
-        
+
         self.config_loader = ConfigLoader(config_path)
         self.config_loader.load_global_env_vars()
 
@@ -35,7 +36,6 @@ class DriveFetcher:
 
         creds = None
         token_path = self.config_loader.get_env_var('GOOGLE_TOKEN_PATH')
-
 
         if os.path.exists(token_path):
             try:
@@ -75,23 +75,29 @@ class DriveFetcher:
             os.makedirs(local_dir)
 
         logger.info(f"Checking Drive folder for task: {task_name} ({folder_id})...")
-        
+
         download_count = 0
         page_token = None
-        
+
         while True:
             try:
-                query = f"'{folder_id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'"
-                
-                response = self.service.files().list(
-                    q=query,
-                    fields="nextPageToken, files(id, name)",
-                    pageSize=100,
-                    pageToken=page_token,
-                    supportsAllDrives=True,
-                    includeItemsFromAllDrives=True
-                ).execute()
-                
+                query = (
+                    f"'{folder_id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'"
+                )
+
+                response = (
+                    self.service.files()
+                    .list(
+                        q=query,
+                        fields="nextPageToken, files(id, name)",
+                        pageSize=100,
+                        pageToken=page_token,
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True,
+                    )
+                    .execute()
+                )
+
                 items = response.get('files', [])
                 page_token = response.get('nextPageToken')
 
@@ -102,7 +108,7 @@ class DriveFetcher:
 
                     if os.path.exists(local_path):
                         continue
-                    
+
                     logger.info(f"Downloading: {file_name}")
                     try:
                         request = self.service.files().get_media(fileId=file_id)
@@ -111,7 +117,7 @@ class DriveFetcher:
                         done = False
                         while done is False:
                             status, done = downloader.next_chunk()
-                        
+
                         with open(local_path, "wb") as f:
                             f.write(fh.getbuffer())
                         download_count += 1
@@ -120,11 +126,11 @@ class DriveFetcher:
 
                 if not page_token:
                     break
-                    
+
             except Exception as e:
                 logger.error(f"Error listing files for task {task_name}: {e}")
                 break
-        
+
         if download_count > 0:
             logger.info(f"Downloaded {download_count} new files to {local_dir}")
         else:
@@ -137,6 +143,7 @@ class DriveFetcher:
 
         for task_name, task_config in self.tasks_config.items():
             self._download_task(task_name, task_config)
+
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -157,7 +164,5 @@ if __name__ == "__main__":
 
         # 發送錯誤通知
         notifier.send_error(
-            task_name="Google Drive Fetcher",
-            error_message=str(e),
-            error_traceback=traceback.format_exc()
+            task_name="Google Drive Fetcher", error_message=str(e), error_traceback=traceback.format_exc()
         )

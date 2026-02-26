@@ -23,6 +23,7 @@ from .taiwan_kd import taiwan_kd_fast
 
 class AdjustTWMarketInfo(TWMarket):
     """自訂市場資訊類別，用於調整交易價格"""
+
     def get_trading_price(self, name, adj=True):
         return self.get_price(name, adj=adj).shift(1)
 
@@ -61,9 +62,13 @@ class AlanTWStrategyACE:
         """載入所需數據"""
         with data.universe(market='TSE_OTC'):
             # 籌碼面數據
-            self.foreign_net_buy_shares = data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)')
+            self.foreign_net_buy_shares = data.get(
+                'institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)'
+            )
             self.investment_trust_net_buy_shares = data.get('institutional_investors_trading_summary:投信買賣超股數')
-            self.dealer_self_net_buy_shares = data.get('institutional_investors_trading_summary:自營商買賣超股數(自行買賣)')
+            self.dealer_self_net_buy_shares = data.get(
+                'institutional_investors_trading_summary:自營商買賣超股數(自行買賣)'
+            )
             self.shares_outstanding = data.get('internal_equity_changes:發行股數')
 
             # 價格與技術指標數據
@@ -102,7 +107,9 @@ class AlanTWStrategyACE:
         investment_trust_top_1d_ratio = investment_trust_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
         investment_trust_top_2d_ratio = investment_trust_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= top_n
         investment_trust_top_3d_ratio = investment_trust_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= top_n
-        investment_trust_buy_condition = investment_trust_top_1d_ratio | investment_trust_top_2d_ratio | investment_trust_top_3d_ratio
+        investment_trust_buy_condition = (
+            investment_trust_top_1d_ratio | investment_trust_top_2d_ratio | investment_trust_top_3d_ratio
+        )
 
         # 自營商條件
         dealer_self_top_1d_ratio = dealer_self_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -129,18 +136,25 @@ class AlanTWStrategyACE:
         main_force_condition_3d = net_buy_ratio_3d_sum > 0.0025
 
         main_force_buy_condition = (
-            (main_force_top_1d_buy & main_force_condition_1d) |
-            (main_force_top_2d_buy & main_force_condition_2d) |
-            (main_force_top_3d_buy & main_force_condition_3d)
+            (main_force_top_1d_buy & main_force_condition_1d)
+            | (main_force_top_2d_buy & main_force_condition_2d)
+            | (main_force_top_3d_buy & main_force_condition_3d)
         )
 
         chip_buy_condition = foreign_buy_condition | dealer_self_buy_condition | main_force_buy_condition
 
         return chip_buy_condition
 
-    def _build_technical_buy_condition(self, bias_5_range, bias_10_range, bias_20_range,
-                                       bias_60_range, bias_120_range, bias_240_range,
-                                       new_high_days=120):
+    def _build_technical_buy_condition(
+        self,
+        bias_5_range,
+        bias_10_range,
+        bias_20_range,
+        bias_60_range,
+        bias_120_range,
+        bias_240_range,
+        new_high_days=120,
+    ):
         """建立技術面條件"""
         # 計算均線
         ma3 = self.adj_close.rolling(3).mean()
@@ -153,14 +167,12 @@ class AlanTWStrategyACE:
 
         # 均線上升
         ma_up_buy_condition = (
-            (ma5 > ma5.shift(1)) & (ma10 > ma10.shift(1)) &
-            (ma20 > ma20.shift(1)) & (ma60 > ma60.shift(1))
+            (ma5 > ma5.shift(1)) & (ma10 > ma10.shift(1)) & (ma20 > ma20.shift(1)) & (ma60 > ma60.shift(1))
         )
 
         # 價格在均線之上
         price_above_ma_buy_condition = (
-            (self.adj_close > ma5) & (self.adj_close > ma10) &
-            (self.adj_close > ma20) & (self.adj_close > ma60)
+            (self.adj_close > ma5) & (self.adj_close > ma10) & (self.adj_close > ma20) & (self.adj_close > ma60)
         )
 
         # 計算乖離率
@@ -179,8 +191,12 @@ class AlanTWStrategyACE:
         bias_240_condition = (bias_240 >= bias_240_range[0]) & (bias_240 <= bias_240_range[1])
 
         bias_buy_condition = (
-            bias_5_condition & bias_10_condition & bias_20_condition &
-            bias_60_condition & bias_120_condition & bias_240_condition
+            bias_5_condition
+            & bias_10_condition
+            & bias_20_condition
+            & bias_60_condition
+            & bias_120_condition
+            & bias_240_condition
         )
 
         # 價格與成交量條件
@@ -198,11 +214,7 @@ class AlanTWStrategyACE:
 
         # KD指標
         k, d = taiwan_kd_fast(
-            high_df=self.adj_high,
-            low_df=self.adj_low,
-            close_df=self.adj_close,
-            fastk_period=9,
-            alpha=1/3
+            high_df=self.adj_high, low_df=self.adj_low, close_df=self.adj_close, fastk_period=9, alpha=1 / 3
         )
 
         k_up_condition = k > k.shift(1)
@@ -221,26 +233,24 @@ class AlanTWStrategyACE:
 
         # 技術面綜合條件
         technical_buy_condition = (
-            ma_up_buy_condition &
-            price_above_ma_buy_condition &
-            bias_buy_condition &
-            volume_doubled_condition &
-            volume_above_500_condition &
-            price_above_12_condition &
-            amount_condition &
-            dmi_buy_condition &
-            kd_buy_condition &
-            macd_dif_buy_condition &
-            new_high_condition
+            ma_up_buy_condition
+            & price_above_ma_buy_condition
+            & bias_buy_condition
+            & volume_doubled_condition
+            & volume_above_500_condition
+            & price_above_12_condition
+            & amount_condition
+            & dmi_buy_condition
+            & kd_buy_condition
+            & macd_dif_buy_condition
+            & new_high_condition
         )
 
         return technical_buy_condition
 
     def _build_fundamental_buy_condition(self, op_growth_threshold):
         """建立基本面條件"""
-        operating_margin_increase = (
-            self.operating_margin > (self.operating_margin.shift(1) * op_growth_threshold)
-        )
+        operating_margin_increase = self.operating_margin > (self.operating_margin.shift(1) * op_growth_threshold)
 
         return operating_margin_increase
 
@@ -275,15 +285,11 @@ class AlanTWStrategyACE:
             bias_60_range=(0.08, 0.20),
             bias_120_range=(0.05, 0.26),
             bias_240_range=(0.08, 0.26),
-            new_high_days=120
+            new_high_days=120,
         )
         fundamental_buy_condition_A = self._build_fundamental_buy_condition(1.001)
 
-        buy_signal_A = (
-            chip_buy_condition_A &
-            technical_buy_condition_A &
-            fundamental_buy_condition_A
-        )
+        buy_signal_A = chip_buy_condition_A & technical_buy_condition_A & fundamental_buy_condition_A
 
         # 策略 C: top_n=25, 營益率 12.5%, BIAS: 3~13, 5~16, 8~19, 8~20, 5~27, 8~31
         print("📊 計算策略 C 條件...")
@@ -295,15 +301,11 @@ class AlanTWStrategyACE:
             bias_60_range=(0.08, 0.20),
             bias_120_range=(0.05, 0.27),
             bias_240_range=(0.08, 0.31),
-            new_high_days=120
+            new_high_days=120,
         )
         fundamental_buy_condition_C = self._build_fundamental_buy_condition(1.125)
 
-        buy_signal_C = (
-            chip_buy_condition_C &
-            technical_buy_condition_C &
-            fundamental_buy_condition_C
-        )
+        buy_signal_C = chip_buy_condition_C & technical_buy_condition_C & fundamental_buy_condition_C
 
         # 策略 E: top_n=40, 營益率 12.5%, BIAS: 3~13, 5~16, 8~19, 8~20, 5~35, 8~35, 創480天新高
         print("📊 計算策略 E 條件...")
@@ -315,22 +317,18 @@ class AlanTWStrategyACE:
             bias_60_range=(0.08, 0.20),
             bias_120_range=(0.05, 0.35),
             bias_240_range=(0.08, 0.35),
-            new_high_days=480
+            new_high_days=480,
         )
         fundamental_buy_condition_E = self._build_fundamental_buy_condition(1.125)
 
-        buy_signal_E = (
-            chip_buy_condition_E &
-            technical_buy_condition_E &
-            fundamental_buy_condition_E
-        )
+        buy_signal_E = chip_buy_condition_E & technical_buy_condition_E & fundamental_buy_condition_E
 
         # 組合買入訊號: A | C | E
         print("📊 組合 A|C|E 策略...")
         self.buy_signal = buy_signal_A | buy_signal_C | buy_signal_E
 
         # 設定起始日期
-        self.buy_signal = self.buy_signal.loc[self.start_date:]
+        self.buy_signal = self.buy_signal.loc[self.start_date :]
 
         # 建立賣出條件
         print("📊 計算賣出條件...")
@@ -349,7 +347,7 @@ class AlanTWStrategyACE:
             'upload': False,
             'market': AdjustTWMarketInfo(),
             'fee_ratio': self.slippage + fee_ratio,
-            'tax_ratio': tax_ratio
+            'tax_ratio': tax_ratio,
         }
 
         if self.position_limit is not None:

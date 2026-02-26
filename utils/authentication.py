@@ -12,6 +12,7 @@ from utils.config_loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
 
+
 class Authenticator:
     def __init__(self, config_loader: ConfigLoader | None = None):
         self.config_loader = config_loader
@@ -22,7 +23,7 @@ class Authenticator:
         token = self.config_loader.get_env_var("FINLAB_API_TOKEN")
         if not token:
             raise EnvironmentError("Missing environment variable: FINLAB_API_TOKEN")
-        
+
         finlab.login(token)
         logger.info("Successfully logged into FinLab")
 
@@ -30,11 +31,11 @@ class Authenticator:
         if not self.config_loader:
             raise RuntimeError("ConfigLoader is required for Authenticator. Pass an instance when constructing.")
         required_vars = [
-            "FUGLE_CONFIG_PATH", 
-            "FUGLE_MARKET_API_KEY", 
-            "FUGLE_ACCOUNT", 
-            "FUGLE_ACCOUNT_PASSWORD", 
-            "FUGLE_CERT_PASSWORD"
+            "FUGLE_CONFIG_PATH",
+            "FUGLE_MARKET_API_KEY",
+            "FUGLE_ACCOUNT",
+            "FUGLE_ACCOUNT_PASSWORD",
+            "FUGLE_CERT_PASSWORD",
         ]
         for var in required_vars:
             if not self.config_loader.get_env_var(var):
@@ -42,9 +43,13 @@ class Authenticator:
 
         # 根據作業系統判斷 cryptfile_pass.cfg 的位置
         if sys.platform.startswith("win"):
-            cryptfile_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Python Keyring", "cryptfile_pass.cfg")
+            cryptfile_path = os.path.join(
+                os.path.expanduser("~"), "AppData", "Local", "Python Keyring", "cryptfile_pass.cfg"
+            )
         elif sys.platform.startswith("linux"):
-            cryptfile_path = os.path.join(os.path.expanduser("~"), ".local", "share", "python_keyring", "cryptfile_pass.cfg")
+            cryptfile_path = os.path.join(
+                os.path.expanduser("~"), ".local", "share", "python_keyring", "cryptfile_pass.cfg"
+            )
         else:
             raise EnvironmentError("Unsupported operating system for cryptfile_pass.cfg handling")
 
@@ -59,8 +64,12 @@ class Authenticator:
 
         fugle_account = self.config_loader.get_env_var("FUGLE_ACCOUNT")
         setup_keyring(fugle_account)
-        keyring.set_password("fugle_trade_sdk:account", fugle_account, self.config_loader.get_env_var("FUGLE_ACCOUNT_PASSWORD"))
-        keyring.set_password("fugle_trade_sdk:cert", fugle_account, self.config_loader.get_env_var("FUGLE_CERT_PASSWORD"))
+        keyring.set_password(
+            "fugle_trade_sdk:account", fugle_account, self.config_loader.get_env_var("FUGLE_ACCOUNT_PASSWORD")
+        )
+        keyring.set_password(
+            "fugle_trade_sdk:cert", fugle_account, self.config_loader.get_env_var("FUGLE_CERT_PASSWORD")
+        )
 
         account = FugleAccount()
         logger.info("Successfully logged into Fugle")
@@ -70,11 +79,11 @@ class Authenticator:
         if not self.config_loader:
             raise RuntimeError("ConfigLoader is required for Authenticator. Pass an instance when constructing.")
         required_vars = [
-            "SHIOAJI_API_KEY", 
-            "SHIOAJI_SECRET_KEY", 
-            "SHIOAJI_CERT_PERSON_ID", 
-            "SHIOAJI_CERT_PATH", 
-            "SHIOAJI_CERT_PASSWORD"
+            "SHIOAJI_API_KEY",
+            "SHIOAJI_SECRET_KEY",
+            "SHIOAJI_CERT_PERSON_ID",
+            "SHIOAJI_CERT_PATH",
+            "SHIOAJI_CERT_PASSWORD",
         ]
         for var in required_vars:
             if not self.config_loader.get_env_var(var):
@@ -104,8 +113,8 @@ class Authenticator:
         else:
             raise ValueError(f"Unsupported broker: {broker_name}")
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     root_dir = path.dirname(path.dirname(path.abspath(__file__)))
     os.chdir(root_dir)
 

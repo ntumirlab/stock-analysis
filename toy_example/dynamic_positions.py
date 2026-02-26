@@ -40,5 +40,5 @@ position.loc['2024-10-27':'2024-10-30', '1102'] = 0.5
 
 report = backtest.sim(position, resample=None, upload=False, name="test")
 
-position_today = Position.from_report(report, 1000, odd_lot=True) # 零股
+position_today = Position.from_report(report, 1000, odd_lot=True)  # 零股
 print(position_today)

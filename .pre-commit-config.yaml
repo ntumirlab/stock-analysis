@@ -1,0 +1,82 @@
+# Pre-commit hooks for stock-analysis trading system
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Ruff - Fast Python linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      # Run the linter
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
+      # Run the formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # Security checks for hardcoded secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package.lock.json
+
+  # Basic file hygiene checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags
+      - id: check-toml
+      - id: check-json
+      - id: end-of-file-fixer
+        exclude: '^(assets/|logs/|finlab_db/)'
+      - id: trailing-whitespace
+        exclude: '^(assets/|logs/|finlab_db/)'
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: debug-statements
+
+  # Check for common Python anti-patterns
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-use-type-annotations
+      - id: python-check-blanket-noqa
+      - id: python-check-blanket-type-ignore
+      - id: python-no-eval
+      - id: python-no-log-warn
+
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        args: ['--ignore', 'DL3008', '--ignore', 'DL3013']
+
+  # YAML formatting
+  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.14.0
+    hooks:
+      - id: pretty-format-yaml
+        args: [--autofix, --indent, '2']
+        exclude: '^(environment\.yml|\.github/)'
+
+# Global file exclusions
+exclude: |
+  (?x)^(
+      .*/__pycache__/.*|
+      .*\.pyc$|
+      .*\.egg-info/.*|
+      finlab_db/.*|
+      logs/.*|
+      assets/.*|
+      \.venv/.*|
+      venv/.*
+  )$

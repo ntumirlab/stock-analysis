@@ -13,12 +13,14 @@ eq_price = eq_ratio / close.reindex(eq_ratio.index, method='ffill')
 
 rebalance = eq_price.index
 
-position = eq_price[(
-    (close > close.average(60))
-    & (volume > 200_000)
-    & (volume.average(10) > volume.average(60))
-    & (rd_pm.deadline().rank(axis=1, pct=True) > 0.5)
-).reindex(rebalance)].is_largest(20)
+position = eq_price[
+    (
+        (close > close.average(60))
+        & (volume > 200_000)
+        & (volume.average(10) > volume.average(60))
+        & (rd_pm.deadline().rank(axis=1, pct=True) > 0.5)
+    ).reindex(rebalance)
+].is_largest(20)
 
 rebalance = eq_ratio.index
 

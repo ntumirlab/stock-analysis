@@ -19,8 +19,11 @@ apply_finlab_patches()
 
 logger = logging.getLogger(__name__)
 
+
 class OrderExecutor:
-    def __init__(self, user_name, market_order, broker_name, view_only, config_path="config.yaml", base_log_directory="logs"):
+    def __init__(
+        self, user_name, market_order, broker_name, view_only, config_path="config.yaml", base_log_directory="logs"
+    ):
         self.user_name = user_name
         self.market_order = market_order
         self.broker_name = broker_name
@@ -36,8 +39,7 @@ class OrderExecutor:
 
         self.order_timestamp = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
         self.logger_manager = LoggerManager(
-            base_log_directory=base_log_directory,
-            current_datetime=self.order_timestamp
+            base_log_directory=base_log_directory, current_datetime=self.order_timestamp
         )
         self.log_file = self.logger_manager.setup_logging()
         logger.info(f"user_name: {self.user_name}, broker_name: {self.broker_name}")
@@ -51,9 +53,11 @@ class OrderExecutor:
         strategy = self.load_strategy(strategy_class_name)
         report = strategy.run_strategy()
 
-        port = Portfolio({
-            'strategy': (report, 1.0),
-        })
+        port = Portfolio(
+            {
+                'strategy': (report, 1.0),
+            }
+        )
         pm_name = f"{self.user_name}_{self.broker_name}"
         try:
             pm = PortfolioSyncManager.from_local(name=pm_name)
@@ -63,10 +67,19 @@ class OrderExecutor:
         total_balance = self.account.get_total_balance()
         logger.info(f"Total balance: {total_balance}")
         if total_balance <= 0:
-            raise ValueError(f"{self.user_name}'s total balance is not positive. Please check your {self.broker_name} account balance.")
+            raise ValueError(
+                f"{self.user_name}'s total balance is not positive. Please check your {self.broker_name} account balance."
+            )
 
         safety_weight = self.config_loader.get_user_constant("rebalance_safety_weight")
-        pm.update(port, total_balance=total_balance, rebalance_safety_weight=safety_weight, odd_lot=True, force_override_difference=True, smooth_transition=False)
+        pm.update(
+            port,
+            total_balance=total_balance,
+            rebalance_safety_weight=safety_weight,
+            odd_lot=True,
+            force_override_difference=True,
+            smooth_transition=False,
+        )
         pm.to_local(name=pm_name)
 
         # 創建 order_executor（不實際下單，只用來顯示警示股）
@@ -87,14 +100,14 @@ class OrderExecutor:
             logger.warning("Today not have any order")
             return
         else:
-
             for order in order_logs:
                 order['stock_name'] = self.stock_mapper.map(order['stock_id'])
 
-            account_name = self.user_name+"_"+self.broker_name
-            account_id = self.account_dao.get_account_id(account_name, broker_name=self.broker_name, user_name=self.user_name)
+            account_name = self.user_name + "_" + self.broker_name
+            account_id = self.account_dao.get_account_id(
+                account_name, broker_name=self.broker_name, user_name=self.user_name
+            )
             self.order_dao.insert_order_logs(order_logs, account_id, self.order_timestamp, view_only=self.view_only)
-
 
     def _handle_alerting_stocks_reservation(self):
         """處理警示股圈存（使用策略模式支援多券商）"""
@@ -120,6 +133,7 @@ class OrderExecutor:
             raise ValueError(f"Unknown strategy class: {strategy_class_name}")
         return strategy_class()
 
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root_dir)
@@ -142,8 +156,8 @@ if __name__ == "__main__":
             market_order=True,
             broker_name=args.broker_name,
             view_only=args.view_only,
-            config_path = os.path.join(root_dir, "config.yaml"),
-            base_log_directory = os.path.join(root_dir, "logs")
+            config_path=os.path.join(root_dir, "config.yaml"),
+            base_log_directory=os.path.join(root_dir, "logs"),
         )
         order_executor.run_strategy_and_sync()
     except Exception as e:
@@ -155,7 +169,7 @@ if __name__ == "__main__":
             error_message=str(e),
             user_name=args.user_name,
             broker_name=args.broker_name,
-            error_traceback=traceback.format_exc()
+            error_traceback=traceback.format_exc(),
         )
 
     # python -m jobs.order_executor --user_name junting --broker_name fugle --view_only

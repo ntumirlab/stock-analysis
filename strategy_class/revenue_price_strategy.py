@@ -1,6 +1,7 @@
 from finlab import data
 from finlab.backtest import sim
 
+
 class RevenuePriceStrategy:
     def __init__(self):
         self.report = None
@@ -27,12 +28,21 @@ class RevenuePriceStrategy:
         position = position[position > 0].is_largest(10).reindex(rev.index_str_to_date().index, method='ffill')
 
         # 設定position_limit避免重壓
-        self.report = sim(position=position, stop_loss=0.2, take_profit=0.8, position_limit=0.25, fee_ratio=1.425 / 1000 * 0.3, name="營收股價雙渦輪", live_performance_start='2022-10-01')
+        self.report = sim(
+            position=position,
+            stop_loss=0.2,
+            take_profit=0.8,
+            position_limit=0.25,
+            fee_ratio=1.425 / 1000 * 0.3,
+            name="營收股價雙渦輪",
+            live_performance_start='2022-10-01',
+        )
 
         return self.report
 
     def get_report(self):
         return self.report if self.report else "report物件為空，請先運行策略"
+
 
 # Example usage
 strategy = RevenuePriceStrategy()

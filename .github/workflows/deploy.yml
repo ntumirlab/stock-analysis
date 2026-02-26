@@ -1,35 +1,288 @@
-name: CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [ "main" ]
 
+# Set default permissions for version tagging
+permissions:
+  contents: write  # Needed to create tags and releases
+
 jobs:
-  deploy:
+  # ========================================
+  # Phase 1: Build Validation (CI Job)
+  # ========================================
+  # Purpose: Validate Docker build before deploying to production
+  # This catches configuration errors early without touching the server
+  build:
+    name: Build & Validate
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha_short: ${{ steps.version.outputs.sha_short }}
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for versioning
+
+      - name: Generate Version
+        id: version
+        run: |
+          # Generate semantic version based on commit count
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          SHA_SHORT=$(git rev-parse --short HEAD)
+          VERSION="v1.0.${COMMIT_COUNT}"
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "sha_short=${SHA_SHORT}" >> $GITHUB_OUTPUT
+          echo "📌 Version: ${VERSION} (${SHA_SHORT})"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Build Dry-Run (Validation Only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false  # Don't push to registry, just validate
+          tags: stock-analysis:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ steps.version.outputs.sha_short }}
+
+  # ========================================
+  # Phase 3: Deployment (CD Job)
+  # ========================================
+  # Purpose: Deploy to production server only if build succeeds
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build  # Wait for build job to succeed
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1
         env:
-          ENV_FILE: ${{ secrets.ENV_FILE }}
+          ENV_FILE_BASE64: ${{ secrets.ENV_FILE_BASE64 }}
+          VERSION: ${{ needs.build.outputs.version }}
+          GIT_SHA: ${{ needs.build.outputs.sha_short }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 10220
-          envs: ENV_FILE
+          # Phase 3: SSH Resilience Configuration
+          command_timeout: 10m        # Allow up to 10 minutes for build
+          timeout: 15m                # Total SSH session timeout
+          sync: true                  # Wait for command completion
+          envs: ENV_FILE_BASE64,VERSION,GIT_SHA
           script: |
-            set -e
+            set -e  # Exit on any error
+            set -u  # Exit on undefined variable
+            set -o pipefail  # Exit on pipe failures
 
+            echo "🚀 Starting deployment ${VERSION} (${GIT_SHA})..."
             cd ~/stock-analysis
 
+            # Phase 3: Pull latest code first (atomic deployment prep)
+            echo "📥 Fetching latest code..."
             git fetch --all
             git checkout main
             git pull origin main
 
-            echo "$ENV_FILE" > .env
+            # Phase 2: Secure .env handling with Base64 decoding
+            echo "🔐 Updating environment configuration..."
+            echo "$ENV_FILE_BASE64" | base64 -d > .env
 
-            docker compose down
-            docker compose up -d --build
+            # Write version info to file for display
+            echo "📌 Writing version info..."
+            echo "${VERSION}" > VERSION
+            echo "{\"version\":\"${VERSION}\",\"commit\":\"${GIT_SHA}\",\"deployed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > version.json
+
+            # Phase 4: Tag Docker image with version for fast rollback
+            echo "🏷️  Building and tagging Docker image..."
+            export IMAGE_TAG="${VERSION}"
             
-            docker image prune -f
+            # Build image with version tag
+            docker compose build --build-arg VERSION="${VERSION}"
+            
+            # Tag the newly built image with version
+            SERVICE_IMAGE=$(docker compose config | grep 'image:' | head -1 | awk '{print $2}')
+            if [ -n "$SERVICE_IMAGE" ]; then
+              docker tag "${SERVICE_IMAGE}" "stock-analysis:${VERSION}"
+              docker tag "${SERVICE_IMAGE}" "stock-analysis:latest"
+              echo "✅ Tagged image: stock-analysis:${VERSION}"
+            fi
+
+            # Phase 3: Atomic deployment - use pre-built image
+            echo "🔄 Restarting services with version ${VERSION}..."
+            docker compose up -d --no-build --remove-orphans
+
+            # Phase 3: Wait for services to stabilize
+            echo "⏳ Waiting for services to start..."
+            sleep 5
+
+      - name: Health Check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 10220
+          command_timeout: 2m
+          timeout: 3m
+          sync: true
+          script: |
+            set -e
+            cd ~/stock-analysis
+
+            echo "🏥 Running health checks..."
+            
+            # Check if containers are running
+            if ! docker compose ps --format json | grep -q '"State":"running"'; then
+              echo "❌ ERROR: No containers are running!"
+              docker compose ps
+              exit 1
+            fi
+
+            # Display container status
+            echo "✅ Container Status:"
+            docker compose ps
+
+            # Check for unhealthy containers
+            UNHEALTHY=$(docker compose ps --format json | grep -c '"Health":"unhealthy"' || true)
+            if [ "$UNHEALTHY" -gt 0 ]; then
+              echo "⚠️  WARNING: Found $UNHEALTHY unhealthy container(s)"
+              docker compose ps --filter "health=unhealthy"
+            fi
+
+            # Display resource usage
+            echo ""
+            echo "💾 Resource Usage:"
+            docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+
+            echo ""
+            echo "✅ Health check completed successfully!"
+
+      - name: Cleanup Old Images
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 10220
+          command_timeout: 5m
+          sync: true
+          script: |
+            cd ~/stock-analysis
+            
+            echo "🧹 Cleaning up old Docker images..."
+            
+            # Phase 4: Smart cleanup - keep last 3 versions for fast rollback
+            echo "📦 Keeping last 3 version-tagged images..."
+            
+            # List all stock-analysis images with version tags, skip latest
+            IMAGES_TO_DELETE=$(docker images --format "{{.Repository}}:{{.Tag}}" | \
+              grep "^stock-analysis:v" | \
+              sort -V -r | \
+              tail -n +4)
+            
+            if [ -n "$IMAGES_TO_DELETE" ]; then
+              echo "🗑️  Removing old versions:"
+              echo "$IMAGES_TO_DELETE"
+              echo "$IMAGES_TO_DELETE" | xargs -r docker rmi -f || true
+            else
+              echo "✅ No old versions to remove (keeping last 3)"
+            fi
+            
+            # Remove dangling images (untagged)
+            docker image prune -f --filter "dangling=true"
+            
+            # Remove old containers (already stopped by compose)
+            docker container prune -f
+            
+            # Show current tagged images
+            echo ""
+            echo "📦 Available rollback versions:"
+            docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep "stock-analysis" || echo "None"
+            
+            # Show disk usage after cleanup
+            echo ""
+            echo "💿 Docker Disk Usage After Cleanup:"
+            docker system df
+
+  # ========================================
+  # Version Tagging (After Successful Deploy)
+  # ========================================
+  tag-release:
+    name: Tag Release
+    runs-on: ubuntu-latest
+    needs: [build, deploy]
+    if: success()
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Git Tag
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          SHA_SHORT="${{ needs.build.outputs.sha_short }}"
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create annotated tag
+          git tag -a "${VERSION}" -m "Release ${VERSION}
+          
+          🚀 Deployed: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          📝 Commit: ${SHA_SHORT}
+          ✅ Status: Production deployment successful"
+          
+          # Push tag
+          git push origin "${VERSION}"
+          
+          echo "✅ Created tag: ${VERSION}"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.build.outputs.version }}
+          release_name: Release ${{ needs.build.outputs.version }}
+          body: |
+            ## 🚀 Deployment Information
+            
+            **Version:** `${{ needs.build.outputs.version }}`  
+            **Commit:** `${{ needs.build.outputs.sha_short }}`  
+            **Deployed:** ${{ github.event.head_commit.timestamp }}  
+            **Triggered by:** @${{ github.actor }}
+            
+            ---
+            
+            ### ✅ Deployment Status
+            
+            - [x] Build validation passed
+            - [x] Deployed to production server
+            - [x] Health checks passed
+            - [x] Cleanup completed
+            
+            ### 📦 Changes Included
+            
+            ${{ github.event.head_commit.message }}
+            
+            ---
+            
+            **View full changes:** [${{ github.event.before }}...${{ github.sha }}](https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }})
+          draft: false
+          prerelease: false

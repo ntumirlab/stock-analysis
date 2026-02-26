@@ -1,0 +1,73 @@
+[tool.ruff]
+# Target version for syntax (e.g., Python 3.12)
+target-version = "py312"
+
+# Line length (adjust to your preference)
+line-length = 120
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "build",
+    "dist",
+    ".eggs",
+    "*.egg-info",
+    "finlab_db",
+    "logs",
+    "assets",
+]
+
+[tool.ruff.lint]
+# 1. Choose which rule categories to enable
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes (logic bugs)
+    "I",    # isort (import sorting)
+    "B",    # flake8-bugbear (common design flaws)
+    "UP",   # pyupgrade (modernize your Python syntax)
+    "S",    # flake8-bandit (security checks)
+    "C4",   # flake8-comprehensions
+    "DTZ",  # flake8-datetimez (enforce timezone-aware datetimes)
+    "T20",  # flake8-print (catch print statements)
+    "RET",  # flake8-return (return statement issues)
+    "SIM",  # flake8-simplify
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    "PL",   # Pylint
+    "TRY",  # tryceratops (exception handling)
+]
+
+# 2. Choose which specific rules to ignore
+ignore = [
+    "E501",    # Ignore line length violations (handled by formatter)
+    "B008",    # Ignore function calls in default arguments
+    "S101",    # Allow assert statements (common in tests)
+    "TRY003",  # Allow long exception messages
+    "PLR0913", # Allow many function arguments (common in financial calcs)
+    "S311",    # Allow pseudo-random generators (not for crypto)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow print statements and security issues in tests and scripts
+"tests/**/*.py" = ["T20", "S"]
+"*.sh" = ["T20"]
+"experiments/**/*.py" = ["T20"]
+"toy_example/**/*.py" = ["T20", "S", "ARG"]
+
+[tool.ruff.lint.isort]
+# Group imports into sections
+known-first-party = ["dao", "service", "jobs", "strategy_class", "modules", "utils", "indicators"]
+
+[tool.ruff.format]
+# Allow both single and double quotes (preserve existing style)
+quote-style = "preserve"
+
+# Indent with spaces
+indent-style = "space"
+
+# Like Black, respect magic trailing commas
+skip-magic-trailing-comma = false

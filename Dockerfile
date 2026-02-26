@@ -14,6 +14,18 @@ RUN conda env create -f environment.yml && \
 # 最終 runtime image
 FROM continuumio/miniconda3:latest
 
+# Build arguments for version tracking
+ARG VERSION="unknown"
+ARG BUILD_DATE="unknown"
+ARG GIT_COMMIT="unknown"
+
+# Labels for image metadata (enables version tracking in rollback)
+LABEL org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      git.commit="${GIT_COMMIT}" \
+      app.version="${VERSION}"
+
 # 安裝必要的系統套件
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

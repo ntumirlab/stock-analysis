@@ -8,6 +8,7 @@ FinLab Order Executor Patcher
 2. 用 Monkey Patch 替換掉 finlab 內部的函數
 3. 把函數內的 print() 輸出改成 logger.info()
 """
+
 import logging
 import builtins  # 直接導入 builtins,不用判斷 __builtins__ 的型別!
 from typing import Optional
@@ -163,10 +164,7 @@ def apply_finlab_patches() -> bool:
 
 if __name__ == "__main__":
     # 測試用
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     print("=== 開始測試 FinLab Patcher ===")
     success = apply_finlab_patches()
@@ -176,11 +174,16 @@ if __name__ == "__main__":
 
         # 測試: 檢查 finlab 是否真的被 patch 了
         import finlab.online.order_executor as oe
+
         print(f"[OK] finlab.online.order_executor.logger 存在: {hasattr(oe, 'logger')}")
 
         # 測試: 檢查函數是否被替換
-        print(f"[OK] OrderExecutor.execute_orders 已被替換: {oe.OrderExecutor.execute_orders.__name__ == 'patched_execute_orders'}")
-        print(f"[OK] OrderExecutor.show_alerting_stocks 已被替換: {oe.OrderExecutor.show_alerting_stocks.__name__ == 'patched_show_alerting_stocks'}")
+        print(
+            f"[OK] OrderExecutor.execute_orders 已被替換: {oe.OrderExecutor.execute_orders.__name__ == 'patched_execute_orders'}"
+        )
+        print(
+            f"[OK] OrderExecutor.show_alerting_stocks 已被替換: {oe.OrderExecutor.show_alerting_stocks.__name__ == 'patched_show_alerting_stocks'}"
+        )
 
         print("\n=== 所有測試通過! ===")
     else:

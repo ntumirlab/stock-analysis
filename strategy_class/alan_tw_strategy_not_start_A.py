@@ -29,6 +29,7 @@ import numpy as np
 
 class AdjustTWMarketInfo(TWMarket):
     """自訂市場資訊類別，用於調整交易價格"""
+
     def get_trading_price(self, name, adj=True):
         return self.get_price(name, adj=adj).shift(1)
 
@@ -66,7 +67,7 @@ class AlanTWStrategyNotStartA:
         self.bias_20_range = (-0.03, 0.19)
         self.bias_60_range = (-0.03, 0.20)
         self.bias_120_range = (-0.03, 0.27)  # A版: -3~27%
-        self.bias_240_range = (0.00, 0.31)   # A版: 0~31%
+        self.bias_240_range = (0.00, 0.31)  # A版: 0~31%
 
         # A版賣出乖離率參數
         self.sell_bias_240_threshold = 0.32  # A版: 32%
@@ -83,9 +84,13 @@ class AlanTWStrategyNotStartA:
         """載入所需數據"""
         with data.universe(market='TSE_OTC'):
             # 籌碼面數據
-            self.foreign_net_buy_shares = data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)')
+            self.foreign_net_buy_shares = data.get(
+                'institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)'
+            )
             self.investment_trust_net_buy_shares = data.get('institutional_investors_trading_summary:投信買賣超股數')
-            self.dealer_self_net_buy_shares = data.get('institutional_investors_trading_summary:自營商買賣超股數(自行買賣)')
+            self.dealer_self_net_buy_shares = data.get(
+                'institutional_investors_trading_summary:自營商買賣超股數(自行買賣)'
+            )
             self.shares_outstanding = data.get('internal_equity_changes:發行股數')
 
             # 價格與技術指標數據
@@ -124,7 +129,9 @@ class AlanTWStrategyNotStartA:
         investment_trust_top_1d_ratio = investment_trust_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
         investment_trust_top_2d_ratio = investment_trust_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= top_n
         investment_trust_top_3d_ratio = investment_trust_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= top_n
-        investment_trust_buy_condition = investment_trust_top_1d_ratio | investment_trust_top_2d_ratio | investment_trust_top_3d_ratio
+        investment_trust_buy_condition = (
+            investment_trust_top_1d_ratio | investment_trust_top_2d_ratio | investment_trust_top_3d_ratio
+        )
 
         # 自營商條件
         dealer_self_top_1d_ratio = dealer_self_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
@@ -151,9 +158,9 @@ class AlanTWStrategyNotStartA:
         main_force_condition_3d = net_buy_ratio_3d_sum > 0.0025
 
         main_force_buy_condition = (
-            (main_force_top_1d_buy & main_force_condition_1d) |
-            (main_force_top_2d_buy & main_force_condition_2d) |
-            (main_force_top_3d_buy & main_force_condition_3d)
+            (main_force_top_1d_buy & main_force_condition_1d)
+            | (main_force_top_2d_buy & main_force_condition_2d)
+            | (main_force_top_3d_buy & main_force_condition_3d)
         )
 
         chip_buy_condition = foreign_buy_condition | dealer_self_buy_condition | main_force_buy_condition
@@ -186,8 +193,12 @@ class AlanTWStrategyNotStartA:
         bias_240_condition = (bias_240 >= self.bias_240_range[0]) & (bias_240 <= self.bias_240_range[1])
 
         bias_buy_condition = (
-            bias_5_condition & bias_10_condition & bias_20_condition &
-            bias_60_condition & bias_120_condition & bias_240_condition
+            bias_5_condition
+            & bias_10_condition
+            & bias_20_condition
+            & bias_60_condition
+            & bias_120_condition
+            & bias_240_condition
         )
 
         # 價格與成交量條件
@@ -203,20 +214,18 @@ class AlanTWStrategyNotStartA:
 
         # 技術面綜合條件
         technical_buy_condition = (
-            bias_buy_condition &
-            volume_above_300_condition &
-            price_above_12_condition &
-            amount_above_15m_condition &
-            price_above_93pct_close_high_condition
+            bias_buy_condition
+            & volume_above_300_condition
+            & price_above_12_condition
+            & amount_above_15m_condition
+            & price_above_93pct_close_high_condition
         )
 
         return technical_buy_condition
 
     def _build_fundamental_buy_condition(self):
         """建立基本面條件"""
-        operating_margin_increase = (
-            self.operating_margin > (self.operating_margin.shift(1) * self.op_growth_threshold)
-        )
+        operating_margin_increase = self.operating_margin > (self.operating_margin.shift(1) * self.op_growth_threshold)
 
         return operating_margin_increase
 
@@ -244,11 +253,11 @@ class AlanTWStrategyNotStartA:
         # 4. 60日線乖離大於21% 或
         # 5. 240日線乖離大於32%
         sell_condition = (
-            (bias_5 < -0.04) |
-            (bias_10 < -0.04) |
-            (self.adj_close < (close_high * 0.91)) |
-            (bias_60 > 0.21) |
-            (bias_240 > self.sell_bias_240_threshold)
+            (bias_5 < -0.04)
+            | (bias_10 < -0.04)
+            | (self.adj_close < (close_high * 0.91))
+            | (bias_60 > 0.21)
+            | (bias_240 > self.sell_bias_240_threshold)
         )
 
         return sell_condition
@@ -274,14 +283,10 @@ class AlanTWStrategyNotStartA:
 
         # 組合買入訊號
         print("📊 組合買入條件...")
-        self.buy_signal = (
-            chip_buy_condition &
-            technical_buy_condition &
-            fundamental_buy_condition
-        )
+        self.buy_signal = chip_buy_condition & technical_buy_condition & fundamental_buy_condition
 
         # 設定起始日期
-        self.buy_signal = self.buy_signal.loc[self.start_date:]
+        self.buy_signal = self.buy_signal.loc[self.start_date :]
 
         # 建立賣出條件
         print("📊 計算賣出條件...")
@@ -300,7 +305,7 @@ class AlanTWStrategyNotStartA:
             'upload': False,
             'market': AdjustTWMarketInfo(),
             'fee_ratio': self.slippage + fee_ratio,
-            'tax_ratio': tax_ratio
+            'tax_ratio': tax_ratio,
         }
 
         if self.position_limit is not None:
@@ -334,7 +339,6 @@ class AlanTWStrategyNotStartA:
         if self.position_limit:
             print(f"單檔持股上限: {self.position_limit:.1%}")
         print("=" * 50)
-
 
     def get_report(self):
         """

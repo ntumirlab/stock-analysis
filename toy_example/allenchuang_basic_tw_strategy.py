@@ -1,4 +1,5 @@
 from finlab import data
+
 #  finlab 版本 < 1.2.20
 # from finlab.market_info import TWMarketInfo
 #  finlab 版本 >= 1.2.20
@@ -6,9 +7,11 @@ from finlab.markets.tw import TWMarket
 import pandas as pd
 import numpy as np
 
+
 class AdjustTWMarketInfo(TWMarket):
     def get_trading_price(self, name, adj=True):
         return self.get_price(name, adj=adj).shift(1)
+
 
 with data.universe(market='TSE_OTC'):
     # 獲取三大法人的買賣超股數數據
@@ -44,14 +47,16 @@ dealer_self_top_1d_ratio = dealer_self_net_buy_ratio.rank(axis=1, ascending=Fals
 dealer_self_top_2d_ratio = dealer_self_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= 5
 dealer_self_buy_condition = dealer_self_top_1d_ratio | dealer_self_top_2d_ratio
 
-institutional_investors_top_buy_condition = foreign_buy_condition | investment_trust_buy_condition | dealer_self_buy_condition
+institutional_investors_top_buy_condition = (
+    foreign_buy_condition | investment_trust_buy_condition | dealer_self_buy_condition
+)
 
 with data.universe(market='TSE_OTC'):
     # 獲取每檔股票的收盤價數據
     close_price = data.get('price:收盤價')
 
 # 計算三大法人的買超金額
-foreign_total_net_buy_amount = foreign_net_buy_shares  * close_price  # 外資
+foreign_total_net_buy_amount = foreign_net_buy_shares * close_price  # 外資
 investment_trust_net_buy_amount = investment_trust_net_buy_shares * close_price  # 投信
 dealer_total_net_buy_amount = dealer_self_net_buy_shares * close_price  # 自營商
 
@@ -87,9 +92,13 @@ main_force_top_2d_buy = net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= 5
 main_force_condition_1d = net_buy_ratio > 0.008
 main_force_condition_2d = net_buy_ratio_2d_sum > 0.015
 
-main_force_buy_condition = ( main_force_top_1d_buy & main_force_condition_1d ) | ( main_force_top_2d_buy & main_force_condition_2d )
+main_force_buy_condition = (main_force_top_1d_buy & main_force_condition_1d) | (
+    main_force_top_2d_buy & main_force_condition_2d
+)
 
-chip_buy_condition = institutional_investors_top_buy_condition  | total_market_top_intersection | main_force_buy_condition
+chip_buy_condition = (
+    institutional_investors_top_buy_condition | total_market_top_intersection | main_force_buy_condition
+)
 
 with data.universe(market='TSE_OTC'):
     adj_close = data.get('etl:adj_close')
@@ -120,10 +129,16 @@ bias_240 = (adj_close - ma240) / ma240
 
 
 # 設定進場條件為乖離率在正向且小於 0.14
-bias_buy_condition = ((bias_10 < 0.14) & (bias_10 > 0) &
-                      (bias_20 < 0.14) & (bias_20 > 0) &
-                      (bias_60 <= 0.20) & (bias_60 >= 0.05) & 
-                      (bias_240 <= 0.25) & (bias_240 >= 0.10))
+bias_buy_condition = (
+    (bias_10 < 0.14)
+    & (bias_10 > 0)
+    & (bias_20 < 0.14)
+    & (bias_20 > 0)
+    & (bias_60 <= 0.20)
+    & (bias_60 >= 0.05)
+    & (bias_240 <= 0.25)
+    & (bias_240 >= 0.10)
+)
 
 with data.universe(market='TSE_OTC'):
     # 獲取成交量數據
@@ -155,7 +170,7 @@ kd_buy_condition = (k > k.shift(1)) & (d > d.shift(1))
 
 with data.universe(market='TSE_OTC'):
     # 計算 MACD 指標
-    dif, macd , _  = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+    dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
 
 # MACD DIF 向上
 macd_dif_buy_condition = dif > dif.shift(1)
@@ -167,18 +182,19 @@ new_high_condition = new_high_120_condition
 
 # 技術面
 technical_buy_condition = (
-    ma_up_buy_condition & 
+    ma_up_buy_condition
+    &
     # ma5_above_others_condition &
-    price_above_ma_buy_condition & 
-    bias_buy_condition & 
-    volume_doubled_condition & 
+    price_above_ma_buy_condition
+    & bias_buy_condition
+    & volume_doubled_condition
+    &
     # positive_close_condition &
-    volume_above_500_condition &
-
-    dmi_buy_condition & 
-    kd_buy_condition & 
-    macd_dif_buy_condition &
-    new_high_condition
+    volume_above_500_condition
+    & dmi_buy_condition
+    & kd_buy_condition
+    & macd_dif_buy_condition
+    & new_high_condition
 )
 
 with data.universe(market='TSE_OTC'):
@@ -210,7 +226,6 @@ from finlab.backtest import sim
 
 # report = sim(position, resample=None, upload=False, trade_at_price='close')
 report = sim(position, resample=None, upload=False, market=AdjustTWMarketInfo())
-
 
 
 # ===============================================================================

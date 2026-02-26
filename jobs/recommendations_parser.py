@@ -16,11 +16,12 @@ from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
 
+
 class RecommendationsParser:
     def __init__(self, task_name, config_path="config.yaml", base_log_directory="logs"):
         self.task_name = task_name
         self.timestamp = datetime.now(ZoneInfo("Asia/Taipei"))
-        
+
         self.logger_manager = LoggerManager(
             base_log_directory=base_log_directory,
             current_datetime=self.timestamp,
@@ -36,7 +37,7 @@ class RecommendationsParser:
         self.max_retries = self.llm_config.get('max_retries', 3)
 
         prompt_file_path = self.llm_config.get('prompt_file_path')
-            
+
         try:
             with open(prompt_file_path, 'r', encoding='utf-8') as f:
                 self.prompt_template = f.read()
@@ -52,7 +53,7 @@ class RecommendationsParser:
         self.input_folder = task_config.get('local_dir')
 
         if not self.input_folder:
-             raise ValueError(f"Missing local_dir for task '{task_name}'")
+            raise ValueError(f"Missing local_dir for task '{task_name}'")
 
         self.api_key = os.environ.get("GOOGLE_API_KEY")
         if not self.api_key:
@@ -71,47 +72,46 @@ class RecommendationsParser:
                 date_str = match_old.group(1)
                 return datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
         except ValueError:
-            return None 
+            return None
         return None
 
-    def _call_gemini(self, content, date_str):        
+    def _call_gemini(self, content, date_str):
         if not self.prompt_template:
             logger.error("Prompt template is empty!")
             return None
-            
+
         prompt = self.prompt_template.format(date_str=date_str, content=content)
         for attempt in range(self.max_retries):
             try:
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json"
-                    )
+                    config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
                 )
-                
+
                 # Parse JSON response
                 parsed_json = json.loads(response.text)
-                
+
                 # Validate stocks field exists
                 if 'stocks' not in parsed_json:
                     logger.warning(f"JSON missing 'stocks' field in {date_str}")
                     return None
-                
+
                 # Convert raw dicts to Stock objects
                 stocks = [Stock(**stock_dict) for stock_dict in parsed_json.get('stocks', [])]
-                
+
                 # Create RecommendationRecord with Stock objects
                 record = RecommendationRecord(date=date_str, stocks=stocks)
-                
+
                 logger.info(f"[{date_str}] Parsed {len(stocks)} stocks: {[s.id for s in stocks]}")
                 return record
 
             except Exception as e:
                 error_msg = str(e)
                 if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                    logger.warning(f"Rate Limit (429) on {date_str}. Sleeping {self.api_rate_sleep}s... ({attempt+1}/{self.max_retries})")
+                    logger.warning(
+                        f"Rate Limit (429) on {date_str}. Sleeping {self.api_rate_sleep}s... ({attempt + 1}/{self.max_retries})"
+                    )
                     time.sleep(self.api_rate_sleep)
                 else:
                     logger.error(f"Gemini Error processing {date_str}: {e}")
@@ -131,19 +131,19 @@ class RecommendationsParser:
         dao = RecommendationDAO(frequency=self.task_name)
         existing_records = dao.load()
         existing_dates = {record.date for record in existing_records}
-        
+
         candidates = {}
-        
+
         files = os.listdir(self.input_folder)
         for f in files:
-            if not f.endswith(".md"): 
+            if not f.endswith(".md"):
                 continue
 
             f_date = self._extract_date(f)
-            
+
             if not f_date or f_date in existing_dates:
                 continue
-            
+
             # 比較同日期的檔案，只保留時間較晚的 (較新的)
             if f_date not in candidates:
                 candidates[f_date] = f
@@ -153,7 +153,7 @@ class RecommendationsParser:
                     candidates[f_date] = f
 
         sorted_dates = sorted(candidates.keys())
-        
+
         if not sorted_dates:
             logger.info("No new dates to process.")
         else:
@@ -162,17 +162,18 @@ class RecommendationsParser:
             for f_date in sorted_dates:
                 f_name = candidates[f_date]
                 logger.info(f"Parsing new file for {f_date}: {f_name}")
-                
+
                 file_path = os.path.join(self.input_folder, f_name)
                 with open(file_path, 'r', encoding='utf-8') as file:
                     record = self._call_gemini(file.read(), f_date)
-                    
+
                     if record:
                         dao.add_record(record)
                         logger.info(f"Saved {len(record.stocks)} stocks for {f_date}")
                         time.sleep(self.api_rate_sleep)  # 避免 Rate Limit
-            
+
             logger.info(f"Updated {len(sorted_dates)} new records to database")
+
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -196,5 +197,5 @@ if __name__ == "__main__":
         notifier.send_error(
             task_name=f"Stock Recommendations Parser ({args.task})",
             error_message=str(e),
-            error_traceback=traceback.format_exc()
+            error_traceback=traceback.format_exc(),
         )

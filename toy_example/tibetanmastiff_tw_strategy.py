@@ -12,7 +12,7 @@ with data.universe(market='TSE_OTC'):
 
 # Define conditions
 # 股價創年新高
-cond1 = (close == close.rolling(250).max())
+cond1 = close == close.rolling(250).max()
 # 排除月營收連3月衰退10%以上
 cond2 = ~(rev_year_growth < -10).sustain(3)
 # 排除月營收成長趨勢過老(12個月內有至少8個月單月營收年增率大於60%)
@@ -36,6 +36,14 @@ buy = buy.is_smallest(5)
 # start_date = '2015-12-31'
 # buy = buy.loc[start_date:]
 
-report = sim(buy, resample="M", upload=False, position_limit=1/3, fee_ratio=1.425/1000/3, stop_loss=0.08, trade_at_price='open')
+report = sim(
+    buy,
+    resample="M",
+    upload=False,
+    position_limit=1 / 3,
+    fee_ratio=1.425 / 1000 / 3,
+    stop_loss=0.08,
+    trade_at_price='open',
+)
 
 position_today = Position.from_report(report, fund=80000, odd_lot=True)

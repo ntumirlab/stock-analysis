@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+
 class ReportSaver:
     def __init__(self, report, output_dir='output'):
         self.report = report

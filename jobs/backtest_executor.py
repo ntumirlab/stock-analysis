@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
+
 class BacktestExecutor:
     def __init__(self, strategy_class_name, config_path="config.yaml", base_log_directory="logs"):
         self.strategy_class_name = strategy_class_name
@@ -27,7 +28,6 @@ class BacktestExecutor:
         report = strategy.run_strategy()
         self.save_finlab_report(report)
 
-
     def save_finlab_report(self, report, base_directory="assets/"):
         subdirectory = self.strategy_class_name
         report_directory = os.path.join(base_directory, subdirectory)
@@ -36,8 +36,6 @@ class BacktestExecutor:
         datetime_str = self.backtest_timestamp.strftime("%Y-%m-%d_%H-%M-%S")
         save_report_path = os.path.join(report_directory, f"{datetime_str}.html")
         report.display(save_report_path=save_report_path)
-        
-
 
     def load_strategy(self):
         if self.strategy_class_name == 'TibetanMastiffTWStrategy':
@@ -64,12 +62,15 @@ class BacktestExecutor:
             raise ValueError(f"Unknown strategy class: {self.strategy_class_name}")
         return strategy_class()
 
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root_dir)
 
     parser = argparse.ArgumentParser(description="Run BacktestExecutor")
-    parser.add_argument("--strategy_class_name", required=True, help="strategy_class_name (e.g., TibetanMastiffTWStrategy)")
+    parser.add_argument(
+        "--strategy_class_name", required=True, help="strategy_class_name (e.g., TibetanMastiffTWStrategy)"
+    )
 
     args = parser.parse_args()
     logger.info(f"args: {args}")
@@ -85,10 +86,6 @@ if __name__ == "__main__":
         logger.exception(e)
 
         # 發送錯誤通知
-        notifier.send_error(
-            task_name="回測執行",
-            error_message=str(e),
-            error_traceback=traceback.format_exc()
-        )
+        notifier.send_error(task_name="回測執行", error_message=str(e), error_traceback=traceback.format_exc())
 
     # python -m jobs.backtest_executor --strategy_class_name AlanTwStrategy1

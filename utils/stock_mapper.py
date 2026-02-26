@@ -1,6 +1,7 @@
 from finlab import data
 import pandas as pd
 
+
 class StockMapper:
     def __init__(self):
         self.mapping = self._load_mapping()
