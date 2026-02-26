@@ -88,20 +88,8 @@ class RogerTWStrategyBase:
 
     def _apply_trading_window(self, position):
         """
-        根據買賣星期幾設定交易視窗
+        此為虛擬方法，子類別需要根據買賣週期設定交易視窗
         """
-        dow = position.index.dayofweek
-        buy = self.buy_weekday
-        sell = self.sell_weekday
-
-        if buy == sell:
-            return position
-        elif buy < sell:
-            mask = (dow >= buy) & (dow < sell)
-        else:
-            mask = (dow >= buy) | (dow < sell)
-
-        position = position.loc[mask].reindex(position.index, fill_value=False)
         return position
 
     def run_strategy(self):
@@ -112,9 +100,17 @@ class RogerTWStrategyBase:
             position = self._apply_trading_window(position)
         
         # 由於此策略在買賣日「前一天」即決定隔天是否買賣，因此將 position 向前移動一天
-        position = position.shift(-1)
+        position = position.shift(-1).fillna(False).astype(bool)
             
-        self.report = sim(position=position, resample=None, fee_ratio=1.425/1000, tax_ratio=3/1000, upload=False)
+        self.report = sim(
+            position=position,
+            fee_ratio=1.425/1000,
+            tax_ratio=3/1000,
+            resample=None,
+            trade_at_price='open',
+            upload=False,
+            notification_enable=False
+        )
        
         return self.report
 
