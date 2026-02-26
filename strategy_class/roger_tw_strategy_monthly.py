@@ -5,7 +5,6 @@ from finlab.backtest import sim
 from strategy_class.roger_tw_strategy_base import RogerTWStrategyBase
 
 class MultiReportWrapper:
-    
     def __init__(self, reports_dict):
         self.reports_dict = reports_dict
 
@@ -24,8 +23,8 @@ class MultiReportWrapper:
             report.display(save_report_path=new_path, **kwargs)
 
 class RogerTWStrategyMonthly(RogerTWStrategyBase):
-    def __init__(self, config_path="config.yaml"):
-        super().__init__(task_name="monthly", config_path=config_path)
+    def __init__(self, config_path="config.yaml", override_params=None):
+        super().__init__(task_name="monthly", config_path=config_path, override_params=override_params)
 
     def _apply_trading_window(self, position, selected_weeks):
         """
