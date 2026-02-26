@@ -77,8 +77,10 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
                 position=pos_offset,
                 fee_ratio=1.425/1000,
                 tax_ratio=3/1000,
+                stop_loss=self.stop_loss,
+                take_profit=self.take_profit,
+                trade_at_price=self.trade_at_price,
                 resample=None,
-                trade_at_price='open',
                 upload=False,
                 notification_enable=False
             )

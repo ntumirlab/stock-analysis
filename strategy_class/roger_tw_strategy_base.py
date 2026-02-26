@@ -11,9 +11,12 @@ class RogerTWStrategyBase:
         self.config_loader = ConfigLoader(config_path)
         roger_config = self.config_loader.config.get('roger', {}).get(task_name, {})
 
-        self.max_stocks = roger_config.get('max_stocks', 5)
         self.buy_weekday = roger_config.get('buy_weekday', 1) - 1
         self.sell_weekday = roger_config.get('sell_weekday', 5) - 1
+        self.max_stocks = roger_config.get('max_stocks', 5)
+        self.stop_loss = roger_config.get('stop_loss', None)
+        self.take_profit = roger_config.get('take_profit', None)
+        self.trade_at_price = roger_config.get('trade_at_price', 'open')
 
         print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
 
@@ -106,8 +109,10 @@ class RogerTWStrategyBase:
             position=position,
             fee_ratio=1.425/1000,
             tax_ratio=3/1000,
+            stop_loss=self.stop_loss,
+            take_profit=self.take_profit,
+            trade_at_price=self.trade_at_price,
             resample=None,
-            trade_at_price='open',
             upload=False,
             notification_enable=False
         )
