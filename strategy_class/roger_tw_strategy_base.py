@@ -3,17 +3,25 @@ from finlab import data
 from finlab.backtest import sim
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
+from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
 class RogerTWStrategyBase:
-    def __init__(self, task_name, config_path="config.yaml"):
+    def __init__(self, task_name, config_path="config.yaml", override_params=None):
         self.task_name = task_name  # 'weekly' or 'monthly'
         self.report = None
         self.config_loader = ConfigLoader(config_path)
         roger_config = self.config_loader.config.get('roger', {}).get(task_name, {})
 
-        self.max_stocks = roger_config.get('max_stocks', 5)
-        self.buy_weekday = roger_config.get('buy_weekday', 1) - 1
-        self.sell_weekday = roger_config.get('sell_weekday', 5) - 1
+        # 如果有傳入實驗參數，就用實驗的；否則就讀 config.yaml 中的
+        if override_params is None:
+            override_params = {}
+
+        self.buy_weekday = override_params.get('buy_weekday', roger_config.get('buy_weekday', 1)) - 1
+        self.sell_weekday = override_params.get('sell_weekday', roger_config.get('sell_weekday', 5)) - 1
+        self.max_stocks = override_params.get('max_stocks', roger_config.get('max_stocks', 5))
+        self.stop_loss = override_params.get('stop_loss', roger_config.get('stop_loss', None))
+        self.take_profit = override_params.get('take_profit', roger_config.get('take_profit', None))
+        self.trade_at_price = override_params.get('trade_at_price', roger_config.get('trade_at_price', 'open'))
 
         print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
 
@@ -88,20 +96,8 @@ class RogerTWStrategyBase:
 
     def _apply_trading_window(self, position):
         """
-        根據買賣星期幾設定交易視窗
+        此為虛擬方法，子類別需要根據買賣週期設定交易視窗
         """
-        dow = position.index.dayofweek
-        buy = self.buy_weekday
-        sell = self.sell_weekday
-
-        if buy == sell:
-            return position
-        elif buy < sell:
-            mask = (dow >= buy) & (dow < sell)
-        else:
-            mask = (dow >= buy) | (dow < sell)
-
-        position = position.loc[mask].reindex(position.index, fill_value=False)
         return position
 
     def run_strategy(self):
@@ -112,9 +108,20 @@ class RogerTWStrategyBase:
             position = self._apply_trading_window(position)
         
         # 由於此策略在買賣日「前一天」即決定隔天是否買賣，因此將 position 向前移動一天
-        position = position.shift(-1)
+        position = position.shift(-1).fillna(False).astype(bool)
             
-        self.report = sim(position=position, resample=None, fee_ratio=1.425/1000, tax_ratio=3/1000, upload=False)
+        self.report = sim(
+            position=position,
+            fee_ratio=1.425/1000,
+            tax_ratio=3/1000,
+            stop_loss=self.stop_loss,
+            take_profit=self.take_profit,
+            market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
+            trade_at_price=self.trade_at_price,
+            resample=None,
+            upload=False,
+            notification_enable=False
+        )
        
         return self.report
 
