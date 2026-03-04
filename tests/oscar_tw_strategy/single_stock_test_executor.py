@@ -51,10 +51,18 @@ _WORKER_MARKET_DATA = None
 _WORKER_BASE_POSITION = None
 _WORKER_POSITION_CACHE = {}  # Cache for pre-calculated positions by param hash
 
-def _init_worker(market_data, base_position=None):
+def _init_worker(market_data_path=None, base_position=None):
     """Initialize worker process with shared data (called once per worker)"""
+    import pickle
     global _WORKER_MARKET_DATA, _WORKER_BASE_POSITION, _WORKER_POSITION_CACHE
-    _WORKER_MARKET_DATA = market_data
+    
+    # Load market_data from disk (avoids serialization overhead and redundant API calls)
+    if market_data_path and os.path.exists(market_data_path):
+        with open(market_data_path, 'rb') as f:
+            _WORKER_MARKET_DATA = pickle.load(f)
+    else:
+        _WORKER_MARKET_DATA = None
+    
     _WORKER_BASE_POSITION = base_position
     _WORKER_POSITION_CACHE = {}  # Each worker has its own cache
 
@@ -65,6 +73,7 @@ class SingleStockTestExecutor:
     def __init__(
         self,
         start_date='2020-01-01',
+        end_date=None,
         output_dir='results/single_stock_tests',
         sar_max_dots=2,
         sar_reject_dots=3,
@@ -77,6 +86,7 @@ class SingleStockTestExecutor:
         
         Args:
             start_date: 回測起始日期
+            end_date: 回測結束日期（可選，預設為最新價格日期）
             output_dir: 結果輸出目錄
             sar_max_dots: SAR參數 - 最大買進點數
             sar_reject_dots: SAR參數 - 拒絕買進點數
@@ -85,10 +95,22 @@ class SingleStockTestExecutor:
             optimize_params: 是否進行參數優化（僅在指定stock_id時有效）
         """
         self.start_date = start_date
+        self.end_date = end_date
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_dir = self.output_dir / 'checkpoints'
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.position_cache_dir = self.output_dir / 'position_cache'
+        self.position_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Stage 2 結果目錄（依日期分組）
+        if end_date:
+            self.stage2_dir = self.output_dir / f'stage_2_results_{end_date}'
+        else:
+            # 如果沒指定end_date，使用臨時標記（稍後在載入市場數據後會更新為實際日期）
+            self.stage2_dir = self.output_dir / 'stage_2_results_latest'
+        self.stage2_dir.mkdir(parents=True, exist_ok=True)
+        
         self.sar_max_dots = sar_max_dots
         self.sar_reject_dots = sar_reject_dots
         self.pool = pool
@@ -104,8 +126,10 @@ class SingleStockTestExecutor:
         
         logger.info(f"初始化 SingleStockTestExecutor")
         logger.info(f"回測起始日期: {start_date}")
+        logger.info(f"回測結束日期: {end_date if end_date else '最新價格日期（自動）'}")
         logger.info(f"SAR參數: max_dots={sar_max_dots}, reject_dots={sar_reject_dots}")
-        logger.info(f"結果輸出目錄: {self.output_dir}")
+        logger.info(f"Stage 1 結果目錄: {self.output_dir}")
+        logger.info(f"Stage 2 結果目錄: {self.stage2_dir}")
         if stock_id:
             logger.info(f"單一股票測試模式: {stock_id}")
             if optimize_params:
@@ -205,7 +229,10 @@ class SingleStockTestExecutor:
                     sar_max_dots=self.sar_max_dots,
                     sar_reject_dots=self.sar_reject_dots
                 )
-                base_position = strategy.base_position.loc[self.start_date:].copy()
+                # ⚠️ 重要：確保 position 從 start_date 開始
+                base_position = strategy.base_position
+                trading_days = strategy.market_data['close'].loc[self.start_date:].index
+                base_position = base_position.reindex(trading_days, fill_value=False)
                 
                 logger.info(f"執行單一股票回測: {self.stock_id}")
                 result = self._run_single_stock_with_visualization(
@@ -220,7 +247,10 @@ class SingleStockTestExecutor:
                     sar_max_dots=self.sar_max_dots,
                     sar_reject_dots=self.sar_reject_dots
                 )
-                base_position = strategy.base_position.loc[self.start_date:].copy()
+                # ⚠️ 重要：確保 position 從 start_date 開始
+                base_position = strategy.base_position
+                trading_days = strategy.market_data['close'].loc[self.start_date:].index
+                base_position = base_position.reindex(trading_days, fill_value=False)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 csv_filename = f'oscar_single_stock_results_{timestamp}.csv'
                 html_filename = f'oscar_single_stock_results_{timestamp}.html'
@@ -296,7 +326,10 @@ class SingleStockTestExecutor:
                         macd_params=params['macd_params'],
                         market_data=market_data
                     )
-                    base_position = strategy.base_position.loc[self.start_date:].copy()
+                    # ⚠️ 重要：確保 position 從 start_date 開始
+                    base_position = strategy.base_position
+                    trading_days = market_data['close'].loc[self.start_date:].index
+                    base_position = base_position.reindex(trading_days, fill_value=False)
                     
                     # 只保存該股票的位置（節省記憶體）
                     if stock_id in base_position.columns and base_position[stock_id].any():
@@ -381,7 +414,10 @@ class SingleStockTestExecutor:
             sar_params=best_params['sar_params'],
             macd_params=best_params['macd_params']
         )
-        best_base_position = best_strategy.base_position.loc[self.start_date:].copy()
+        # ⚠️ 重要：確保 position 從 start_date 開始
+        best_base_position = best_strategy.base_position
+        trading_days = best_strategy.market_data['close'].loc[self.start_date:].index
+        best_base_position = best_base_position.reindex(trading_days, fill_value=False)
         
         final_result = self._run_single_stock_with_visualization(
             stock_id=stock_id,
@@ -389,14 +425,14 @@ class SingleStockTestExecutor:
             base_position=best_base_position
         )
         
-        # 生成參數比較圖表
-        param_comparison_path = self.output_dir / f'{stock_id}_param_comparison.html'
+        # 生成參數比較圖表（保存到 Stage 2 目錄）
+        param_comparison_path = self.stage2_dir / f'{stock_id}_param_comparison.html'
         create_param_comparison_chart(
             stock_id=stock_id,
             param_results=param_results,
             output_path=str(param_comparison_path)
         )
-        logger.info(f"參數比較圖表已儲存至: {param_comparison_path}")
+        logger.info(f"Stage 2 參數比較圖表已儲存至: {param_comparison_path}")
         
         # 添加最佳參數資訊到結果
         final_result['best_params'] = best_result['params']
@@ -420,6 +456,16 @@ class SingleStockTestExecutor:
         market_data = OscarTWStrategy.load_market_data()
         logger.info("市場數據載入完成")
         
+        # 獲取實際的最後交易日（如果未指定end_date）
+        if not self.end_date:
+            actual_end_date = market_data['close'].index.max().strftime('%Y-%m-%d')
+            # 更新Stage 2目錄為實際日期
+            self.stage2_dir = self.output_dir / f'stage_2_results_{actual_end_date}'
+            self.stage2_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"未指定end_date，使用實際最後交易日: {actual_end_date}")
+        else:
+            actual_end_date = self.end_date
+        
         # 先用默認參數初始化策略，獲取有訊號的股票列表（已通過成交量和法人條件篩選）
         # 使用極大的 SAR max_dots (500) 確保不會遺漏任何可能有訊號的股票
         logger.info("初始化策略以獲取股票列表（使用 SAR max_dots=500 確保涵蓋所有可能）...")
@@ -428,7 +474,10 @@ class SingleStockTestExecutor:
             sar_reject_dots=self.sar_reject_dots,
             market_data=market_data
         )
-        base_position = temp_strategy.base_position.loc[self.start_date:].copy()
+        # ⚠️ 重要：確保 position 從 start_date 開始
+        base_position = temp_strategy.base_position
+        trading_days = market_data['close'].loc[self.start_date:].index
+        base_position = base_position.reindex(trading_days, fill_value=False)
         # 只測試有訊號的股票（已通過成交量和法人條件，且至少有一次訊號）
         all_stocks = base_position.columns[base_position.any(axis=0)].tolist()
         del temp_strategy, base_position  # 釋放記憶體
@@ -445,18 +494,20 @@ class SingleStockTestExecutor:
         total_tasks = len(all_tasks)
         logger.info(f"總共 {total_tasks} 個任務 ({len(all_stocks)} 股票 × {len(param_grid)} 參數)")
         
-        # 檢查是否有檢查點
-        checkpoint_name = f"optimize_all_stocks_{datetime.now().strftime('%Y%m%d')}"
+        # 檢查是否有檢查點（使用固定名稱，跨日期持久化）
+        checkpoint_name = "optimize_all_stocks_persistent"
         checkpoint_data = self._load_checkpoint(checkpoint_name)
         completed_tasks = set()
         all_param_results = {}
         
         if checkpoint_data:
-            logger.info(f"找到檢查點，已完成 {len(checkpoint_data.get('completed', []))} 個任務")
+            logger.info(f"📂 找到檢查點，已完成 {len(checkpoint_data.get('completed', []))} 個任務")
             completed_tasks = set(tuple(t) for t in checkpoint_data.get('completed', []))
             # 重建結果字典
             for stock_id, results in checkpoint_data.get('results', {}).items():
                 all_param_results[stock_id] = results
+        else:
+            logger.info("🆕 未找到檢查點，開始新的優化")
         
         # 過濾掉已完成的任務
         remaining_tasks = [(s, p) for s, p in all_tasks if (s, self._param_to_key(p)) not in completed_tasks]
@@ -478,42 +529,185 @@ class SingleStockTestExecutor:
                     unique_params[param_key] = params
             
             logger.info(f"需要計算 {len(unique_params)} 組參數的策略位置")
-            logger.info(f"預估需要 5-15 分鐘（取決於機器性能）...")
-            logger.info(f"預估記憶體使用: ~{len(unique_params) * 15.6:.1f} MB (~2500 stocks × ~6250 days × {len(unique_params)} params)")
-            sys.stdout.flush()
             
-            # 預先計算所有策略位置（在主進程中，方便監控進度）
-            # 註: ~15.6 MB/param × 729 params ≈ 11.4 GB，在 128-256GB 機器上可接受
+            # 檢查位置快取（避免重複計算）
+            import pickle
+            cache_meta_file = self.position_cache_dir / 'cache_metadata.json'
             param_positions = {}
-            with tqdm(total=len(unique_params), desc="🔧 計算策略位置", unit="param", ncols=100, miniters=1) as pbar:
-                for param_key, params in unique_params.items():
-                    try:
-                        strategy = OscarTWStrategy(
-                            sar_max_dots=params['sar_max_dots'],
-                            sar_reject_dots=self.sar_reject_dots,
-                            sar_params=params['sar_params'],
-                            macd_params=params['macd_params'],
-                            market_data=market_data
-                        )
-                        base_position = strategy.base_position.loc[self.start_date:].copy()
+            
+            # 判斷是否可使用快取 (智能重用：如果快取數據涵蓋所需範圍，可以裁切使用)
+            use_cache = False
+            need_slice = False
+            cached_end_date = None
+            if cache_meta_file.exists():
+                try:
+                    with open(cache_meta_file, 'r') as f:
+                        cache_meta = json.load(f)
+                    
+                    cached_end_date = cache_meta.get('end_date')
+                    
+                    # 檢查關鍵參數是否匹配
+                    if (cache_meta.get('start_date') == self.start_date and
+                        cache_meta.get('sar_reject_dots') == self.sar_reject_dots and
+                        cache_meta.get('param_count') == len(unique_params)):
                         
-                        # 保存完整的 base_position（包含所有股票）
-                        param_positions[param_key] = {
-                            'params': params,
-                            'position': base_position
+                        # 智能比對 end_date:
+                        # 1. 快取 None, 請求 None → 完全匹配
+                        # 2. 快取 None, 請求 某日期 → 可用，需裁切
+                        # 3. 快取 某日期, 請求 None → 不可用（快取數據不足）
+                        # 4. 快取 某日期, 請求 某日期 → 檢查快取 >= 請求
+                        
+                        if cached_end_date is None and self.end_date is None:
+                            # 完全匹配
+                            use_cache = True
+                            logger.info(f"💾 找到位置快取 (建立於 {cache_meta.get('timestamp')})")
+                            logger.info(f"💾 快取參數完全匹配，將載入已計算的策略位置...")
+                        elif cached_end_date is None and self.end_date is not None:
+                            # 快取包含全部數據，可裁切使用
+                            use_cache = True
+                            need_slice = True
+                            logger.info(f"💾 找到位置快取 (建立於 {cache_meta.get('timestamp')})")
+                            logger.info(f"💾 快取數據完整，將裁切至 {self.end_date}")
+                        elif cached_end_date is not None and self.end_date is None:
+                            # 快取數據不足，無法使用
+                            logger.info(f"⚠️  快取 end_date={cached_end_date}，但需要全部數據，快取不可用")
+                        elif cached_end_date >= self.end_date:
+                            # 快取數據涵蓋所需範圍
+                            use_cache = True
+                            need_slice = (cached_end_date != self.end_date)
+                            logger.info(f"💾 找到位置快取 (建立於 {cache_meta.get('timestamp')})")
+                            if need_slice:
+                                logger.info(f"💾 快取數據充足 ({cached_end_date})，將裁切至 {self.end_date}")
+                            else:
+                                logger.info(f"💾 快取參數完全匹配，將載入已計算的策略位置...")
+                        else:
+                            # 快取數據不足
+                            logger.info(f"⚠️  快取 end_date={cached_end_date} < 請求 {self.end_date}，快取數據不足")
+                    
+                except Exception as e:
+                    logger.warning(f"讀取快取元資料失敗: {e}")
+            
+            if use_cache:
+                # 驗證快取完整性（不載入到記憶體，避免 11GB 佔用和 swap）
+                logger.info(f"📂 驗證 {len(unique_params)} 組快取檔案...")
+                loaded_count = 0
+                need_resave = False  # 如果需要裁切，標記需要重新保存
+                
+                with tqdm(total=len(unique_params), desc="📂 驗證快取", unit="param", ncols=100) as pbar:
+                    for param_key, params in unique_params.items():
+                        cache_file = self.position_cache_dir / f"{param_key}.pkl"
+                        if cache_file.exists():
+                            # 如果需要裁切，重新保存裁切後的版本
+                            if need_slice and self.end_date:
+                                try:
+                                    with open(cache_file, 'rb') as f:
+                                        base_position = pickle.load(f)
+                                    base_position = base_position.loc[:self.end_date].copy()
+                                    # 重新保存裁切後的版本
+                                    with open(cache_file, 'wb') as f:
+                                        pickle.dump(base_position, f, protocol=pickle.HIGHEST_PROTOCOL)
+                                    del base_position  # 立即釋放
+                                    need_resave = True
+                                except Exception as e:
+                                    logger.warning(f"裁切快取失敗 {param_key}: {e}")
+                                    pbar.update(1)
+                                    continue
+                            
+                            loaded_count += 1
+                        pbar.update(1)
+                
+                # 建立參數映射（不含位置數據）
+                param_positions = {k: {'params': v, 'position': None} for k, v in unique_params.items()}
+                
+                if loaded_count == len(unique_params):
+                    if need_slice:
+                        if need_resave:
+                            logger.info(f"✅ 快取驗證完成並重新保存: {loaded_count}/{len(unique_params)} 組，已裁切至 {self.end_date}（節省 5-15 分鐘）")
+                        else:
+                            logger.info(f"✅ 快取驗證完成: {loaded_count}/{len(unique_params)} 組（節省 5-15 分鐘）")
+                    else:
+                        logger.info(f"✅ 快取驗證完成: {loaded_count}/{len(unique_params)} 組（節省 5-15 分鐘）")
+                else:
+                    logger.warning(f"⚠️  快取不完整: {loaded_count}/{len(unique_params)}，將重新計算缺失部分")
+                    use_cache = False  # 快取不完整，重新計算
+            
+            if not use_cache:
+                # 重新計算所有策略位置（並行處理）
+                logger.info(f"⚡ 使用 {self.pool} workers 並行計算策略位置...")
+                logger.info(f"預估需要 1-3 分鐘（並行加速，取決於機器性能）...")
+                sys.stdout.flush()
+                
+                # 並行計算所有策略位置
+                param_count = 0
+                saved_params = {}
+                
+                from concurrent.futures import ProcessPoolExecutor, as_completed
+                
+                # 保存 market_data 到磁盤（避免序列化開銷和重複 API 調用）
+                market_data_file = self.position_cache_dir / '_market_data.pkl'
+                logger.info(f"保存市場數據到緩存: {market_data_file}")
+                with open(market_data_file, 'wb') as f:
+                    pickle.dump(market_data, f)
+                
+                try:
+                    # 初始化 workers（從磁盤載入市場數據）
+                    logger.info(f"正在初始化 {self.pool} 個工作進程...")
+                    with ProcessPoolExecutor(max_workers=self.pool, initializer=_init_worker, initargs=(str(market_data_file), None)) as executor:
+                        logger.info("工作進程初始化完成，開始並行計算...")
+                        
+                        # 提交所有策略計算任務
+                        future_to_param = {
+                            executor.submit(
+                                self._calculate_and_save_strategy,
+                                param_key,
+                                params,
+                                self.start_date,
+                                self.end_date,
+                                self.sar_reject_dots,
+                                str(self.position_cache_dir)
+                            ): (param_key, params)
+                            for param_key, params in unique_params.items()
                         }
                         
-                        pbar.set_postfix({'SAR': params['sar_max_dots']})
-                        pbar.update(1)
-                        
-                        # 清理策略物件
-                        del strategy
-                        
-                    except Exception as e:
-                        logger.warning(f"策略初始化失敗 {param_key}: {e}")
-                        pbar.update(1)
-            
-            logger.info(f"✅ 階段1完成: {len(param_positions)} 組策略位置已計算（記憶體使用: ~{len(param_positions) * 15.6:.1f} MB）")
+                        # 使用 tqdm 追蹤進度
+                        with tqdm(total=len(unique_params), desc="🔧 計算策略位置", unit="param", ncols=100, miniters=1) as pbar:
+                            for future in as_completed(future_to_param):
+                                param_key, params = future_to_param[future]
+                                try:
+                                    result_key, success, error = future.result()
+                                    if success:
+                                        saved_params[result_key] = params
+                                        param_count += 1
+                                        pbar.set_postfix({'SAR': params['sar_max_dots'], 'saved': param_count})
+                                    else:
+                                        logger.warning(f"策略計算失敗 {result_key}: {error}")
+                                except Exception as e:
+                                    logger.warning(f"策略計算異常 {param_key}: {e}")
+                                finally:
+                                    pbar.update(1)
+                    
+                    # 保存快取元資料
+                    cache_metadata = {
+                        'start_date': self.start_date,
+                        'end_date': self.end_date,
+                        'sar_reject_dots': self.sar_reject_dots,
+                        'param_count': param_count,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    with open(cache_meta_file, 'w') as f:
+                        json.dump(cache_metadata, f, indent=2)
+                    
+                    logger.info(f"✅ 階段1完成: {param_count} 組策略位置已保存至磁盤（並行計算，記憶體已釋放）")
+                    logger.info(f"💾 位置快取已保存至: {self.position_cache_dir}")
+                
+                finally:
+                    # 清理臨時市場數據文件
+                    if market_data_file.exists():
+                        market_data_file.unlink()
+                        logger.info(f"已清理臨時市場數據文件")
+                
+                # 用 saved_params 替換 param_positions（為 Stage 2 準備）
+                param_positions = {k: {'params': v, 'position': None} for k, v in saved_params.items()}
             
             # 🚀 階段2: 並行執行回測（只做 sim，不做策略計算）
             logger.info("=" * 80)
@@ -521,19 +715,31 @@ class SingleStockTestExecutor:
             logger.info("=" * 80)
             
             # 建立所有 (stock, param_key) 回測任務
+            # ⚡ 從磁盤按需載入位置（避免同時保留 11GB 在記憶體）
+            logger.info("📂 準備回測任務（從磁盤載入位置）...")
             backtest_tasks = []
             for stock, params in remaining_tasks:
                 param_key = self._param_to_key(params)
                 if param_key in param_positions:
-                    stock_position = param_positions[param_key]['position']
-                    # 檢查該股票是否有訊號
-                    if stock in stock_position.columns and stock_position[stock].any():
-                        backtest_tasks.append({
-                            'stock': stock,
-                            'param_key': param_key,
-                            'params': params,
-                            'position': stock_position[[stock]].copy()  # Only copy single column
-                        })
+                    # 從磁盤快取載入該參數的位置
+                    cache_file = self.position_cache_dir / f"{param_key}.pkl"
+                    if cache_file.exists():
+                        try:
+                            import pickle
+                            with open(cache_file, 'rb') as f:
+                                stock_position = pickle.load(f)
+                            
+                            # 檢查該股票是否有訊號
+                            if stock in stock_position.columns and stock_position[stock].any():
+                                backtest_tasks.append({
+                                    'stock': stock,
+                                    'param_key': param_key,
+                                    'params': params,
+                                    'position': stock_position[[stock]].copy()  # Only copy single column
+                                })
+                            del stock_position  # 立即釋放記憶體
+                        except Exception as e:
+                            logger.warning(f"載入快取失敗 {param_key}: {e}")
             
             logger.info(f"階段2任務數: {len(backtest_tasks)} 個回測（{len(all_stocks)} 股票 × ~{len(unique_params)} 參數）")
             logger.info(f"使用 {self.pool} 個並行workers，預估 10-30 分鐘...")
@@ -628,7 +834,10 @@ class SingleStockTestExecutor:
                         macd_params=best_params['macd_params'],
                         market_data=market_data
                     )
-                    best_base_position = best_strategy.base_position.loc[self.start_date:].copy()
+                    # ⚠️ 重要：確保 position 從 start_date 開始
+                    best_base_position = best_strategy.base_position
+                    trading_days = market_data['close'].loc[self.start_date:].index
+                    best_base_position = best_base_position.reindex(trading_days, fill_value=False)
                     
                     # 生成報告和視覺化
                     self._run_single_stock_with_visualization(
@@ -637,8 +846,8 @@ class SingleStockTestExecutor:
                         base_position=best_base_position
                     )
                     
-                    # 生成參數比較圖表
-                    param_comparison_path = self.output_dir / f'{stock_id}_param_comparison.html'
+                    # 生成參數比較圖表（保存到 Stage 2 目錄）
+                    param_comparison_path = self.stage2_dir / f'{stock_id}_param_comparison.html'
                     create_param_comparison_chart(
                         stock_id=stock_id,
                         param_results=stock_param_results,
@@ -668,30 +877,41 @@ class SingleStockTestExecutor:
         # 依照年報酬率排序
         df = df.sort_values(by='annual_return', ascending=False)
         
-        # 儲存結果
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        csv_filename = f'oscar_optimized_results.csv'
-        html_filename = f'oscar_optimized_results.html'
-        csv_path = self.output_dir / csv_filename
-        html_path = self.output_dir / html_filename
+        # Stage 1 結果：單一文件（無時間戳，每次更新覆蓋）
+        csv_path = self.output_dir / 'stage_1_optimized_params.csv'
+        html_path = self.output_dir / 'stage_1_optimized_params.html'
         
         df.to_csv(csv_path, index=False, encoding='utf-8-sig')
-        logger.info(f"優化結果已儲存至: {csv_path}")
+        logger.info(f"💾 Stage 1 優化參數已儲存至: {csv_path}")
         
         # 生成互動式 HTML 表格
-        logger.info("生成互動式 HTML 表格...")
+        logger.info("生成 Stage 1 互動式 HTML 表格...")
+        # 使用實際日期（在方法開始時已設定actual_end_date）
         dataframe_to_sortable_html(
             df=df,
             output_path=str(html_path),
-            title=f"Oscar Strategy - Optimized Results ({timestamp})"
+            title=f"Oscar Strategy - Stage 1 Optimized Parameters (startdate: {self.start_date}, enddate: {actual_end_date})"
         )
-        logger.info(f"HTML 表格已儲存至: {html_path}")
+        logger.info(f"📊 Stage 1 HTML 表格已儲存至: {html_path}")
         
         # 打印統計摘要
         self._print_summary(df)
         
         # 找出表現最佳的股票
         self._print_top_performers(df)
+        
+        # 最終結果摘要（方便在 screen 重新連接後查看）
+        logger.info("\n" + "=" * 80)
+        logger.info("🎉 Stage 1 優化完成！結果文件位置：")
+        logger.info("=" * 80)
+        logger.info(f"📊 Stage 1 HTML 表格: {html_path}")
+        logger.info(f"💾 Stage 1 CSV 數據: {csv_path}")
+        logger.info(f"📁 Stage 1 結果目錄: {self.output_dir}")
+        logger.info(f"💡 檢查點位置: {self.checkpoint_dir / checkpoint_name}.json")
+        logger.info("=" * 80)
+        logger.info(f"✅ 成功優化 {len(df)} 檔股票")
+        logger.info(f"🏆 最佳股票: {df.iloc[0]['stock_id']} (年化報酬: {df.iloc[0]['annual_return']:.2%})")
+        logger.info("=" * 80)
         
         return df
     
@@ -715,6 +935,7 @@ class SingleStockTestExecutor:
             return None
         
         # 建立單一股票的持倉訊號
+        # ⚠️ 保持 base_position 的完整日期範圍（從 start_date 開始）
         single_stock_position = pd.DataFrame(
             False, 
             index=base_position.index, 
@@ -734,11 +955,11 @@ class SingleStockTestExecutor:
             position_limit=1.0
         )
         
-        # 儲存回測報告
+        # 儲存回測報告（到 Stage 2 目錄）
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        report_path = self.output_dir / f'{stock_id}.html'
+        report_path = self.stage2_dir / f'{stock_id}_report.html'
         report.display(save_report_path=str(report_path))
-        logger.info(f"回測報告已儲存至: {report_path}")
+        logger.info(f"Stage 2 回測報告已儲存至: {report_path}")
         
         # 提取績效指標
         metrics = report.get_metrics()
@@ -787,8 +1008,8 @@ class SingleStockTestExecutor:
         actual_buy_signals = position_changes == 1  # 0->1 表示買入
         actual_sell_signals = position_changes == -1  # 1->0 表示賣出
         
-        # 生成視覺化圖表
-        viz_path = self.output_dir / f'{stock_id}_visualization.html'
+        # 生成視覺化圖表（保存到 Stage 2 目錄）
+        viz_path = self.stage2_dir / f'{stock_id}_visualization.html'
         create_trading_visualization(
             stock_id=stock_id,
             price_data=price_df,
@@ -891,6 +1112,61 @@ class SingleStockTestExecutor:
         return f"sar_{params['sar_max_dots']}_{params['sar_params']['acceleration']:.3f}_{params['sar_params']['maximum']:.3f}_macd_{params['macd_params']['fastperiod']}_{params['macd_params']['slowperiod']}_{params['macd_params']['signalperiod']}"
     
     @staticmethod
+    def _calculate_and_save_strategy(param_key, params, start_date, end_date, sar_reject_dots, cache_dir):
+        """
+        並行計算策略位置並保存到磁盤（Stage 1 worker）
+        
+        Args:
+            param_key: 參數鍵
+            params: 參數字典
+            start_date: 起始日期
+            end_date: 結束日期
+            sar_reject_dots: SAR拒絕點數
+            cache_dir: 快取目錄路徑
+            
+        Returns:
+            tuple: (param_key, success, error_msg)
+        """
+        import pickle
+        from pathlib import Path
+        global _WORKER_MARKET_DATA
+        
+        try:
+            # 使用全局市場數據（避免重複序列化）
+            strategy = OscarTWStrategy(
+                sar_max_dots=params['sar_max_dots'],
+                sar_reject_dots=sar_reject_dots,
+                sar_params=params['sar_params'],
+                macd_params=params['macd_params'],
+                market_data=_WORKER_MARKET_DATA
+            )
+            
+            # ⚠️ 重要：確保 position 從 start_date 開始（而非第一個訊號日期）
+            # 否則 finlab sim() 會從第一個訊號計算年化報酬，而非從 start_date
+            base_position = strategy.base_position
+            
+            # 獲取完整交易日曆（從市場數據的 close 價格）
+            trading_days = _WORKER_MARKET_DATA['close'].loc[start_date:].index
+            if end_date:
+                trading_days = trading_days[trading_days <= end_date]
+            
+            # 重新索引：確保包含從 start_date 開始的所有交易日（缺失值填 False）
+            base_position = base_position.reindex(trading_days, fill_value=False)
+            
+            # 保存到磁盤快取
+            cache_file = Path(cache_dir) / f"{param_key}.pkl"
+            with open(cache_file, 'wb') as f:
+                pickle.dump(base_position, f, protocol=pickle.HIGHEST_PROTOCOL)
+            
+            # 清理記憶體
+            del strategy, base_position
+            
+            return (param_key, True, None)
+            
+        except Exception as e:
+            return (param_key, False, str(e))
+    
+    @staticmethod
     def _backtest_single_position(stock_id, position, params):
         """
         對預先計算好的位置執行回測（不重新計算策略）
@@ -972,7 +1248,15 @@ class SingleStockTestExecutor:
                 market_data=_WORKER_MARKET_DATA
             )
             
-            base_position = strategy.base_position.loc[start_date:].copy()
+            # ⚠️ 重要：確保 position 從 start_date 開始（而非第一個訊號日期）
+            # 否則 finlab sim() 會從第一個訊號計算年化報酬，而非從 start_date
+            base_position = strategy.base_position
+            
+            # 獲取完整交易日曆（從市場數據的 close 價格）
+            trading_days = _WORKER_MARKET_DATA['close'].loc[start_date:].index
+            
+            # 重新索引：確保包含從 start_date 開始的所有交易日（缺失值填 False）
+            base_position = base_position.reindex(trading_days, fill_value=False)
             
             # 對該參數下的每個股票執行回測（使用同一個位置DataFrame）
             for stock_id in stock_list:
@@ -1055,7 +1339,15 @@ class SingleStockTestExecutor:
                 market_data=_WORKER_MARKET_DATA
             )
             
-            base_position = strategy.base_position.loc[start_date:].copy()
+            # ⚠️ 重要：確保 position 從 start_date 開始（而非第一個訊號日期）
+            # 否則 finlab sim() 會從第一個訊號計算年化報酬，而非從 start_date
+            base_position = strategy.base_position
+            
+            # 獲取完整交易日曆（從市場數據的 close 價格）
+            trading_days = _WORKER_MARKET_DATA['close'].loc[start_date:].index
+            
+            # 重新索引：確保包含從 start_date 開始的所有交易日（缺失值填 False）
+            base_position = base_position.reindex(trading_days, fill_value=False)
             
             # 檢查股票是否在資料中
             if stock_id not in base_position.columns:
@@ -1248,12 +1540,13 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Single Stock Test Executor')
     parser.add_argument('--start_date', type=str, default='2023-01-01', help='回測起始日期')
+    parser.add_argument('--enddate', type=str, default=None, help='回測結束日期（可選，預設為最新價格日期）')
     parser.add_argument('--output_dir', type=str, default='assets/OscarTWStrategy/single_stock', help='結果輸出目錄')
     parser.add_argument('--sar_max_dots', type=int, default=2, help='SAR最大買進點數')
     parser.add_argument('--sar_reject_dots', type=int, default=3, help='SAR拒絕買進點數')
     parser.add_argument('--pool', type=int, default=None, help='並行處理的worker數量（默認自動：<100核心用cores-2，>=100核心用75%%。建議144核機器用100-110）')
     parser.add_argument('--stock_id', type=str, default=None, help='指定測試單一股票（可選）')
-    parser.add_argument('--optimize', action='store_true', help='啟用參數優化（僅在指定stock_id時有效）')
+    parser.add_argument('--optimize', action='store_true', help='啟用參數優化')
     
     args = parser.parse_args()
     
@@ -1272,6 +1565,7 @@ if __name__ == "__main__":
     
     executor = SingleStockTestExecutor(
         start_date=args.start_date,
+        end_date=args.enddate,
         output_dir=args.output_dir,
         sar_max_dots=args.sar_max_dots,
         sar_reject_dots=args.sar_reject_dots,
