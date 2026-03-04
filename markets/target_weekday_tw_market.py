@@ -5,7 +5,7 @@ import numpy as np
 from finlab.markets.tw import TWMarket
 import pandas as pd
 
-class CustomedTWMarket(TWMarket):
+class TargetWeekdayTWMarket(TWMarket):
     def __init__(self, buy_weekday=None):
         super().__init__()
         self.buy_weekday = buy_weekday
