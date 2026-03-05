@@ -25,6 +25,7 @@ dependencies:
       - python-dotenv
       - loguru==0.6.0
       - tqdm
+      - optuna
       - PyYAML
       - google-api-python-client==2.188.0
       - google-auth-oauthlib==1.2.4

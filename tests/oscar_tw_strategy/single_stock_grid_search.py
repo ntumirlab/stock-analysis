@@ -1,5 +1,5 @@
 """
-Single Stock Test Executor
+Single Stock Grid Search Executor
 
 測試策略在每一檔個股上的表現
 
@@ -51,6 +51,42 @@ _WORKER_MARKET_DATA = None
 _WORKER_BASE_POSITION = None
 _WORKER_POSITION_CACHE = {}  # Cache for pre-calculated positions by param hash
 
+
+def _create_oscar_strategy_compat(
+    sar_signal_lag_min=0,
+    sar_signal_lag_max=2,
+    sar_params=None,
+    macd_params=None,
+    market_data=None,
+):
+    """Create Oscar strategy compatible with both new and legacy constructor signatures."""
+    shared_kwargs = {}
+    if sar_params is not None:
+        shared_kwargs['sar_params'] = sar_params
+    if macd_params is not None:
+        shared_kwargs['macd_params'] = macd_params
+    if market_data is not None:
+        shared_kwargs['market_data'] = market_data
+
+    try:
+        return OscarTWStrategy(
+            sar_signal_lag_min=sar_signal_lag_min,
+            sar_signal_lag_max=sar_signal_lag_max,
+            **shared_kwargs,
+        )
+    except TypeError as e:
+        msg = str(e)
+        if 'sar_signal_lag_min' not in msg and 'sar_signal_lag_max' not in msg:
+            raise
+
+        # Fallback for legacy strategy signature that only supports sar_max_dots/sar_reject_dots.
+        legacy_max_dots = max(1, int(sar_signal_lag_max))
+        return OscarTWStrategy(
+            sar_max_dots=legacy_max_dots,
+            sar_reject_dots=max(legacy_max_dots + 1, 3),
+            **shared_kwargs,
+        )
+
 def _init_worker(market_data_path=None, base_position=None):
     """Initialize worker process with shared data (called once per worker)"""
     import pickle
@@ -67,16 +103,16 @@ def _init_worker(market_data_path=None, base_position=None):
     _WORKER_POSITION_CACHE = {}  # Each worker has its own cache
 
 
-class SingleStockTestExecutor:
-    """執行單一股票測試"""
+class SingleStockGridSearchExecutor:
+    """執行單一股票網格搜尋"""
     
     def __init__(
         self,
         start_date='2020-01-01',
         end_date=None,
         output_dir='results/single_stock_tests',
-        sar_max_dots=2,
-        sar_reject_dots=3,
+        sar_signal_lag_min=0,
+        sar_signal_lag_max=2,
         pool=20,
         stock_id=None,
         optimize_params=False
@@ -88,8 +124,8 @@ class SingleStockTestExecutor:
             start_date: 回測起始日期
             end_date: 回測結束日期（可選，預設為最新價格日期）
             output_dir: 結果輸出目錄
-            sar_max_dots: SAR參數 - 最大買進點數
-            sar_reject_dots: SAR參數 - 拒絕買進點數
+            sar_signal_lag_min: SAR翻多與MACD黃金交叉的最小允許天數差
+            sar_signal_lag_max: SAR翻多與MACD黃金交叉的最大允許天數差
             pool: 並行處理的worker數量
             stock_id: 指定測試單一股票（可選）
             optimize_params: 是否進行參數優化（僅在指定stock_id時有效）
@@ -111,8 +147,8 @@ class SingleStockTestExecutor:
             self.stage2_dir = self.output_dir / 'stage_2_results_latest'
         self.stage2_dir.mkdir(parents=True, exist_ok=True)
         
-        self.sar_max_dots = sar_max_dots
-        self.sar_reject_dots = sar_reject_dots
+        self.sar_signal_lag_min = sar_signal_lag_min
+        self.sar_signal_lag_max = sar_signal_lag_max
         self.pool = pool
         self.stock_id = stock_id
         self.optimize_params = optimize_params
@@ -124,14 +160,14 @@ class SingleStockTestExecutor:
             logger.warning(f"⚠️  並行處理數 ({self.pool}) 超過CPU核心數 ({cpu_count})，可能導致效能下降！")
             logger.warning(f"⚠️  建議設定 --pool {cpu_count} 或更小的值")
         
-        logger.info(f"初始化 SingleStockTestExecutor")
+        logger.info(f"初始化 SingleStockGridSearchExecutor")
         logger.info(f"回測起始日期: {start_date}")
         logger.info(f"回測結束日期: {end_date if end_date else '最新價格日期（自動）'}")
-        logger.info(f"SAR參數: max_dots={sar_max_dots}, reject_dots={sar_reject_dots}")
+        logger.info(f"SAR-MACD時間窗參數: lag_min={sar_signal_lag_min}, lag_max={sar_signal_lag_max}")
         logger.info(f"Stage 1 結果目錄: {self.output_dir}")
         logger.info(f"Stage 2 結果目錄: {self.stage2_dir}")
         if stock_id:
-            logger.info(f"單一股票測試模式: {stock_id}")
+            logger.info(f"單一股票網格搜尋模式: {stock_id}")
             if optimize_params:
                 logger.info(f"參數優化模式已啟用")
         else:
@@ -162,8 +198,8 @@ class SingleStockTestExecutor:
         """
         param_combinations = []
         
-        # SAR 參數
-        # max_dots: 1, 2, 3 (買進區間)
+        # SAR/MACD 對齊時間窗參數
+        # lag_window: (min_lag, max_lag)
         # acceleration: 0.01, 0.02, 0.03 (加速因子)
         # maximum: 0.15, 0.2, 0.25 (最大加速因子)
         
@@ -172,7 +208,8 @@ class SingleStockTestExecutor:
         # slow: 24, 26, 28  
         # signal: 8, 9, 10
         
-        sar_max_dots_values = [1, 2, 3]
+        # 保持與歷史相近的組合數量，避免任務量爆增
+        sar_lag_windows = [(0, 2), (0, 3), (1, 3)]
         sar_acceleration_values = [0.01, 0.02, 0.03]
         sar_maximum_values = [0.15, 0.2, 0.25]
         
@@ -180,7 +217,7 @@ class SingleStockTestExecutor:
         macd_slow_values = [24, 26, 28]
         macd_signal_values = [8, 9, 10]
         
-        for sar_max in sar_max_dots_values:
+        for lag_min, lag_max in sar_lag_windows:
             for sar_accel in sar_acceleration_values:
                 for sar_max_val in sar_maximum_values:
                     for macd_fast in macd_fast_values:
@@ -188,7 +225,8 @@ class SingleStockTestExecutor:
                             for macd_signal in macd_signal_values:
                                 if macd_fast < macd_slow:  # 確保 fast < slow
                                     param_combinations.append({
-                                        'sar_max_dots': sar_max,
+                                        'sar_signal_lag_min': lag_min,
+                                        'sar_signal_lag_max': lag_max,
                                         'sar_params': {
                                             'acceleration': sar_accel,
                                             'maximum': sar_max_val
@@ -206,7 +244,7 @@ class SingleStockTestExecutor:
     def run_test(self):
         """執行測試"""
         logger.info("=" * 60)
-        logger.info("開始執行單一股票測試")
+        logger.info("開始執行單一股票網格搜尋")
         logger.info("=" * 60)
         
         # 根據 optimize_params 和 stock_id 決定執行模式
@@ -225,9 +263,9 @@ class SingleStockTestExecutor:
             if self.stock_id:
                 # 單一股票單一參數模式
                 logger.info("初始化策略並生成買賣訊號...")
-                strategy = OscarTWStrategy(
-                    sar_max_dots=self.sar_max_dots,
-                    sar_reject_dots=self.sar_reject_dots
+                strategy = _create_oscar_strategy_compat(
+                    sar_signal_lag_min=self.sar_signal_lag_min,
+                    sar_signal_lag_max=self.sar_signal_lag_max,
                 )
                 # ⚠️ 重要：確保 position 從 start_date 開始
                 base_position = strategy.base_position
@@ -243,9 +281,9 @@ class SingleStockTestExecutor:
             else:
                 # 全市場模式：對所有股票執行回測並生成 HTML 表格
                 logger.info("初始化策略並生成買賣訊號...")
-                strategy = OscarTWStrategy(
-                    sar_max_dots=self.sar_max_dots,
-                    sar_reject_dots=self.sar_reject_dots
+                strategy = _create_oscar_strategy_compat(
+                    sar_signal_lag_min=self.sar_signal_lag_min,
+                    sar_signal_lag_max=self.sar_signal_lag_max,
                 )
                 # ⚠️ 重要：確保 position 從 start_date 開始
                 base_position = strategy.base_position
@@ -319,12 +357,12 @@ class SingleStockTestExecutor:
         with tqdm(total=len(param_grid), desc="計算策略位置", unit="param", ncols=100, miniters=1) as pbar:
             for params in param_grid:
                 try:
-                    strategy = OscarTWStrategy(
-                        sar_max_dots=params['sar_max_dots'],
-                        sar_reject_dots=self.sar_reject_dots,
+                    strategy = _create_oscar_strategy_compat(
+                        sar_signal_lag_min=params['sar_signal_lag_min'],
+                        sar_signal_lag_max=params['sar_signal_lag_max'],
                         sar_params=params['sar_params'],
                         macd_params=params['macd_params'],
-                        market_data=market_data
+                        market_data=market_data,
                     )
                     # ⚠️ 重要：確保 position 從 start_date 開始
                     base_position = strategy.base_position
@@ -377,7 +415,7 @@ class SingleStockTestExecutor:
                         if result:
                             param_results.append(result)
                             pbar.set_postfix({
-                                'SAR': params['sar_max_dots'],
+                                'LagWin': f"{params['sar_signal_lag_min']}-{params['sar_signal_lag_max']}",
                                 'return': f"{result['annual_return']:.2%}"
                             })
                     except Exception as e:
@@ -396,7 +434,9 @@ class SingleStockTestExecutor:
         logger.info("\n" + "=" * 60)
         logger.info("最佳參數組合")
         logger.info("=" * 60)
-        logger.info(f"SAR max_dots: {best_result['sar_max_dots']}")
+        logger.info(
+            f"SAR lag window: {best_result['sar_signal_lag_min']} ~ {best_result['sar_signal_lag_max']}"
+        )
         logger.info(f"SAR accel: {best_result['sar_accel']:.2f}, maximum: {best_result['sar_maximum']:.2f}")
         logger.info(f"MACD: fast={best_result['macd_fast']}, slow={best_result['macd_slow']}, signal={best_result['macd_signal']}")
         logger.info(f"年化報酬率: {best_result['annual_return']:.2%}")
@@ -408,11 +448,11 @@ class SingleStockTestExecutor:
         # 使用最佳參數重新初始化策略並生成完整的視覺化
         logger.info("使用最佳參數重新初始化策略並生成視覺化...")
         best_params = best_result['params']
-        best_strategy = OscarTWStrategy(
-            sar_max_dots=best_params['sar_max_dots'],
-            sar_reject_dots=self.sar_reject_dots,
+        best_strategy = _create_oscar_strategy_compat(
+            sar_signal_lag_min=best_params['sar_signal_lag_min'],
+            sar_signal_lag_max=best_params['sar_signal_lag_max'],
             sar_params=best_params['sar_params'],
-            macd_params=best_params['macd_params']
+            macd_params=best_params['macd_params'],
         )
         # ⚠️ 重要：確保 position 從 start_date 開始
         best_base_position = best_strategy.base_position
@@ -466,13 +506,12 @@ class SingleStockTestExecutor:
         else:
             actual_end_date = self.end_date
         
-        # 先用默認參數初始化策略，獲取有訊號的股票列表（已通過成交量和法人條件篩選）
-        # 使用極大的 SAR max_dots (500) 確保不會遺漏任何可能有訊號的股票
-        logger.info("初始化策略以獲取股票列表（使用 SAR max_dots=500 確保涵蓋所有可能）...")
-        temp_strategy = OscarTWStrategy(
-            sar_max_dots=500,  # 使用極大值確保捕捉所有可能有訊號的股票
-            sar_reject_dots=self.sar_reject_dots,
-            market_data=market_data
+        # 先用寬鬆時間窗初始化策略，獲取有訊號的股票列表（已通過成交量和法人條件篩選）
+        logger.info("初始化策略以獲取股票列表（使用寬鬆 lag window 確保涵蓋所有可能）...")
+        temp_strategy = _create_oscar_strategy_compat(
+            sar_signal_lag_min=0,
+            sar_signal_lag_max=30,
+            market_data=market_data,
         )
         # ⚠️ 重要：確保 position 從 start_date 開始
         base_position = temp_strategy.base_position
@@ -548,7 +587,6 @@ class SingleStockTestExecutor:
                     
                     # 檢查關鍵參數是否匹配
                     if (cache_meta.get('start_date') == self.start_date and
-                        cache_meta.get('sar_reject_dots') == self.sar_reject_dots and
                         cache_meta.get('param_count') == len(unique_params)):
                         
                         # 智能比對 end_date:
@@ -663,7 +701,6 @@ class SingleStockTestExecutor:
                                 params,
                                 self.start_date,
                                 self.end_date,
-                                self.sar_reject_dots,
                                 str(self.position_cache_dir)
                             ): (param_key, params)
                             for param_key, params in unique_params.items()
@@ -678,7 +715,10 @@ class SingleStockTestExecutor:
                                     if success:
                                         saved_params[result_key] = params
                                         param_count += 1
-                                        pbar.set_postfix({'SAR': params['sar_max_dots'], 'saved': param_count})
+                                        pbar.set_postfix({
+                                            'LagWin': f"{params['sar_signal_lag_min']}-{params['sar_signal_lag_max']}",
+                                            'saved': param_count
+                                        })
                                     else:
                                         logger.warning(f"策略計算失敗 {result_key}: {error}")
                                 except Exception as e:
@@ -690,7 +730,6 @@ class SingleStockTestExecutor:
                     cache_metadata = {
                         'start_date': self.start_date,
                         'end_date': self.end_date,
-                        'sar_reject_dots': self.sar_reject_dots,
                         'param_count': param_count,
                         'timestamp': datetime.now().isoformat()
                     }
@@ -821,18 +860,21 @@ class SingleStockTestExecutor:
                     best_result['stock_id'] = stock_id  # 添加股票代碼
                     results.append(best_result)
                     
-                    logger.info(f"\n{stock_id} 最佳參數: SAR={best_result['sar_max_dots']} (accel={best_result['sar_accel']:.2f}, max={best_result['sar_maximum']:.2f}), "
-                              f"MACD=({best_result['macd_fast']},{best_result['macd_slow']},{best_result['macd_signal']}), "
-                              f"年化報酬: {best_result['annual_return']:.2%}")
+                    logger.info(
+                        f"\n{stock_id} 最佳參數: SAR lag={best_result['sar_signal_lag_min']}~{best_result['sar_signal_lag_max']} "
+                        f"(accel={best_result['sar_accel']:.2f}, max={best_result['sar_maximum']:.2f}), "
+                        f"MACD=({best_result['macd_fast']},{best_result['macd_slow']},{best_result['macd_signal']}), "
+                        f"年化報酬: {best_result['annual_return']:.2%}"
+                    )
                     
                     # 為該股票生成完整的報告和視覺化（使用最佳參數重新初始化策略）
                     best_params = best_result['params']
-                    best_strategy = OscarTWStrategy(
-                        sar_max_dots=best_params['sar_max_dots'],
-                        sar_reject_dots=self.sar_reject_dots,
+                    best_strategy = _create_oscar_strategy_compat(
+                        sar_signal_lag_min=best_params['sar_signal_lag_min'],
+                        sar_signal_lag_max=best_params['sar_signal_lag_max'],
                         sar_params=best_params['sar_params'],
                         macd_params=best_params['macd_params'],
-                        market_data=market_data
+                        market_data=market_data,
                     )
                     # ⚠️ 重要：確保 position 從 start_date 開始
                     best_base_position = best_strategy.base_position
@@ -870,7 +912,7 @@ class SingleStockTestExecutor:
         
         # 重新排列欄位順序
         column_order = ['stock_id', 'annual_return', 'max_drawdown', 'sharpe_ratio', 'total_trades',
-                       'sar_max_dots', 'sar_accel', 'sar_maximum', 
+                       'sar_signal_lag_min', 'sar_signal_lag_max', 'sar_accel', 'sar_maximum', 
                        'macd_fast', 'macd_slow', 'macd_signal']
         df = df[column_order]
         
@@ -1109,10 +1151,14 @@ class SingleStockTestExecutor:
     @staticmethod
     def _param_to_key(params):
         """將參數字典轉為可哈希的字符串鍵"""
-        return f"sar_{params['sar_max_dots']}_{params['sar_params']['acceleration']:.3f}_{params['sar_params']['maximum']:.3f}_macd_{params['macd_params']['fastperiod']}_{params['macd_params']['slowperiod']}_{params['macd_params']['signalperiod']}"
+        return (
+            f"sar_lag_{params['sar_signal_lag_min']}_{params['sar_signal_lag_max']}_"
+            f"{params['sar_params']['acceleration']:.3f}_{params['sar_params']['maximum']:.3f}_"
+            f"macd_{params['macd_params']['fastperiod']}_{params['macd_params']['slowperiod']}_{params['macd_params']['signalperiod']}"
+        )
     
     @staticmethod
-    def _calculate_and_save_strategy(param_key, params, start_date, end_date, sar_reject_dots, cache_dir):
+    def _calculate_and_save_strategy(param_key, params, start_date, end_date, cache_dir):
         """
         並行計算策略位置並保存到磁盤（Stage 1 worker）
         
@@ -1121,7 +1167,6 @@ class SingleStockTestExecutor:
             params: 參數字典
             start_date: 起始日期
             end_date: 結束日期
-            sar_reject_dots: SAR拒絕點數
             cache_dir: 快取目錄路徑
             
         Returns:
@@ -1133,12 +1178,12 @@ class SingleStockTestExecutor:
         
         try:
             # 使用全局市場數據（避免重複序列化）
-            strategy = OscarTWStrategy(
-                sar_max_dots=params['sar_max_dots'],
-                sar_reject_dots=sar_reject_dots,
+            strategy = _create_oscar_strategy_compat(
+                sar_signal_lag_min=params['sar_signal_lag_min'],
+                sar_signal_lag_max=params['sar_signal_lag_max'],
                 sar_params=params['sar_params'],
                 macd_params=params['macd_params'],
-                market_data=_WORKER_MARKET_DATA
+                market_data=_WORKER_MARKET_DATA,
             )
             
             # ⚠️ 重要：確保 position 從 start_date 開始（而非第一個訊號日期）
@@ -1200,7 +1245,8 @@ class SingleStockTestExecutor:
             # 記錄結果（✅ 包含stock_id避免KeyError）
             result = {
                 'stock_id': stock_id,  # ← 修正：添加stock_id
-                'sar_max_dots': params['sar_max_dots'],
+                'sar_signal_lag_min': params['sar_signal_lag_min'],
+                'sar_signal_lag_max': params['sar_signal_lag_max'],
                 'sar_accel': params['sar_params']['acceleration'],
                 'sar_maximum': params['sar_params']['maximum'],
                 'macd_fast': params['macd_params']['fastperiod'],
@@ -1220,7 +1266,7 @@ class SingleStockTestExecutor:
             return None
     
     @staticmethod
-    def _test_param_group(params, stock_list, start_date, sar_reject_dots=2):
+    def _test_param_group(params, stock_list, start_date):
         """
         測試單組參數下的多個股票（智能緩存：策略位置只計算一次）
         
@@ -1228,7 +1274,6 @@ class SingleStockTestExecutor:
             params: 參數字典
             stock_list: 該參數下需要測試的股票列表
             start_date: 回測開始日期
-            sar_reject_dots: SAR拒絕點數
             
         Returns:
             list: 該參數組合下所有股票的回測結果
@@ -1240,12 +1285,12 @@ class SingleStockTestExecutor:
         
         try:
             # 初始化策略（只計算一次！）
-            strategy = OscarTWStrategy(
-                sar_max_dots=params['sar_max_dots'],
-                sar_reject_dots=sar_reject_dots,
+            strategy = _create_oscar_strategy_compat(
+                sar_signal_lag_min=params['sar_signal_lag_min'],
+                sar_signal_lag_max=params['sar_signal_lag_max'],
                 sar_params=params['sar_params'],
                 macd_params=params['macd_params'],
-                market_data=_WORKER_MARKET_DATA
+                market_data=_WORKER_MARKET_DATA,
             )
             
             # ⚠️ 重要：確保 position 從 start_date 開始（而非第一個訊號日期）
@@ -1286,7 +1331,8 @@ class SingleStockTestExecutor:
                     # 記錄結果
                     result = {
                         'stock_id': stock_id,
-                        'sar_max_dots': params['sar_max_dots'],
+                        'sar_signal_lag_min': params['sar_signal_lag_min'],
+                        'sar_signal_lag_max': params['sar_signal_lag_max'],
                         'sar_accel': params['sar_params']['acceleration'],
                         'sar_maximum': params['sar_params']['maximum'],
                         'macd_fast': params['macd_params']['fastperiod'],
@@ -1312,7 +1358,7 @@ class SingleStockTestExecutor:
             return []
     
     @staticmethod
-    def _test_single_param(stock_id, params, start_date, sar_reject_dots=2):
+    def _test_single_param(stock_id, params, start_date):
         """
         測試單一參數組合 (靜態方法供並行處理使用)
         使用全局 _WORKER_MARKET_DATA 避免昂貴的序列化
@@ -1321,7 +1367,6 @@ class SingleStockTestExecutor:
             stock_id: 股票代碼
             params: 參數字典
             start_date: 回測開始日期
-            sar_reject_dots: SAR拒絕點數
             
         Returns:
             dict: 單一參數組合的回測結果
@@ -1331,12 +1376,12 @@ class SingleStockTestExecutor:
         
         try:
             # 初始化策略（使用全局預載數據）
-            strategy = OscarTWStrategy(
-                sar_max_dots=params['sar_max_dots'],
-                sar_reject_dots=sar_reject_dots,
+            strategy = _create_oscar_strategy_compat(
+                sar_signal_lag_min=params['sar_signal_lag_min'],
+                sar_signal_lag_max=params['sar_signal_lag_max'],
                 sar_params=params['sar_params'],
                 macd_params=params['macd_params'],
-                market_data=_WORKER_MARKET_DATA
+                market_data=_WORKER_MARKET_DATA,
             )
             
             # ⚠️ 重要：確保 position 從 start_date 開始（而非第一個訊號日期）
@@ -1378,7 +1423,8 @@ class SingleStockTestExecutor:
             
             # 記錄結果（只儲存數值,不儲存大物件）
             result = {
-                'sar_max_dots': params['sar_max_dots'],
+                'sar_signal_lag_min': params['sar_signal_lag_min'],
+                'sar_signal_lag_max': params['sar_signal_lag_max'],
                 'sar_accel': params['sar_params']['acceleration'],
                 'sar_maximum': params['sar_params']['maximum'],
                 'macd_fast': params['macd_params']['fastperiod'],
@@ -1475,7 +1521,7 @@ class SingleStockTestExecutor:
         測試單一股票（舊版：保留用於向後兼容）
         新代碼請使用 _test_single_stock_optimized
         """
-        return SingleStockTestExecutor._test_single_stock_optimized(stock, fee_ratio, tax_ratio)
+        return SingleStockGridSearchExecutor._test_single_stock_optimized(stock, fee_ratio, tax_ratio)
     
     def _print_summary(self, df):
         """打印統計摘要"""
@@ -1538,12 +1584,12 @@ class SingleStockTestExecutor:
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description='Single Stock Test Executor')
+    parser = argparse.ArgumentParser(description='Single Stock Grid Search Executor')
     parser.add_argument('--start_date', type=str, default='2023-01-01', help='回測起始日期')
     parser.add_argument('--enddate', type=str, default=None, help='回測結束日期（可選，預設為最新價格日期）')
     parser.add_argument('--output_dir', type=str, default='assets/OscarTWStrategy/single_stock', help='結果輸出目錄')
-    parser.add_argument('--sar_max_dots', type=int, default=2, help='SAR最大買進點數')
-    parser.add_argument('--sar_reject_dots', type=int, default=3, help='SAR拒絕買進點數')
+    parser.add_argument('--sar_signal_lag_min', type=int, default=0, help='SAR與MACD訊號最小天數差')
+    parser.add_argument('--sar_signal_lag_max', type=int, default=2, help='SAR與MACD訊號最大天數差')
     parser.add_argument('--pool', type=int, default=None, help='並行處理的worker數量（默認自動：<100核心用cores-2，>=100核心用75%%。建議144核機器用100-110）')
     parser.add_argument('--stock_id', type=str, default=None, help='指定測試單一股票（可選）')
     parser.add_argument('--optimize', action='store_true', help='啟用參數優化')
@@ -1563,12 +1609,12 @@ if __name__ == "__main__":
             args.pool = max(1, cpu_count - 2)  # Leave 2 cores for system
             logger.info(f"自動偵測到 {cpu_count} 個CPU核心，設定並行處理數為 {args.pool}")
     
-    executor = SingleStockTestExecutor(
+    executor = SingleStockGridSearchExecutor(
         start_date=args.start_date,
         end_date=args.enddate,
         output_dir=args.output_dir,
-        sar_max_dots=args.sar_max_dots,
-        sar_reject_dots=args.sar_reject_dots,
+        sar_signal_lag_min=args.sar_signal_lag_min,
+        sar_signal_lag_max=args.sar_signal_lag_max,
         pool=args.pool,
         stock_id=args.stock_id,
         optimize_params=args.optimize
