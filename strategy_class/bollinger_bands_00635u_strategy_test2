@@ -1,0 +1,94 @@
+from finlab import data
+from finlab.markets.tw import TWMarket
+from finlab.backtest import sim
+import pandas as pd
+
+class AdjustTWMarketInfo(TWMarket):
+    def get_trading_price(self, name, adj=True):
+        return self.get_price(name, adj=adj).shift(1)
+
+
+class GoldBBandsStrategy:
+    
+    def __init__(self, target_etf='00635U'):
+        self.report = None
+        self.target_etf = target_etf
+        
+        # 載入基本價格數據
+        with data.universe(market='TSE_OTC'):
+            self.adj_close = data.get('etl:adj_close')
+            
+            # 使用 Finlab 內建指標計算布林通道 (參數: 20日均線, 上下2個標準差)
+            self.upper, self.middle, self.lower = data.indicator(
+                'BBANDS', 
+                timeperiod=20, 
+                nbdevup=2, 
+                nbdevdn=2, 
+                adjust_price=True
+            )
+
+    def build_buy_condition(self):
+        """買入條件：收盤價由下往上突破布林通道下緣 (超跌反彈)"""
+        
+        # 條件：昨收 <= 昨天下緣 且 今收 > 今天下緣
+        cross_above_lower = (self.adj_close > self.lower) & (self.adj_close.shift(1) <= self.lower.shift(1))
+        
+        # 建立一個全為 False 的 DataFrame，大小與 adj_close 相同
+        buy_signal = pd.DataFrame(False, index=self.adj_close.index, columns=self.adj_close.columns)
+        
+        # 只將目標 ETF (00635U) 的訊號填入
+        if self.target_etf in cross_above_lower.columns:
+            buy_signal[self.target_etf] = cross_above_lower[self.target_etf]
+            
+        return buy_signal
+
+    def build_sell_condition(self):
+        """賣出條件：收盤價突破或觸及布林通道上緣 (壓力區停利)"""
+        
+        # 條件：今日收盤價 >= 布林通道上緣
+        touch_upper = self.adj_close >= self.upper
+        
+        # 建立一個全為 False 的 DataFrame
+        sell_condition = pd.DataFrame(False, index=self.adj_close.index, columns=self.adj_close.columns)
+        
+        # 只將目標 ETF (00635U) 的訊號填入
+        if self.target_etf in touch_upper.columns:
+            sell_condition[self.target_etf] = touch_upper[self.target_etf]
+            
+        return sell_condition
+    
+    def run_strategy(self, start_buy_date='2018-01-01'):
+        """執行策略"""
+        
+        print(f"🚀 開始執行 {self.target_etf} 布林通道策略...")
+        print("📊 策略邏輯: 突破下緣買進，觸及上緣賣出")
+        
+        # 取得買賣訊號
+        buy_signal = self.build_buy_condition()
+        sell_condition = self.build_sell_condition()
+
+        # 設定起始買入日期
+        buy_signal = buy_signal.loc[start_buy_date:]
+
+        # 產生部位 (持有直到賣出條件觸發)
+        position = buy_signal.hold_until(sell_condition)
+
+        # 執行回測
+        self.report = sim(position, resample=None, upload=False, market=AdjustTWMarketInfo())
+        
+        print("✅ 策略執行完成！")
+        return self.report
+
+    def get_report(self):
+        """取得回測報告"""
+        return self.report if self.report else "report物件為空，請先運行策略"
+
+
+# 使用範例
+if __name__ == "__main__":
+    # 實例化並執行針對 00635U 的策略
+    strategy = GoldBBandsStrategy(target_etf='00635U')
+    report = strategy.run_strategy(start_buy_date='2018-01-01')
+    
+    # 可以在 Jupyter Notebook 中呼叫 report.display() 來查看詳細圖表
+    # report.display()

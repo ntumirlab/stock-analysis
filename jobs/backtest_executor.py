@@ -60,6 +60,10 @@ class BacktestExecutor:
             from strategy_class.roger_tw_strategy_monthly import RogerTWStrategyMonthly as strategy_class
         elif self.strategy_class_name == 'OscarTWStrategy':
             from strategy_class.oscar_tw_strategy import OscarTWStrategy as strategy_class
+        elif self.strategy_class_name == 'BollingerBands00635UStrategy':
+            from strategy_class.bollinger_bands_00635u_strategy_test import BollingerBands00635UStrategy as strategy_class
+        elif self.strategy_class_name == 'GoldBBandsStrategy':
+            from strategy_class.bollinger_bands_00635u_strategy_test2 import GoldBBandsStrategy as strategy_class
         else:
             raise ValueError(f"Unknown strategy class: {self.strategy_class_name}")
         return strategy_class()
