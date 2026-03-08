@@ -1,11 +1,7 @@
 """
-Alan TW Strategy C
-策略 C: top_n=25, 營業利益率成長 15%, BIAS: 3~13, 5~16, 8~21, 8~20, 5~29, 8~32
+Alan TW Strategy Base Class
+所有 Alan 策略的基底類別，包含共用的籌碼面、技術面、基本面條件邏輯
 
-此策略結合三大面向：
-- 籌碼面：三大法人與主力買賣超
-- 技術面：均線、乖離率、DMI、KD、MACD等指標
-- 基本面：營業利益率成長
 """
 
 from finlab import data
@@ -22,9 +18,11 @@ class AdjustTWMarketInfo(TWMarket):
         return self.get_price(name, adj=adj).shift(1)
 
 
-class AlanTWStrategyC:
+class AlanTWStrategyBase:
     """
-    Alan TW Strategy C - 策略C
+    Alan TW Strategy 基底類別
+        - get_strategy_configs(): 返回策略參數配置列表
+        - get_strategy_name(): 返回策略名稱
 
     Attributes:
         report: 回測報告物件
@@ -34,29 +32,12 @@ class AlanTWStrategyC:
     """
 
     def __init__(self):
-        """
-        初始化策略參數
-
-        注意：所有參數都在此處硬編碼，若需調整請直接修改此處數值
-        """
-        # 籌碼面參數
-        self.top_n = 25
-
-        # 基本面參數
-        self.op_growth_threshold = 1.15
-
-        # 技術面參數 - 乖離率範圍
-        self.bias_5_range = (0.03, 0.13)
-        self.bias_10_range = (0.05, 0.16)
-        self.bias_20_range = (0.08, 0.21)
-        self.bias_60_range = (0.08, 0.20)
-        self.bias_120_range = (0.05, 0.29)
-        self.bias_240_range = (0.08, 0.32)
-
+        """初始化策略參數"""
         # 回測參數
         self.start_date = '2017-12-31'
         self.slippage = 0.0
         self.position_limit = 0.25
+        self.min_amount = 30000000  # 最小成交金額
 
         self.report = None
         self.position = None
@@ -86,7 +67,7 @@ class AlanTWStrategyC:
             # 基本面數據
             self.operating_margin = data.get('fundamental_features:營業利益率')
 
-    def _build_chip_buy_condition(self):
+    def _build_chip_buy_condition(self, top_n):
         """建立籌碼面條件"""
         # 計算外資、投信、自營商的買賣超佔發行量比例
         foreign_net_buy_ratio = self.foreign_net_buy_shares / self.shares_outstanding
@@ -102,21 +83,21 @@ class AlanTWStrategyC:
         dealer_self_net_buy_ratio_3d_sum = dealer_self_net_buy_ratio.rolling(3).sum()
 
         # 外資條件
-        foreign_top_1d_ratio = foreign_net_buy_ratio.rank(axis=1, ascending=False) <= self.top_n
-        foreign_top_2d_ratio = foreign_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= self.top_n
-        foreign_top_3d_ratio = foreign_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= self.top_n
+        foreign_top_1d_ratio = foreign_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
+        foreign_top_2d_ratio = foreign_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= top_n
+        foreign_top_3d_ratio = foreign_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= top_n
         foreign_buy_condition = foreign_top_1d_ratio | foreign_top_2d_ratio | foreign_top_3d_ratio
 
         # 投信條件
-        investment_trust_top_1d_ratio = investment_trust_net_buy_ratio.rank(axis=1, ascending=False) <= self.top_n
-        investment_trust_top_2d_ratio = investment_trust_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= self.top_n
-        investment_trust_top_3d_ratio = investment_trust_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= self.top_n
+        investment_trust_top_1d_ratio = investment_trust_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
+        investment_trust_top_2d_ratio = investment_trust_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= top_n
+        investment_trust_top_3d_ratio = investment_trust_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= top_n
         investment_trust_buy_condition = investment_trust_top_1d_ratio | investment_trust_top_2d_ratio | investment_trust_top_3d_ratio
 
         # 自營商條件
-        dealer_self_top_1d_ratio = dealer_self_net_buy_ratio.rank(axis=1, ascending=False) <= self.top_n
-        dealer_self_top_2d_ratio = dealer_self_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= self.top_n
-        dealer_self_top_3d_ratio = dealer_self_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= self.top_n
+        dealer_self_top_1d_ratio = dealer_self_net_buy_ratio.rank(axis=1, ascending=False) <= top_n
+        dealer_self_top_2d_ratio = dealer_self_net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= top_n
+        dealer_self_top_3d_ratio = dealer_self_net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= top_n
         dealer_self_buy_condition = dealer_self_top_1d_ratio | dealer_self_top_2d_ratio | dealer_self_top_3d_ratio
 
         # 主力籌碼數據
@@ -130,9 +111,9 @@ class AlanTWStrategyC:
         net_buy_ratio_3d_sum = net_buy_ratio.rolling(3).sum()
 
         # 主力籌碼條件
-        main_force_top_1d_buy = net_buy_ratio.rank(axis=1, ascending=False) <= self.top_n
-        main_force_top_2d_buy = net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= self.top_n
-        main_force_top_3d_buy = net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= self.top_n
+        main_force_top_1d_buy = net_buy_ratio.rank(axis=1, ascending=False) <= top_n
+        main_force_top_2d_buy = net_buy_ratio_2d_sum.rank(axis=1, ascending=False) <= top_n
+        main_force_top_3d_buy = net_buy_ratio_3d_sum.rank(axis=1, ascending=False) <= top_n
         main_force_condition_1d = net_buy_ratio > 0.0008
         main_force_condition_2d = net_buy_ratio_2d_sum > 0.0015
         main_force_condition_3d = net_buy_ratio_3d_sum > 0.0025
@@ -147,8 +128,13 @@ class AlanTWStrategyC:
 
         return chip_buy_condition
 
-    def _build_technical_buy_condition(self):
+    def _build_technical_buy_condition(self, bias_5_range, bias_10_range, bias_20_range,
+                                       bias_60_range, bias_120_range, bias_240_range,
+                                       new_high_days=120, min_amount=None):
         """建立技術面條件"""
+        if min_amount is None:
+            min_amount = self.min_amount
+
         # 計算均線
         ma3 = self.adj_close.rolling(3).mean()
         ma5 = self.adj_close.rolling(5).mean()
@@ -178,12 +164,12 @@ class AlanTWStrategyC:
         bias_120 = (self.adj_close - ma120) / ma120
         bias_240 = (self.adj_close - ma240) / ma240
 
-        bias_5_condition = (bias_5 >= self.bias_5_range[0]) & (bias_5 <= self.bias_5_range[1])
-        bias_10_condition = (bias_10 >= self.bias_10_range[0]) & (bias_10 <= self.bias_10_range[1])
-        bias_20_condition = (bias_20 >= self.bias_20_range[0]) & (bias_20 <= self.bias_20_range[1])
-        bias_60_condition = (bias_60 >= self.bias_60_range[0]) & (bias_60 <= self.bias_60_range[1])
-        bias_120_condition = (bias_120 >= self.bias_120_range[0]) & (bias_120 <= self.bias_120_range[1])
-        bias_240_condition = (bias_240 >= self.bias_240_range[0]) & (bias_240 <= self.bias_240_range[1])
+        bias_5_condition = (bias_5 >= bias_5_range[0]) & (bias_5 <= bias_5_range[1])
+        bias_10_condition = (bias_10 >= bias_10_range[0]) & (bias_10 <= bias_10_range[1])
+        bias_20_condition = (bias_20 >= bias_20_range[0]) & (bias_20 <= bias_20_range[1])
+        bias_60_condition = (bias_60 >= bias_60_range[0]) & (bias_60 <= bias_60_range[1])
+        bias_120_condition = (bias_120 >= bias_120_range[0]) & (bias_120 <= bias_120_range[1])
+        bias_240_condition = (bias_240 >= bias_240_range[0]) & (bias_240 <= bias_240_range[1])
 
         bias_buy_condition = (
             bias_5_condition & bias_10_condition & bias_20_condition &
@@ -194,7 +180,7 @@ class AlanTWStrategyC:
         price_above_12_condition = self.close > 12
         volume_doubled_condition = self.volume > (self.volume.shift(1) * 2)
         volume_above_500_condition = self.volume > 500 * 1000
-        amount_condition = (self.close * self.volume) > 30000000
+        amount_condition = (self.close * self.volume) > min_amount
 
         # DMI指標
         with data.universe(market='TSE_OTC'):
@@ -223,8 +209,8 @@ class AlanTWStrategyC:
         macd_dif_buy_condition = dif > dif.shift(1)
 
         # 創新高
-        high_120 = self.adj_close.rolling(window=120).max()
-        new_high_condition = self.adj_close >= high_120
+        high_n = self.adj_close.rolling(window=new_high_days).max()
+        new_high_condition = self.adj_close >= high_n
 
         # 技術面綜合條件
         technical_buy_condition = (
@@ -243,10 +229,10 @@ class AlanTWStrategyC:
 
         return technical_buy_condition
 
-    def _build_fundamental_buy_condition(self):
+    def _build_fundamental_buy_condition(self, op_growth_threshold):
         """建立基本面條件"""
         operating_margin_increase = (
-            self.operating_margin > (self.operating_margin.shift(1) * self.op_growth_threshold)
+            self.operating_margin > (self.operating_margin.shift(1) * op_growth_threshold)
         )
 
         return operating_margin_increase
@@ -263,6 +249,53 @@ class AlanTWStrategyC:
 
         return sell_condition
 
+    def _build_single_strategy_signal(self, config):
+        """
+        根據單一策略配置建立買入訊號
+
+        Args:
+            config: 策略配置字典，包含:
+                - name: 策略名稱
+                - top_n: 籌碼面排名
+                - op_growth: 營益率成長門檻
+                - bias_ranges: 乖離率範圍 dict
+                - new_high_days: 創新高天數
+
+        Returns:
+            buy_signal: 買入訊號 DataFrame
+        """
+        chip_condition = self._build_chip_buy_condition(top_n=config['top_n'])
+        technical_condition = self._build_technical_buy_condition(
+            bias_5_range=config['bias_ranges']['bias_5'],
+            bias_10_range=config['bias_ranges']['bias_10'],
+            bias_20_range=config['bias_ranges']['bias_20'],
+            bias_60_range=config['bias_ranges']['bias_60'],
+            bias_120_range=config['bias_ranges']['bias_120'],
+            bias_240_range=config['bias_ranges']['bias_240'],
+            new_high_days=config['new_high_days']
+        )
+        fundamental_condition = self._build_fundamental_buy_condition(config['op_growth'])
+
+        return chip_condition & technical_condition & fundamental_condition
+
+    def get_strategy_configs(self):
+        """
+        返回策略參數配置列表 (子類別需實作)
+
+        Returns:
+            list: 策略配置列表，每個元素為 dict
+        """
+        raise NotImplementedError("子類別需實作 get_strategy_configs()")
+
+    def get_strategy_name(self):
+        """
+        返回策略名稱 (子類別需實作)
+
+        Returns:
+            str: 策略名稱
+        """
+        raise NotImplementedError("子類別需實作 get_strategy_name()")
+
     def run_strategy(self):
         """
         執行策略回測
@@ -270,24 +303,23 @@ class AlanTWStrategyC:
         Returns:
             report: 回測報告物件
         """
-        print("🚀 開始運行策略 C...")
+        strategy_name = self.get_strategy_name()
+        configs = self.get_strategy_configs()
 
-        # 建立買入條件
-        print("📊 計算籌碼面條件...")
-        chip_buy_condition = self._build_chip_buy_condition()
+        print(f"🚀 開始運行策略 {strategy_name}...")
 
-        print("📊 計算技術面條件...")
-        technical_buy_condition = self._build_technical_buy_condition()
+        # 建立各子策略買入訊號並組合
+        combined_signal = None
+        for config in configs:
+            print(f"📊 計算策略 {config['name']} 條件...")
+            signal = self._build_single_strategy_signal(config)
 
-        print("📊 計算基本面條件...")
-        fundamental_buy_condition = self._build_fundamental_buy_condition()
+            if combined_signal is None:
+                combined_signal = signal
+            else:
+                combined_signal = combined_signal | signal
 
-        # 組合買入訊號
-        self.buy_signal = (
-            chip_buy_condition &
-            technical_buy_condition &
-            fundamental_buy_condition
-        )
+        self.buy_signal = combined_signal
 
         # 設定起始日期
         self.buy_signal = self.buy_signal.loc[self.start_date:]
@@ -328,13 +360,16 @@ class AlanTWStrategyC:
             print("報告物件為空，請先運行策略")
             return
 
+        strategy_name = self.get_strategy_name()
+        configs = self.get_strategy_configs()
+
         metrics = self.report.get_metrics()
         annual_return = metrics['profitability']['annualReturn']
         max_drawdown = metrics['risk']['maxDrawdown']
         total_trades = self.report.get_trades().shape[0]
 
         print("=" * 50)
-        print("策略績效指標 (Strategy C)")
+        print(f"策略績效指標 (Strategy {strategy_name})")
         print("=" * 50)
         print(f"年化報酬率: {annual_return:.2%}")
         print(f"最大回檔: {max_drawdown:.2%}")
@@ -342,6 +377,12 @@ class AlanTWStrategyC:
         print(f"滑價成本: {self.slippage:.2%}")
         if self.position_limit:
             print(f"單檔持股上限: {self.position_limit:.1%}")
+        print("=" * 50)
+        print(f"策略組合: {' | '.join([c['name'] for c in configs])}")
+        for config in configs:
+            print(f"  - 策略 {config['name']}: top_n={config['top_n']}, "
+                  f"營益率 {(config['op_growth']-1)*100:.1f}%, "
+                  f"創{config['new_high_days']}天新高")
         print("=" * 50)
 
     def get_report(self):
@@ -352,9 +393,3 @@ class AlanTWStrategyC:
             report: 回測報告物件，若未運行策略則返回提示訊息
         """
         return self.report if self.report else "report物件為空，請先運行策略"
-
-
-# Example usage:
-if __name__ == "__main__":
-    strategy = AlanTWStrategyC()
-    report = strategy.run_strategy()
