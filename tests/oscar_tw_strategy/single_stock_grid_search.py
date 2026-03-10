@@ -35,6 +35,7 @@ from strategy_class.oscar_tw_strategy import OscarTWStrategy, AdjustTWMarketInfo
 from tests.oscar_tw_strategy.utils.drawing_overall_html import dataframe_to_sortable_html
 from tests.oscar_tw_strategy.utils.drawing_history_visualization import create_trading_visualization, prepare_price_data
 from tests.oscar_tw_strategy.utils.drawing_param_comparison import create_param_comparison_chart
+from tests.oscar_tw_strategy.utils.custom_report_metrics import get_metrics_with_fixed_annual_return
 
 # Load environment variables
 load_dotenv()
@@ -509,8 +510,8 @@ class SingleStockGridSearchExecutor:
         # 先用寬鬆時間窗初始化策略，獲取有訊號的股票列表（已通過成交量和法人條件篩選）
         logger.info("初始化策略以獲取股票列表（使用寬鬆 lag window 確保涵蓋所有可能）...")
         temp_strategy = _create_oscar_strategy_compat(
-            sar_signal_lag_min=0,
-            sar_signal_lag_max=30,
+            sar_signal_lag_min=-5,
+            sar_signal_lag_max=5,
             market_data=market_data,
         )
         # ⚠️ 重要：確保 position 從 start_date 開始
@@ -929,10 +930,43 @@ class SingleStockGridSearchExecutor:
         # 生成互動式 HTML 表格
         logger.info("生成 Stage 1 互動式 HTML 表格...")
         # 使用實際日期（在方法開始時已設定actual_end_date）
+        parameter_meanings = {
+            'stock_id': 'Stock code (TSE/OTC).',
+            'annual_return': 'Annualized return for the backtest window.',
+            'max_drawdown': 'Maximum equity drawdown in the backtest window.',
+            'sharpe_ratio': 'Risk-adjusted return ratio (higher is better).',
+            'total_trades': 'Number of completed trades.',
+            'sar_signal_lag_min': 'Minimum days where SAR bullish flip can lead MACD golden cross.',
+            'sar_signal_lag_max': 'Maximum days where SAR bullish flip can lead MACD golden cross.',
+            'sar_accel': 'SAR acceleration factor.',
+            'sar_maximum': 'SAR maximum acceleration cap.',
+            'macd_fast': 'MACD fast EMA period.',
+            'macd_slow': 'MACD slow EMA period.',
+            'macd_signal': 'MACD signal EMA period.',
+        }
+
+        tested_params = {
+            'search_mode': 'single_stock_grid_search --optimize (all stocks mode)',
+            'test_period': f'start_date={self.start_date}, end_date={actual_end_date}',
+            'sar_lag_windows': '[(0,2), (0,3), (1,3)]',
+            'sar_acceleration_values': '[0.01, 0.02, 0.03]',
+            'sar_maximum_values': '[0.15, 0.20, 0.25]',
+            'macd_fast_values': '[10, 12, 14]',
+            'macd_slow_values': '[24, 26, 28]',
+            'macd_signal_values': '[8, 9, 10]',
+            'constraint': 'macd_fast < macd_slow',
+            'total_param_combinations': str(len(self.generate_param_grid())),
+            'fee_ratio': '0.001425',
+            'tax_ratio': '0.003',
+        }
+
         dataframe_to_sortable_html(
             df=df,
             output_path=str(html_path),
-            title=f"Oscar Strategy - Stage 1 Optimized Parameters (startdate: {self.start_date}, enddate: {actual_end_date})"
+            title=f"Oscar Strategy - Grid Search Result (startdate: {self.start_date}, enddate: {actual_end_date})",
+            is_grid_search_result=True,
+            parameter_meanings=parameter_meanings,
+            tested_params=tested_params,
         )
         logger.info(f"📊 Stage 1 HTML 表格已儲存至: {html_path}")
         
@@ -1004,7 +1038,11 @@ class SingleStockGridSearchExecutor:
         logger.info(f"Stage 2 回測報告已儲存至: {report_path}")
         
         # 提取績效指標
-        metrics = report.get_metrics()
+        metrics = get_metrics_with_fixed_annual_return(
+            report,
+            start_date=self.start_date,
+            end_date=self.end_date,
+        )
         trades = report.get_trades()
         
         # 打印績效摘要
@@ -1239,7 +1277,11 @@ class SingleStockGridSearchExecutor:
             )
             
             # 提取績效指標
-            metrics = report.get_metrics()
+            metrics = get_metrics_with_fixed_annual_return(
+                report,
+                start_date=position.index[0],
+                end_date=position.index[-1],
+            )
             trades = report.get_trades()
             
             # 記錄結果（✅ 包含stock_id避免KeyError）
@@ -1325,7 +1367,10 @@ class SingleStockGridSearchExecutor:
                     )
                     
                     # 提取績效指標
-                    metrics = report.get_metrics()
+                    metrics = get_metrics_with_fixed_annual_return(
+                        report,
+                        start_date=start_date,
+                    )
                     trades = report.get_trades()
                     
                     # 記錄結果
@@ -1418,7 +1463,10 @@ class SingleStockGridSearchExecutor:
             )
             
             # 提取績效指標
-            metrics = report.get_metrics()
+            metrics = get_metrics_with_fixed_annual_return(
+                report,
+                start_date=start_date,
+            )
             trades = report.get_trades()
             
             # 記錄結果（只儲存數值,不儲存大物件）
@@ -1483,7 +1531,11 @@ class SingleStockGridSearchExecutor:
             # 移除HTML生成（I/O瓶頸）- 只在需要時單獨生成
             
             # 提取績效指標
-            metrics = report.get_metrics()
+            metrics = get_metrics_with_fixed_annual_return(
+                report,
+                start_date=base_position.index[0] if len(base_position.index) else None,
+                end_date=base_position.index[-1] if len(base_position.index) else None,
+            )
             trades = report.get_trades()
             
             # 整理結果 (只保留關鍵指標，減少內存占用)
