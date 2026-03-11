@@ -48,7 +48,10 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
     def run_strategy(self):
         universe = data.get('price:收盤價')
         
-        base_position = self._create_position_df(universe)
+        base_position, sl_df, tp_df = self._create_df(universe)
+        use_db_sl_tp = self.use_db_sl or self.use_db_tp
+        if use_db_sl_tp:
+            base_position = self._apply_sl_tp(base_position, sl_df, tp_df, universe)
         
         weekly_dates = base_position.resample('W').last().index
         
@@ -73,18 +76,31 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
             pos_offset = pos_offset.shift(-1).fillna(False).astype(bool)
             
             print(f"-> 正在回測 Week {offset + 1}...")
-            report = sim(
-                position=pos_offset,
-                fee_ratio=1.425/1000,
-                tax_ratio=3/1000,
-                stop_loss=self.stop_loss,
-                take_profit=self.take_profit,
-                market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
-                trade_at_price=self.trade_at_price,
-                resample=None,
-                upload=False,
-                notification_enable=False
-            )
+            if use_db_sl_tp:
+                report = sim(
+                    position=pos_offset,
+                    fee_ratio=1.425/1000,
+                    tax_ratio=3/1000,
+                    market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
+                    trade_at_price=self.trade_at_price,
+                    resample=None,
+                    upload=False,
+                    notification_enable=False
+                )
+            else:  
+                report = sim(
+                    position=pos_offset,
+                    fee_ratio=1.425/1000,
+                    tax_ratio=3/1000,
+                    stop_loss=self.global_sl,
+                    take_profit=self.global_tp,
+                    touched_exit=True,
+                    market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
+                    trade_at_price=self.trade_at_price,
+                    resample=None,
+                    upload=False,
+                    notification_enable=False
+                )
             
             reports[f"Week{offset + 1}"] = report
         
