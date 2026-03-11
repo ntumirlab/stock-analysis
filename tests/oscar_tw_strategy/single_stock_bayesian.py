@@ -26,6 +26,9 @@ from typing import Dict, Optional
 import pandas as pd
 from dotenv import load_dotenv
 from finlab.backtest import sim
+from tests.oscar_tw_strategy.utils.custom_report_metrics import (
+    compute_total_reward_amount_from_creturn,
+)
 
 # Prevent each worker process from spawning many native threads (BLAS/OpenMP),
 # which can otherwise exhaust OS thread limits under high process counts.
@@ -64,6 +67,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MIN_OBJECTIVE_VALUE = -1e18
+
 
 class SingleStockBayesianExecutor:
     """執行單一股票 Bayesian Optimization。"""
@@ -86,6 +91,8 @@ class SingleStockBayesianExecutor:
         volume_above_avg_ratio: float = 0.25,
         new_high_ratio_120: float = 0.3,
         optimize_composite: bool = True,
+        objective: str = "total_reward_amount",
+        initial_capital: float = 100_000,
     ):
         self.stock_id = stock_id
         self.start_date = start_date
@@ -97,6 +104,8 @@ class SingleStockBayesianExecutor:
         self.volume_above_avg_ratio = volume_above_avg_ratio
         self.new_high_ratio_120 = new_high_ratio_120
         self.optimize_composite = optimize_composite
+        self.objective = objective
+        self.initial_capital = float(initial_capital)
         self.strategy_class = (
             OscarCompositeStrategy if self.optimize_composite else OscarAndOrStrategy
         )
@@ -136,8 +145,20 @@ class SingleStockBayesianExecutor:
         self._supports_new_lag_params = (
             "sar_signal_lag_min" in sig_params and "sar_signal_lag_max" in sig_params
         )
+        self._supports_macd_lag_params = (
+            "macd_signal_lag_min" in sig_params and "macd_signal_lag_max" in sig_params
+        )
         self._supports_volume_override = "volume_above_avg_ratio" in sig_params
         self._supports_new_high_override = "new_high_ratio_120" in sig_params
+        self._supports_liquidity_params = (
+            "min_avg_volume_30" in sig_params and "max_volume_spike_ratio" in sig_params
+        )
+        self._supports_composite = (
+            "signal_quantile_bins" in sig_params
+            and "signal_weights" in sig_params
+            and "buy_score_threshold" in sig_params
+            and "sell_score_threshold" in sig_params
+        )
 
         self.trading_days = None
         if self.market_data is not None:
@@ -166,44 +187,6 @@ class SingleStockBayesianExecutor:
             self.process_workers,
             self.n_jobs,
         )
-
-        self.market_data = None
-        if preload_market_data:
-            self.market_data = self._load_market_data_once()
-
-        sig_params = set(
-            inspect.signature(self.strategy_class.__init__).parameters.keys()
-        )
-        self._supports_new_lag_params = (
-            "sar_signal_lag_min" in sig_params and "sar_signal_lag_max" in sig_params
-        )
-        self._supports_macd_lag_params = (
-            "macd_signal_lag_min" in sig_params and "macd_signal_lag_max" in sig_params
-        )
-        self._supports_volume_override = "volume_above_avg_ratio" in sig_params
-        self._supports_new_high_override = "new_high_ratio_120" in sig_params
-        self._supports_liquidity_params = (
-            "min_avg_volume_30" in sig_params and "max_volume_spike_ratio" in sig_params
-        )
-        self._supports_composite = (
-            "use_composite_scoring" in sig_params
-            and "signal_quantile_bins" in sig_params
-            and "signal_weights" in sig_params
-            and "buy_score_threshold" in sig_params
-            and "sell_score_threshold" in sig_params
-        )
-
-        if self.market_data is None:
-            self.market_data = self._load_market_data_once()
-
-        self.trading_days = self.market_data["close"].loc[self.start_date :].index
-        if self.end_date:
-            self.trading_days = self.trading_days[
-                self.trading_days <= pd.Timestamp(self.end_date)
-            ]
-
-        if len(self.trading_days) == 0:
-            raise ValueError("No trading days available in selected date range.")
 
     def _adapt_parallelism(self, cpu_count: int) -> None:
         """Balance process/thread parallelism to avoid thread exhaustion while preserving throughput."""
@@ -403,6 +386,61 @@ class SingleStockBayesianExecutor:
             position_limit=1.0,
         )
 
+    def _compute_total_reward_amount(self, report) -> float:
+        total_reward = compute_total_reward_amount_from_creturn(
+            creturn=getattr(report, "creturn", None),
+            initial_capital=self.initial_capital,
+            start_date=self.start_date,
+            end_date=self.end_date,
+        )
+        if total_reward is None:
+            return MIN_OBJECTIVE_VALUE
+        return float(total_reward)
+
+    @staticmethod
+    def _compose_optimization_target(objective_value: float, sharpe_ratio: float | None) -> float:
+        sharpe_bonus = 0.0 if sharpe_ratio is None else float(sharpe_ratio) * 1e-9
+        return float(objective_value) + sharpe_bonus
+
+    @staticmethod
+    def _select_best_trial(study: optuna.Study):
+        completed_trials = [
+            trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE
+        ]
+        if not completed_trials:
+            return None
+        return max(
+            completed_trials,
+            key=lambda trial: (
+                float(trial.user_attrs.get("objective_value", MIN_OBJECTIVE_VALUE)),
+                float(trial.user_attrs.get("sharpe_ratio", float("-inf")) or float("-inf")),
+            ),
+        )
+
+    def _select_objective_value(self, report, metrics: Dict) -> float:
+        if self.objective == "total_reward_amount":
+            return self._compute_total_reward_amount(report)
+        raise ValueError(f"Unsupported objective: {self.objective}")
+
+    def _store_trial_metrics(
+        self,
+        trial: optuna.trial.Trial,
+        *,
+        annual_return: float,
+        max_drawdown: float,
+        sharpe_ratio: float | None,
+        total_trades: int,
+        objective_value: float,
+        total_reward_amount: float,
+    ) -> None:
+        trial.set_user_attr("annual_return", annual_return)
+        trial.set_user_attr("max_drawdown", max_drawdown)
+        trial.set_user_attr("sharpe_ratio", sharpe_ratio)
+        trial.set_user_attr("total_trades", total_trades)
+        trial.set_user_attr("objective", self.objective)
+        trial.set_user_attr("objective_value", objective_value)
+        trial.set_user_attr("total_reward_amount", total_reward_amount)
+
     def _objective(self, trial: optuna.trial.Trial) -> float:
         sar_signal_lag_min = trial.suggest_int("sar_signal_lag_min", 0, 4)
         sar_signal_lag_max = trial.suggest_int(
@@ -476,58 +514,82 @@ class SingleStockBayesianExecutor:
             params["sell_score_threshold"] = sell_score_threshold
 
         strategy = self._build_strategy(params)
-        position = self._single_stock_position(strategy)
+        try:
+            position = self._single_stock_position(strategy)
 
-        # 沒有任何訊號時直接給低分，避免浪費完整回測。
-        if not position[self.stock_id].any():
-            trial.set_user_attr("annual_return", -1.0)
-            trial.set_user_attr("max_drawdown", 0.0)
-            trial.set_user_attr("sharpe_ratio", None)
-            trial.set_user_attr("total_trades", 0)
-            return -1.0
-
-        # Early pruning: 先跑前 25% 區間取得初步績效。
-        if len(position.index) >= 60:
-            warmup_len = max(20, int(len(position.index) * 0.25))
-            warmup_end = position.index[warmup_len - 1]
-            warmup_position = position.loc[:warmup_end]
-            warmup_report = self._run_backtest(warmup_position)
-            warmup_metrics = warmup_report.get_metrics()
-            warmup_annual_return = warmup_metrics["profitability"]["annualReturn"]
-            trial.report(warmup_annual_return, step=1)
-            if trial.should_prune():
-                raise optuna.TrialPruned(
-                    f"Pruned by median rule. warmup_return={warmup_annual_return:.4f}"
+            # 沒有任何訊號時直接給低分，避免浪費完整回測。
+            if not position[self.stock_id].any():
+                self._store_trial_metrics(
+                    trial,
+                    annual_return=-1.0,
+                    max_drawdown=0.0,
+                    sharpe_ratio=None,
+                    total_trades=0,
+                    objective_value=MIN_OBJECTIVE_VALUE,
+                    total_reward_amount=MIN_OBJECTIVE_VALUE,
                 )
+                return MIN_OBJECTIVE_VALUE
 
-        report = self._run_backtest(position)
-        metrics = report.get_metrics()
-        trades = report.get_trades()
+            # Early pruning: 先跑前 25% 區間取得初步績效。
+            if len(position.index) >= 60:
+                warmup_len = max(20, int(len(position.index) * 0.25))
+                warmup_end = position.index[warmup_len - 1]
+                warmup_position = position.loc[:warmup_end]
+                warmup_report = self._run_backtest(warmup_position)
+                warmup_metrics = warmup_report.get_metrics()
+                warmup_value = self._select_objective_value(warmup_report, warmup_metrics)
+                trial.report(warmup_value, step=1)
+                if trial.should_prune():
+                    raise optuna.TrialPruned(
+                        f"Pruned by median rule. warmup_value={warmup_value:.4f}"
+                    )
 
-        annual_return = metrics["profitability"]["annualReturn"]
-        max_drawdown = metrics["risk"]["maxDrawdown"]
-        sharpe_ratio = metrics["ratio"].get("sharpeRatio", None)
+            report = self._run_backtest(position)
+            metrics = report.get_metrics()
+            trades = report.get_trades()
 
-        trial.set_user_attr("annual_return", annual_return)
-        trial.set_user_attr("max_drawdown", max_drawdown)
-        trial.set_user_attr("sharpe_ratio", sharpe_ratio)
-        trial.set_user_attr("total_trades", len(trades))
+            annual_return = metrics["profitability"]["annualReturn"]
+            max_drawdown = metrics["risk"]["maxDrawdown"]
+            sharpe_ratio = metrics["ratio"].get("sharpeRatio", None)
+            total_reward_amount = self._compute_total_reward_amount(report)
+            objective_value = self._select_objective_value(report, metrics)
 
-        return annual_return
+            self._store_trial_metrics(
+                trial,
+                annual_return=annual_return,
+                max_drawdown=max_drawdown,
+                sharpe_ratio=sharpe_ratio,
+                total_trades=len(trades),
+                objective_value=objective_value,
+                total_reward_amount=total_reward_amount,
+            )
+
+            return self._compose_optimization_target(objective_value, sharpe_ratio)
+        finally:
+            self.strategy_class.clear_runtime_cache()
 
     def _save_study_outputs(self, study: optuna.Study) -> None:
+        best_trial = self._select_best_trial(study)
+        if best_trial is None:
+            raise RuntimeError("No successful trials were completed.")
+
         best = {
             "stock_id": self.stock_id,
             "study_name": study.study_name,
-            "best_value": study.best_value,
-            "best_params": study.best_params,
+            "best_value": best_trial.user_attrs.get("objective_value"),
+            "best_params": best_trial.params,
             "best_metrics": {
-                "annual_return": study.best_trial.user_attrs.get("annual_return"),
-                "max_drawdown": study.best_trial.user_attrs.get("max_drawdown"),
-                "sharpe_ratio": study.best_trial.user_attrs.get("sharpe_ratio"),
-                "total_trades": study.best_trial.user_attrs.get("total_trades"),
+                "objective": best_trial.user_attrs.get("objective"),
+                "objective_value": best_trial.user_attrs.get("objective_value"),
+                "total_reward_amount": best_trial.user_attrs.get("total_reward_amount"),
+                "annual_return": best_trial.user_attrs.get("annual_return"),
+                "max_drawdown": best_trial.user_attrs.get("max_drawdown"),
+                "sharpe_ratio": best_trial.user_attrs.get("sharpe_ratio"),
+                "total_trades": best_trial.user_attrs.get("total_trades"),
             },
             "fixed_inputs": {
+                "objective": self.objective,
+                "initial_capital": self.initial_capital,
                 "volume_above_avg_ratio": self.volume_above_avg_ratio,
                 "new_high_ratio_120": self.new_high_ratio_120,
                 "optimize_composite": self.optimize_composite,
@@ -640,6 +702,8 @@ class SingleStockBayesianExecutor:
         study.set_user_attr("new_high_ratio_120", self.new_high_ratio_120)
         study.set_user_attr("process_workers", self.process_workers)
         study.set_user_attr("thread_jobs_per_worker", self.n_jobs)
+        study.set_user_attr("objective", self.objective)
+        study.set_user_attr("initial_capital", self.initial_capital)
 
         logger.info("開始 Bayesian Optimization...")
         try:
@@ -673,6 +737,8 @@ class SingleStockBayesianExecutor:
                     "volume_above_avg_ratio": self.volume_above_avg_ratio,
                     "new_high_ratio_120": self.new_high_ratio_120,
                     "optimize_composite": self.optimize_composite,
+                    "objective": self.objective,
+                    "initial_capital": self.initial_capital,
                 }
 
                 processes = []
@@ -716,18 +782,25 @@ class SingleStockBayesianExecutor:
             raise RuntimeError("No successful trials were completed.")
 
         self._save_study_outputs(study)
+        best_trial = self._select_best_trial(study)
+        if best_trial is None:
+            raise RuntimeError("No successful trials were completed.")
 
         result = {
             "stock_id": self.stock_id,
-            "best_value": study.best_value,
-            "best_params": study.best_params,
-            "best_trial_number": study.best_trial.number,
+            "best_value": best_trial.user_attrs.get("objective_value"),
+            "best_params": best_trial.params,
+            "best_trial_number": best_trial.number,
             "output_dir": str(self.study_dir),
         }
 
         logger.info("Bayesian optimization 完成")
-        logger.info("Best value (annual return): %.4f", study.best_value)
-        logger.info("Best params: %s", study.best_params)
+        logger.info(
+            "Best value (%s): %.4f",
+            self.objective,
+            float(best_trial.user_attrs.get("objective_value", MIN_OBJECTIVE_VALUE)),
+        )
+        logger.info("Best params: %s", best_trial.params)
         return result
 
 
@@ -752,6 +825,8 @@ def _run_bayesian_worker(
         volume_above_avg_ratio=worker_payload["volume_above_avg_ratio"],
         new_high_ratio_120=worker_payload["new_high_ratio_120"],
         optimize_composite=worker_payload["optimize_composite"],
+        objective=worker_payload["objective"],
+        initial_capital=worker_payload["initial_capital"],
     )
     executor._optimize_study(
         storage_url, study_name, worker_trials, worker_payload["seed"] + worker_id
@@ -793,6 +868,19 @@ def build_cli_parser(
         type=str,
         default=None,
         help="市場資料 pickle 路徑（可重用，避免重抓）",
+    )
+    parser.add_argument(
+        "--objective",
+        type=str,
+        default="total_reward_amount",
+        choices=["total_reward_amount"],
+        help="優化目標函數",
+    )
+    parser.add_argument(
+        "--initial_capital",
+        type=float,
+        default=100_000,
+        help="計算 total reward amount 的初始資金",
     )
     parser.add_argument("--seed", type=int, default=42, help="隨機種子")
     parser.add_argument("--fee_ratio", type=float, default=0.001425, help="手續費率")
@@ -836,6 +924,8 @@ def run_cli(
         volume_above_avg_ratio=args.volume_ratio,
         new_high_ratio_120=args.new_high_ratio_120,
         optimize_composite=args.optimize_composite,
+        objective=args.objective,
+        initial_capital=args.initial_capital,
     )
 
     executor.optimize()
@@ -872,6 +962,8 @@ if __name__ == "__main__":
         volume_above_avg_ratio=args.volume_ratio,
         new_high_ratio_120=args.new_high_ratio_120,
         optimize_composite=args.optimize_composite,
+        objective=args.objective,
+        initial_capital=args.initial_capital,
     )
 
     executor.optimize()

@@ -45,6 +45,7 @@ def create_param_comparison_chart(
             "macd_fast",
             "macd_slow",
             "macd_signal",
+            "total_reward_amount",
             "annual_return",
             "max_drawdown",
             "sharpe_ratio",
@@ -58,6 +59,7 @@ def create_param_comparison_chart(
             "macd_fast",
             "macd_slow",
             "macd_signal",
+            "total_reward_amount",
             "annual_return",
             "max_drawdown",
             "sharpe_ratio",
@@ -70,10 +72,15 @@ def create_param_comparison_chart(
 
     df = df[display_columns]
 
-    # 依年化報酬率排序
-    df = df.sort_values(by="annual_return", ascending=False).reset_index(drop=True)
+    # 依總報酬金額與夏普比率排序
+    df = df.sort_values(
+        by=["total_reward_amount", "sharpe_ratio"],
+        ascending=[False, False],
+        na_position="last",
+    ).reset_index(drop=True)
 
     # 找出最佳值（用於高亮顯示）
+    best_total_reward = df["total_reward_amount"].max()
     best_annual_return = df["annual_return"].max()
     best_sharpe = df["sharpe_ratio"].max() if df["sharpe_ratio"].notna().any() else None
     min_drawdown = df["max_drawdown"].max()  # 最大回檔越接近0越好（負值較小）
@@ -88,6 +95,7 @@ def create_param_comparison_chart(
         "macd_fast": "MACD Fast",
         "macd_slow": "MACD Slow",
         "macd_signal": "MACD Signal",
+        "total_reward_amount": "Total Reward",
         "annual_return": "Annual Return",
         "max_drawdown": "Max Drawdown",
         "sharpe_ratio": "Sharpe Ratio",
@@ -115,6 +123,13 @@ def create_param_comparison_chart(
             if pd.isna(value):
                 formatted_value = "N/A"
                 cell_class = ""
+            elif col == "total_reward_amount":
+                formatted_value = f"{value:.2f}"
+                cell_class = (
+                    ' class="highlight-best"'
+                    if abs(value - best_total_reward) < 1e-6
+                    else ""
+                )
             elif col == "annual_return":
                 formatted_value = f"{value:.2%}"
                 # 高亮最佳年化報酬

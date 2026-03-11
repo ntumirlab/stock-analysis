@@ -37,6 +37,9 @@ def dataframe_to_sortable_html(
 
     # 取得欄位名稱
     headers = df.columns.tolist()
+    default_sort_column = 1 if len(headers) > 1 else 0
+    annual_return_index = headers.index("annual_return") if "annual_return" in headers else None
+    sharpe_ratio_index = headers.index("sharpe_ratio") if "sharpe_ratio" in headers else None
 
     # 建立表頭 HTML
     thead_html = "<tr>\n"
@@ -322,7 +325,7 @@ def dataframe_to_sortable_html(
                 responsive: true,
                 pageLength: 25,
                 lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-                order: [[1, 'desc']], // Default sort by annual_return
+                order: [[{default_sort_column}, 'desc']], // Default sort by first metric column
                 columnDefs: [
                     {{
                         targets: '_all',
@@ -361,8 +364,10 @@ def dataframe_to_sortable_html(
             
             for (var i = 0; i < totalStocks; i++) {{
                 var row = data[i];
-                var annualReturn = parseFloat(row[1]); // Assuming annual_return is column 1
-                var sharpe = parseFloat(row[3]); // Assuming sharpe_ratio is column 3
+                var annualReturn = {annual_return_index if annual_return_index is not None else 'null'};
+                annualReturn = annualReturn === null ? NaN : parseFloat(row[annualReturn]);
+                var sharpe = {sharpe_ratio_index if sharpe_ratio_index is not None else 'null'};
+                sharpe = sharpe === null ? NaN : parseFloat(row[sharpe]);
                 
                 if (!isNaN(annualReturn)) {{
                     avgReturn += annualReturn;

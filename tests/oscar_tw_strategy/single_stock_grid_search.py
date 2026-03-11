@@ -46,6 +46,7 @@ from tests.oscar_tw_strategy.utils.drawing_param_comparison import (
     create_param_comparison_chart,
 )
 from tests.oscar_tw_strategy.utils.custom_report_metrics import (
+    compute_total_reward_amount_from_creturn,
     get_metrics_with_fixed_annual_return,
 )
 
@@ -62,6 +63,7 @@ logger = logging.getLogger(__name__)
 _WORKER_MARKET_DATA = None
 _WORKER_BASE_POSITION = None
 _WORKER_POSITION_CACHE = {}  # Cache for pre-calculated positions by param hash
+_WORKER_INITIAL_CAPITAL = 100_000.0
 
 
 def _create_oscar_strategy_compat(
@@ -92,11 +94,11 @@ def _create_oscar_strategy_compat(
         raise
 
 
-def _init_worker(market_data_path=None, base_position=None):
+def _init_worker(market_data_path=None, base_position=None, initial_capital=100_000.0):
     """Initialize worker process with shared data (called once per worker)"""
     import pickle
 
-    global _WORKER_MARKET_DATA, _WORKER_BASE_POSITION, _WORKER_POSITION_CACHE
+    global _WORKER_MARKET_DATA, _WORKER_BASE_POSITION, _WORKER_POSITION_CACHE, _WORKER_INITIAL_CAPITAL
 
     # Load market_data from disk (avoids serialization overhead and redundant API calls)
     if market_data_path and os.path.exists(market_data_path):
@@ -107,6 +109,13 @@ def _init_worker(market_data_path=None, base_position=None):
 
     _WORKER_BASE_POSITION = base_position
     _WORKER_POSITION_CACHE = {}  # Each worker has its own cache
+    _WORKER_INITIAL_CAPITAL = float(initial_capital)
+
+
+def _result_ranking_key(result):
+    sharpe_ratio = result.get("sharpe_ratio")
+    sharpe_value = float("-inf") if sharpe_ratio is None else float(sharpe_ratio)
+    return (float(result["total_reward_amount"]), sharpe_value)
 
 
 class SingleStockGridSearchExecutor:
@@ -122,6 +131,7 @@ class SingleStockGridSearchExecutor:
         pool=20,
         stock_id=None,
         optimize_params=False,
+        initial_capital=100_000,
     ):
         """
         初始化測試執行器
@@ -158,6 +168,7 @@ class SingleStockGridSearchExecutor:
         self.pool = pool
         self.stock_id = stock_id
         self.optimize_params = optimize_params
+        self.initial_capital = float(initial_capital)
 
         # Warn if pool size is too large
         import os
@@ -431,6 +442,7 @@ class SingleStockGridSearchExecutor:
                     stock_id,
                     param_data["position"],
                     param_data["params"],
+                    self.initial_capital,
                 ): param_data["params"]
                 for param_data in param_positions.values()
             }
@@ -452,7 +464,7 @@ class SingleStockGridSearchExecutor:
                             pbar.set_postfix(
                                 {
                                     "LagWin": f"{params['sar_signal_lag_min']}-{params['sar_signal_lag_max']}",
-                                    "return": f"{result['annual_return']:.2%}",
+                                            "reward": f"{result['total_reward_amount']:.2f}",
                                 }
                             )
                     except Exception as e:
@@ -465,7 +477,7 @@ class SingleStockGridSearchExecutor:
             return None
 
         # 找出最佳結果
-        best_result = max(param_results, key=lambda x: x["annual_return"])
+        best_result = max(param_results, key=_result_ranking_key)
 
         # 輸出最佳參數資訊
         logger.info("\n" + "=" * 60)
@@ -480,6 +492,7 @@ class SingleStockGridSearchExecutor:
         logger.info(
             f"MACD: fast={best_result['macd_fast']}, slow={best_result['macd_slow']}, signal={best_result['macd_signal']}"
         )
+        logger.info(f"總報酬金額: {best_result['total_reward_amount']:.2f}")
         logger.info(f"年化報酬率: {best_result['annual_return']:.2%}")
         logger.info(f"最大回檔: {best_result['max_drawdown']:.2%}")
         logger.info(
@@ -922,6 +935,7 @@ class SingleStockGridSearchExecutor:
                         task["stock"],
                         task["position"],
                         task["params"],
+                        self.initial_capital,
                     ): task
                     for task in backtest_tasks
                 }
@@ -952,7 +966,7 @@ class SingleStockGridSearchExecutor:
                                     pbar.set_postfix(
                                         {
                                             "stock": stock_id,
-                                            "return": f"{result['annual_return']:.2%}",
+                                            "reward": f"{result['total_reward_amount']:.2f}",
                                         }
                                     )
 
@@ -1001,9 +1015,7 @@ class SingleStockGridSearchExecutor:
                 stock_param_results = all_param_results.get(stock_id, [])
 
                 if stock_param_results:
-                    best_result = max(
-                        stock_param_results, key=lambda x: x["annual_return"]
-                    )
+                    best_result = max(stock_param_results, key=_result_ranking_key)
                     best_result["stock_id"] = stock_id  # 添加股票代碼
                     results.append(best_result)
 
@@ -1011,6 +1023,7 @@ class SingleStockGridSearchExecutor:
                         f"\n{stock_id} 最佳參數: SAR lag={best_result['sar_signal_lag_min']}~{best_result['sar_signal_lag_max']} "
                         f"(accel={best_result['sar_accel']:.2f}, max={best_result['sar_maximum']:.2f}), "
                         f"MACD=({best_result['macd_fast']},{best_result['macd_slow']},{best_result['macd_signal']}), "
+                        f"總報酬金額: {best_result['total_reward_amount']:.2f}, "
                         f"年化報酬: {best_result['annual_return']:.2%}"
                     )
 
@@ -1064,6 +1077,7 @@ class SingleStockGridSearchExecutor:
         # 重新排列欄位順序
         column_order = [
             "stock_id",
+            "total_reward_amount",
             "annual_return",
             "max_drawdown",
             "sharpe_ratio",
@@ -1078,8 +1092,12 @@ class SingleStockGridSearchExecutor:
         ]
         df = df[column_order]
 
-        # 依照年報酬率排序
-        df = df.sort_values(by="annual_return", ascending=False)
+        # 依照總報酬金額與夏普比率排序
+        df = df.sort_values(
+            by=["total_reward_amount", "sharpe_ratio"],
+            ascending=[False, False],
+            na_position="last",
+        )
 
         # Stage 1 結果：單一文件（無時間戳，每次更新覆蓋）
         csv_path = self.output_dir / "stage_1_optimized_params.csv"
@@ -1093,6 +1111,7 @@ class SingleStockGridSearchExecutor:
         # 使用實際日期（在方法開始時已設定actual_end_date）
         parameter_meanings = {
             "stock_id": "Stock code (TSE/OTC).",
+            "total_reward_amount": "Total reward amount using configurable initial capital.",
             "annual_return": "Annualized return for the backtest window.",
             "max_drawdown": "Maximum equity drawdown in the backtest window.",
             "sharpe_ratio": "Risk-adjusted return ratio (higher is better).",
@@ -1117,6 +1136,7 @@ class SingleStockGridSearchExecutor:
             "macd_signal_values": "[8, 9, 10]",
             "constraint": "macd_fast < macd_slow",
             "total_param_combinations": str(len(self.generate_param_grid())),
+            "initial_capital": f"{self.initial_capital:.0f}",
             "fee_ratio": "0.001425",
             "tax_ratio": "0.003",
         }
@@ -1148,7 +1168,7 @@ class SingleStockGridSearchExecutor:
         logger.info("=" * 80)
         logger.info(f"✅ 成功優化 {len(df)} 檔股票")
         logger.info(
-            f"🏆 最佳股票: {df.iloc[0]['stock_id']} (年化報酬: {df.iloc[0]['annual_return']:.2%})"
+            f"🏆 最佳股票: {df.iloc[0]['stock_id']} (總報酬金額: {df.iloc[0]['total_reward_amount']:.2f})"
         )
         logger.info("=" * 80)
 
@@ -1279,6 +1299,12 @@ class SingleStockGridSearchExecutor:
         result = {
             "stock_id": stock_id,
             "total_trades": len(trades),
+            "total_reward_amount": compute_total_reward_amount_from_creturn(
+                creturn=report.creturn,
+                initial_capital=self.initial_capital,
+                start_date=self.start_date,
+                end_date=self.end_date,
+            ),
             "annual_return": metrics["profitability"]["annualReturn"],
             "max_drawdown": metrics["risk"]["maxDrawdown"],
             "sharpe_ratio": metrics["ratio"].get("sharpeRatio", None),
@@ -1326,7 +1352,7 @@ class SingleStockGridSearchExecutor:
         with ProcessPoolExecutor(
             max_workers=self.pool,
             initializer=_init_worker,
-            initargs=(None, base_position),
+            initargs=(None, base_position, self.initial_capital),
         ) as executor:
             logger.info("工作進程初始化完成，開始測試...")
             # 提交所有任務（不再傳遞base_position）
@@ -1352,7 +1378,7 @@ class SingleStockGridSearchExecutor:
                             pbar.set_postfix(
                                 {
                                     "stock": stock,
-                                    "return": f"{result['annual_return']:.2%}",
+                                    "reward": f"{result['total_reward_amount']:.2f}",
                                 }
                             )
                     except Exception as e:
@@ -1363,8 +1389,12 @@ class SingleStockGridSearchExecutor:
         # 轉換為 DataFrame
         df = pd.DataFrame(results)
 
-        # 依照年報酬率排序後儲存 CSV
-        df = df.sort_values(by="annual_return", ascending=False)
+        # 依照總報酬金額排序後儲存 CSV
+        df = df.sort_values(
+            by=["total_reward_amount", "sharpe_ratio"],
+            ascending=[False, False],
+            na_position="last",
+        )
         df.to_csv(output_path, index=False, encoding="utf-8-sig")
         logger.info(f"結果已儲存至: {output_path}")
         logger.info(f"成功測試 {len(df)} / {len(all_stocks)} 檔股票")
@@ -1430,6 +1460,7 @@ class SingleStockGridSearchExecutor:
                 pickle.dump(base_position, f, protocol=pickle.HIGHEST_PROTOCOL)
 
             # 清理記憶體
+            OscarAndOrStrategy.clear_runtime_cache()
             del strategy, base_position
 
             return (param_key, True, None)
@@ -1438,7 +1469,7 @@ class SingleStockGridSearchExecutor:
             return (param_key, False, str(e))
 
     @staticmethod
-    def _backtest_single_position(stock_id, position, params):
+    def _backtest_single_position(stock_id, position, params, initial_capital):
         """
         對預先計算好的位置執行回測（不重新計算策略）
 
@@ -1483,12 +1514,19 @@ class SingleStockGridSearchExecutor:
                 "macd_slow": params["macd_params"]["slowperiod"],
                 "macd_signal": params["macd_params"]["signalperiod"],
                 "total_trades": len(trades),
+                "total_reward_amount": compute_total_reward_amount_from_creturn(
+                    creturn=report.creturn,
+                    initial_capital=initial_capital,
+                    start_date=position.index[0],
+                    end_date=position.index[-1],
+                ),
                 "annual_return": metrics["profitability"]["annualReturn"],
                 "max_drawdown": metrics["risk"]["maxDrawdown"],
                 "sharpe_ratio": metrics["ratio"].get("sharpeRatio", None),
                 "params": params,
             }
 
+            OscarAndOrStrategy.clear_runtime_cache()
             return result
 
         except Exception as e:
@@ -1496,7 +1534,7 @@ class SingleStockGridSearchExecutor:
             return None
 
     @staticmethod
-    def _test_param_group(params, stock_list, start_date):
+    def _test_param_group(params, stock_list, start_date, initial_capital):
         """
         測試單組參數下的多個股票（智能緩存：策略位置只計算一次）
 
@@ -1576,6 +1614,12 @@ class SingleStockGridSearchExecutor:
                         "macd_slow": params["macd_params"]["slowperiod"],
                         "macd_signal": params["macd_params"]["signalperiod"],
                         "total_trades": len(trades),
+                        "total_reward_amount": compute_total_reward_amount_from_creturn(
+                            creturn=report.creturn,
+                            initial_capital=initial_capital,
+                            start_date=start_date,
+                            end_date=None,
+                        ),
                         "annual_return": metrics["profitability"]["annualReturn"],
                         "max_drawdown": metrics["risk"]["maxDrawdown"],
                         "sharpe_ratio": metrics["ratio"].get("sharpeRatio", None),
@@ -1595,7 +1639,7 @@ class SingleStockGridSearchExecutor:
             return []
 
     @staticmethod
-    def _test_single_param(stock_id, params, start_date):
+    def _test_single_param(stock_id, params, start_date, initial_capital):
         """
         測試單一參數組合 (靜態方法供並行處理使用)
         使用全局 _WORKER_MARKET_DATA 避免昂貴的序列化
@@ -1670,12 +1714,19 @@ class SingleStockGridSearchExecutor:
                 "macd_slow": params["macd_params"]["slowperiod"],
                 "macd_signal": params["macd_params"]["signalperiod"],
                 "total_trades": len(trades),
+                "total_reward_amount": compute_total_reward_amount_from_creturn(
+                    creturn=report.creturn,
+                    initial_capital=initial_capital,
+                    start_date=start_date,
+                    end_date=None,
+                ),
                 "annual_return": metrics["profitability"]["annualReturn"],
                 "max_drawdown": metrics["risk"]["maxDrawdown"],
                 "sharpe_ratio": metrics["ratio"].get("sharpeRatio", None),
                 "params": params,  # 只保留參數字典，不保留 strategy 和 base_position
             }
 
+            OscarAndOrStrategy.clear_runtime_cache()
             return result
 
         except Exception as e:
@@ -1697,7 +1748,7 @@ class SingleStockGridSearchExecutor:
         """
         from finlab.backtest import sim
 
-        global _WORKER_BASE_POSITION
+        global _WORKER_BASE_POSITION, _WORKER_INITIAL_CAPITAL
 
         try:
             # 使用全局變量避免每次任務都序列化整個DataFrame
@@ -1734,6 +1785,12 @@ class SingleStockGridSearchExecutor:
             result = {
                 "stock_id": stock,
                 "total_trades": len(trades),
+                "total_reward_amount": compute_total_reward_amount_from_creturn(
+                    creturn=report.creturn,
+                    initial_capital=_WORKER_INITIAL_CAPITAL,
+                    start_date=base_position.index[0],
+                    end_date=base_position.index[-1] if len(base_position.index) else None,
+                ),
                 "annual_return": metrics["profitability"]["annualReturn"],
                 "max_drawdown": metrics["risk"]["maxDrawdown"],
                 "sharpe_ratio": metrics["ratio"].get("sharpeRatio", None),
@@ -1753,6 +1810,7 @@ class SingleStockGridSearchExecutor:
                 "holding_days": base_position[stock].sum(),
             }
 
+            OscarAndOrStrategy.clear_runtime_cache()
             return result
 
         except Exception as e:
@@ -1776,6 +1834,7 @@ class SingleStockGridSearchExecutor:
         logger.info("=" * 60)
 
         logger.info(f"總測試股票數: {len(df)}")
+        logger.info(f"平均總報酬金額: {df['total_reward_amount'].mean():.2f}")
         logger.info(f"平均年化報酬率: {df['annual_return'].mean():.2%}")
         logger.info(f"平均最大回檔: {df['max_drawdown'].mean():.2%}")
 
@@ -1793,12 +1852,13 @@ class SingleStockGridSearchExecutor:
     def _print_top_performers(self, df, top_n=10):
         """打印表現最佳的股票"""
         logger.info("\n" + "=" * 60)
-        logger.info(f"年化報酬率 Top {top_n}")
+        logger.info(f"總報酬金額 Top {top_n}")
         logger.info("=" * 60)
 
-        top_by_return = df.nlargest(top_n, "annual_return")[
+        top_by_return = df.nlargest(top_n, "total_reward_amount")[
             [
                 "stock_id",
+            "total_reward_amount",
                 "annual_return",
                 "max_drawdown",
                 "sharpe_ratio",
@@ -1807,6 +1867,9 @@ class SingleStockGridSearchExecutor:
         ].copy()
 
         # 格式化顯示
+        top_by_return["total_reward_amount"] = top_by_return[
+            "total_reward_amount"
+        ].apply(lambda x: f"{x:.2f}")
         top_by_return["annual_return"] = top_by_return["annual_return"].apply(
             lambda x: f"{x:.2%}"
         )
@@ -1881,6 +1944,12 @@ if __name__ == "__main__":
         help="並行處理的worker數量（默認自動：<100核心用cores-2，>=100核心用75%%。建議144核機器用100-110）",
     )
     parser.add_argument(
+        "--initial_capital",
+        type=float,
+        default=100_000,
+        help="計算 total reward amount 的初始資金",
+    )
+    parser.add_argument(
         "--stock_id", type=str, default=None, help="指定測試單一股票（可選）"
     )
     parser.add_argument("--optimize", action="store_true", help="啟用參數優化")
@@ -1914,6 +1983,7 @@ if __name__ == "__main__":
         pool=args.pool,
         stock_id=args.stock_id,
         optimize_params=args.optimize,
+        initial_capital=args.initial_capital,
     )
 
     executor.run_test()

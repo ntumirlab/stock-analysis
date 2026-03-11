@@ -10,7 +10,7 @@ Oscar 四大指標策略 (Oscar Four Key Indicators Strategy)
 策略核心邏輯:
 - 買進: SAR翻多訊號與MACD黃金交叉在可接受時間窗內 + 適當成交量 + 法人買超支持
 - 賣出: SAR反轉到上方 或 MACD死亡交叉
-- 選股策略: 從符合條件的股票中，優先選擇訊號最強的
+- 選股與權重: 所有符合條件的股票皆納入持股，並採等權重配置
 - 特別注意: 排除不斷創新高的股票，避免追高
 
 股票範圍:
@@ -35,8 +35,8 @@ class AdjustTWMarketInfo(TWMarket):
     """自訂市場資訊類別，用於調整交易價格為開盤價"""
 
     def get_trading_price(self, name, adj=True):
-        # 使用當日開盤價作為交易價格
-        return self.get_price("open", adj=adj)
+        # 訊號使用當日收盤後資料，實際成交需對齊至下一交易日開盤。
+        return self.get_price("open", adj=adj).shift(1)
 
 
 class OscarAndOrStrategy:
@@ -52,6 +52,7 @@ class OscarAndOrStrategy:
 
     _MARKET_DATA_CACHE = None
     _INDICATOR_CACHE = {}
+    _MAX_INDICATOR_CACHE_SIZE = 32
 
     def __init__(
         self,
@@ -390,6 +391,8 @@ class OscarAndOrStrategy:
         """Cache finlab indicator results in-process to avoid repeated heavy calls."""
         key = (name, tuple(sorted(kwargs.items())))
         if key not in OscarAndOrStrategy._INDICATOR_CACHE:
+            if len(OscarAndOrStrategy._INDICATOR_CACHE) >= self._MAX_INDICATOR_CACHE_SIZE:
+                OscarAndOrStrategy._INDICATOR_CACHE.clear()
             OscarAndOrStrategy._INDICATOR_CACHE[key] = data.indicator(name, **kwargs)
         return OscarAndOrStrategy._INDICATOR_CACHE[key]
 
