@@ -466,7 +466,8 @@ class OscarAndOrStrategy:
             return signal_df
 
         bins_int = max(2, int(bins))
-        ranks = signal_df.rank(axis=0, pct=True)
+        # 使用同日橫截面排名，避免沿時間軸排名造成 lookahead。
+        ranks = signal_df.rank(axis=1, pct=True)
         bucket = np.ceil((ranks * bins_int).clip(upper=bins_int)).astype(float)
         quantized = (bucket - 1.0) / float(bins_int - 1)
         return quantized.where(signal_df.notna())

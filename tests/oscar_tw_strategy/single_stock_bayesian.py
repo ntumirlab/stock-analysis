@@ -28,6 +28,14 @@ from dotenv import load_dotenv
 from finlab.backtest import sim
 from tests.oscar_tw_strategy.utils.custom_report_metrics import (
     compute_total_reward_amount_from_creturn,
+    get_metrics_with_fixed_annual_return,
+)
+from tests.oscar_tw_strategy.utils.drawing_history_visualization import (
+    create_trading_visualization,
+    prepare_price_data,
+)
+from tests.oscar_tw_strategy.utils.drawing_param_comparison import (
+    create_param_comparison_chart,
 )
 
 # Prevent each worker process from spawning many native threads (BLAS/OpenMP),
@@ -68,6 +76,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MIN_OBJECTIVE_VALUE = -1e18
+DEFAULT_OPTUNA_POSTGRES_URL = "postgresql+psycopg2://optuna:optuna@localhost:5432/optuna"
 
 
 class SingleStockBayesianExecutor:
@@ -79,7 +88,7 @@ class SingleStockBayesianExecutor:
         start_date: str = "2020-01-01",
         end_date: Optional[str] = None,
         output_dir: str = "assets/OscarTWStrategy/single_stock_bayesian",
-        n_trials: int = 400,
+        n_trials: int = 1200,
         n_jobs: Optional[int] = None,
         process_workers: Optional[int] = None,
         market_data_pickle_path: Optional[str] = None,
@@ -153,6 +162,7 @@ class SingleStockBayesianExecutor:
         self._supports_liquidity_params = (
             "min_avg_volume_30" in sig_params and "max_volume_spike_ratio" in sig_params
         )
+        self._supports_composite_flag = "use_composite_scoring" in sig_params
         self._supports_composite = (
             "signal_quantile_bins" in sig_params
             and "signal_weights" in sig_params
@@ -342,7 +352,8 @@ class SingleStockBayesianExecutor:
                     "max_volume_spike_ratio", 10.0
                 )
             if self._supports_composite and self.optimize_composite:
-                shared_kwargs["use_composite_scoring"] = True
+                if self._supports_composite_flag:
+                    shared_kwargs["use_composite_scoring"] = True
                 shared_kwargs["signal_quantile_bins"] = params.get(
                     "signal_quantile_bins"
                 )
@@ -606,6 +617,123 @@ class SingleStockBayesianExecutor:
         trials_path = self.study_dir / "trials.csv"
         df_trials.to_csv(trials_path, index=False, encoding="utf-8-sig")
 
+        comparison_rows = []
+        for trial in study.trials:
+            if trial.state != optuna.trial.TrialState.COMPLETE:
+                continue
+            comparison_rows.append(
+                {
+                    "trial_number": trial.number,
+                    "objective_value": trial.user_attrs.get(
+                        "objective_value", MIN_OBJECTIVE_VALUE
+                    ),
+                    "total_reward_amount": trial.user_attrs.get(
+                        "total_reward_amount", MIN_OBJECTIVE_VALUE
+                    ),
+                    "annual_return": trial.user_attrs.get("annual_return"),
+                    "max_drawdown": trial.user_attrs.get("max_drawdown"),
+                    "sharpe_ratio": trial.user_attrs.get("sharpe_ratio"),
+                    "total_trades": trial.user_attrs.get("total_trades"),
+                    "params": json.dumps(trial.params, ensure_ascii=False, sort_keys=True),
+                }
+            )
+
+        if comparison_rows:
+            comparison_df = pd.DataFrame(comparison_rows)
+            comparison_df = comparison_df.sort_values(
+                by=["objective_value", "sharpe_ratio"],
+                ascending=[False, False],
+                na_position="last",
+            )
+            comparison_csv_path = self.study_dir / "metrics_comparison.csv"
+            comparison_df.to_csv(comparison_csv_path, index=False, encoding="utf-8-sig")
+            logger.info("Metrics 比較報表已輸出: %s", comparison_csv_path)
+
+        # ── Graph 1: finlab backtest report (report.display) ──────────────────────
+        logger.info("使用最佳參數重新初始化策略並生成視覺化報告...")
+        try:
+            best_strategy = self._build_strategy(best_trial.params)
+            position = self._single_stock_position(best_strategy)
+            report = self._run_backtest(position)
+
+            report_path = self.study_dir / f"{self.stock_id}_report.html"
+            report.display(save_report_path=str(report_path))
+            logger.info("回測報告已儲存至: %s", report_path)
+
+            # ── Graph 2: candlestick + SAR + MACD visualization ────────────────────
+            price_df = prepare_price_data(
+                stock_id=self.stock_id,
+                market_data=self.market_data,
+                start_date=self.start_date,
+            )
+            base_position = best_strategy.base_position.reindex(
+                self.trading_days, fill_value=False
+            )
+            position_stock = base_position[self.stock_id].loc[self.start_date :]
+            position_changes = position_stock.astype(int).diff()
+            actual_buy_signals = position_changes == 1
+            actual_sell_signals = position_changes == -1
+
+            viz_path = self.study_dir / f"{self.stock_id}_visualization.html"
+            create_trading_visualization(
+                stock_id=self.stock_id,
+                price_data=price_df,
+                sar_values=best_strategy.sar_values[self.stock_id].loc[self.start_date :],
+                macd_dif=best_strategy.macd_dif[self.stock_id].loc[self.start_date :],
+                macd_dea=best_strategy.macd_dea[self.stock_id].loc[self.start_date :],
+                macd_histogram=best_strategy.macd_histogram[self.stock_id].loc[self.start_date :],
+                buy_signals=actual_buy_signals,
+                sell_signals=actual_sell_signals,
+                position=position_stock,
+                trade_price=best_strategy.trade_price[self.stock_id].loc[self.start_date :],
+                foreign_buy=best_strategy.institutional_condition["foreign_buy"][self.stock_id].loc[self.start_date :],
+                trust_buy=best_strategy.institutional_condition["trust_buy"][self.stock_id].loc[self.start_date :],
+                dealer_buy=best_strategy.institutional_condition["dealer_buy"][self.stock_id].loc[self.start_date :],
+                output_path=str(viz_path),
+            )
+            logger.info("視覺化圖表已儲存至: %s", viz_path)
+
+            # ── Graph 3: parameter comparison chart ───────────────────────────────
+            param_results_for_chart = []
+            for trial in study.trials:
+                if trial.state != optuna.trial.TrialState.COMPLETE:
+                    continue
+                p = trial.params
+                param_results_for_chart.append(
+                    {
+                        "sar_signal_lag_min": p.get("sar_signal_lag_min", 0),
+                        "sar_signal_lag_max": p.get("sar_signal_lag_max", 2),
+                        "macd_fast": p.get("macd_fast", 12),
+                        "macd_slow": p.get("macd_slow", 26),
+                        "macd_signal": p.get("macd_signal", 9),
+                        "total_reward_amount": trial.user_attrs.get(
+                            "total_reward_amount", MIN_OBJECTIVE_VALUE
+                        ),
+                        "annual_return": trial.user_attrs.get("annual_return", 0.0),
+                        "max_drawdown": trial.user_attrs.get("max_drawdown", 0.0),
+                        "sharpe_ratio": trial.user_attrs.get("sharpe_ratio"),
+                        "total_trades": trial.user_attrs.get("total_trades", 0),
+                        "params": {
+                            "sar_params": {
+                                "acceleration": p.get("sar_acceleration", 0.02),
+                                "maximum": p.get("sar_maximum", 0.2),
+                            }
+                        },
+                    }
+                )
+            if param_results_for_chart:
+                param_comparison_path = (
+                    self.study_dir / f"{self.stock_id}_param_comparison.html"
+                )
+                create_param_comparison_chart(
+                    stock_id=self.stock_id,
+                    param_results=param_results_for_chart,
+                    output_path=str(param_comparison_path),
+                )
+                logger.info("參數比較圖表已儲存至: %s", param_comparison_path)
+        except Exception as e:
+            logger.warning("生成視覺化報告失敗（不影響優化結果）: %s", e)
+
         try:
             from optuna.visualization import (
                 plot_optimization_history,
@@ -662,19 +790,18 @@ class SingleStockBayesianExecutor:
             gc_after_trial=True,
         )
 
+    def _resolve_storage_url(self) -> str:
+        """Always use PostgreSQL storage for consistent multi-worker behavior."""
+        return DEFAULT_OPTUNA_POSTGRES_URL
+
     def optimize(self) -> Dict:
-        storage_url = f"sqlite:///{self.study_dir / 'optuna_study.db'}?timeout=120"
+        storage_url = self._resolve_storage_url()
         study_name = (
             f"oscar_bayes_{self.stock_id}_{self.start_date}_{self.end_date or 'latest'}"
         )
 
-        # Guard: SQLite cannot handle concurrent writes from multiple OS processes.
-        if storage_url.startswith("sqlite") and self.process_workers > 1:
-            raise RuntimeError(
-                f"SQLite storage cannot be used with process_workers={self.process_workers} > 1 "
-                "due to database locking under concurrent writes. "
-                "Use process_workers=1 or switch Optuna storage to PostgreSQL/MySQL."
-            )
+        logger.info("Optuna storage backend: postgresql")
+        logger.info("Optuna storage URL: %s", storage_url)
 
         # Parent process fetches market data once and shares it via local pickle across worker processes.
         # Use per-run file to avoid reading stale/corrupted cache from previous runs.
