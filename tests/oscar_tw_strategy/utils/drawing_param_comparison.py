@@ -32,10 +32,24 @@ def create_param_comparison_chart(
     # 轉換為 DataFrame
     df = pd.DataFrame(param_results)
     
+    # 相容新舊參數格式：
+    # - 新格式: sar_signal_lag_min/sar_signal_lag_max
+    # - 舊格式: sar_max_dots
+    has_lag_window = {'sar_signal_lag_min', 'sar_signal_lag_max'}.issubset(df.columns)
+
     # 選擇要顯示的欄位並排序
-    display_columns = ['sar_max_dots', 'sar_accel', 'sar_maximum',
-                      'macd_fast', 'macd_slow', 'macd_signal', 
-                      'annual_return', 'max_drawdown', 'sharpe_ratio', 'total_trades']
+    if has_lag_window:
+        display_columns = [
+            'sar_signal_lag_min', 'sar_signal_lag_max', 'sar_accel', 'sar_maximum',
+            'macd_fast', 'macd_slow', 'macd_signal',
+            'annual_return', 'max_drawdown', 'sharpe_ratio', 'total_trades'
+        ]
+    else:
+        display_columns = [
+            'sar_max_dots', 'sar_accel', 'sar_maximum',
+            'macd_fast', 'macd_slow', 'macd_signal',
+            'annual_return', 'max_drawdown', 'sharpe_ratio', 'total_trades'
+        ]
     
     # 提取 SAR 參數到獨立欄位
     df['sar_accel'] = df['params'].apply(lambda x: x['sar_params']['acceleration'])
@@ -54,6 +68,8 @@ def create_param_comparison_chart(
     # 建立表頭 HTML
     headers = {
         'sar_max_dots': 'SAR Dots',
+        'sar_signal_lag_min': 'SAR Lag Min',
+        'sar_signal_lag_max': 'SAR Lag Max',
         'sar_accel': 'SAR Accel',
         'sar_maximum': 'SAR Max',
         'macd_fast': 'MACD Fast',
@@ -98,7 +114,7 @@ def create_param_comparison_chart(
                 formatted_value = f'{value:.2f}'
                 # 高亮最佳夏普比率
                 cell_class = ' class="highlight-best"' if best_sharpe and abs(value - best_sharpe) < 1e-6 else ''
-            elif col in ['sar_max_dots', 'total_trades']:
+            elif col in ['sar_max_dots', 'sar_signal_lag_min', 'sar_signal_lag_max', 'total_trades']:
                 formatted_value = str(int(value))
                 cell_class = ''
             elif col in ['sar_accel', 'sar_maximum']:

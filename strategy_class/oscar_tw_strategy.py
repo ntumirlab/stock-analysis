@@ -8,11 +8,11 @@ Oscar 四大指標策略 (Oscar Four Key Indicators Strategy)
 4. Three Major Institutional Investors - 三大法人買賣超
 
 策略核心邏輯:
-- 買進: SAR出現1-2個點 + MACD黃金交叉 + 適當成交量 + 法人買超支持
+- 買進: SAR翻多訊號與MACD黃金交叉在可接受時間窗內 + 適當成交量 + 法人買超支持
 - 賣出: SAR反轉到上方 或 MACD死亡交叉
 - 持股限制: 最多同時持有4檔股票，每檔25%資金
 - 選股策略: 從符合條件的股票中，優先選擇訊號最強的
-- 特別注意: 排除SAR點數過多(3-6+)和不斷創新高的股票
+- 特別注意: 排除不斷創新高的股票，避免追高
 
 股票範圍:
 全台股市場 (TSE + OTC)
@@ -47,25 +47,39 @@ class OscarTWStrategy:
         sell_signal: 賣出訊號
     """
 
-    def __init__(self, sar_max_dots=2, sar_reject_dots=3, config_path="config.yaml", 
-                 sar_params=None, macd_params=None, market_data=None):
+    def __init__(self, sar_signal_lag_min=0, sar_signal_lag_max=2, config_path="config.yaml", 
+                 sar_params=None, macd_params=None, market_data=None,
+                 volume_above_avg_ratio=None, new_high_ratio_120=None,
+                 sar_max_dots=None, sar_reject_dots=None):
         """
         初始化策略參數
         
         Args:
-            sar_max_dots: SAR連續在下方的最大天數（買進區間上限）
-            sar_reject_dots: SAR連續在下方達到此天數時排除（拒絕買進）
+            sar_signal_lag_min: MACD 黃金交叉與 SAR 翻多的最小允許天數差（>=0）
+            sar_signal_lag_max: MACD 黃金交叉與 SAR 翻多的最大允許天數差（>= sar_signal_lag_min）
             config_path: 設定檔路徑，用於載入 oscar 相關配置
             sar_params: SAR指標參數字典 {'acceleration': 0.02, 'maximum': 0.2}
             macd_params: MACD指標參數字典 {'fastperiod': 12, 'slowperiod': 26, 'signalperiod': 9}
             market_data: 預先載入的市場數據（若提供則不重新載入）
+            volume_above_avg_ratio: 覆寫成交量條件比例（None 則使用 config）
+            new_high_ratio_120: 覆寫 120 日創新高比例（None 則使用 config）
+            sar_max_dots: [Deprecated] 舊參數，僅為向後相容保留
+            sar_reject_dots: [Deprecated] 舊參數，僅為向後相容保留
         """
         # 載入配置
         self.config_loader = ConfigLoader(config_path)
         oscar_config = self.config_loader.config.get('oscar', {})
         
 
-        # 策略參數（可調整用於實驗）
+        # 新參數：SAR 與 MACD 訊號允許時間窗
+        # 向後相容：若仍傳入舊參數 sar_max_dots，映射到 lag_max。
+        if sar_max_dots is not None and sar_signal_lag_max == 2:
+            sar_signal_lag_max = int(sar_max_dots)
+
+        self.sar_signal_lag_min = max(0, int(sar_signal_lag_min))
+        self.sar_signal_lag_max = max(self.sar_signal_lag_min, int(sar_signal_lag_max))
+
+        # 保留舊欄位名稱供外部程式存取（deprecated, no longer used in logic）
         self.sar_max_dots = sar_max_dots
         self.sar_reject_dots = sar_reject_dots
         
@@ -75,8 +89,18 @@ class OscarTWStrategy:
 
         # 成交量大於平均的比例，以及 120 日創新高比例，從設定檔讀取，可覆寫預設值
         # 預設值保留現有行為：volume_above_avg_ratio=0.25, new_high_ratio_120=0.3
-        self.volume_above_avg_ratio = float(oscar_config.get("volume_above_avg_ratio", 0.25))
-        self.new_high_ratio_120 = float(oscar_config.get("new_high_ratio_120", 0.3))
+        default_volume_ratio = float(oscar_config.get("volume_above_avg_ratio", 0.25))
+        default_new_high_ratio = float(oscar_config.get("new_high_ratio_120", 0.3))
+        self.volume_above_avg_ratio = (
+            float(volume_above_avg_ratio)
+            if volume_above_avg_ratio is not None
+            else default_volume_ratio
+        )
+        self.new_high_ratio_120 = (
+            float(new_high_ratio_120)
+            if new_high_ratio_120 is not None
+            else default_new_high_ratio
+        )
         
         # 回測報告
         self.report = None
@@ -179,14 +203,23 @@ class OscarTWStrategy:
         # 儲存 SAR 值供視覺化使用
         self.sar_values = sar
         
-        # SAR 在價格下方表示看漲 (買進訊號)
+        # SAR 在價格下方表示看漲狀態
         sar_below_price = sar < close
 
-        # 使用可調參數計算 SAR 連續在下方的天數
-        sar_streak = self._streak(sar_below_price)
+        # SAR 翻多事件：當天由非翻多轉為翻多。
+        # 注意：第一筆資料沒有「前一日」狀態，以當日值填補避免第一筆即觸發虛假翻多訊號。
+        sar_below_price_prev = sar_below_price.shift(1).fillna(sar_below_price)
+        sar_flip_bullish = sar_below_price & (~sar_below_price_prev)
 
-        # 買進區間: SAR 連續在下方 1 ~ sar_max_dots 天
-        sar_in_buy_zone = (sar_streak >= 1) & (sar_streak <= self.sar_max_dots)
+        # 以兩參數時間窗檢查 SAR 是否在 MACD 前 lag_min~lag_max 天內出現翻多。
+        # 注意: 不要用 pd.DataFrame(...) 初始化，否則會失去 finlab DataFrame 擴充方法 (e.g. hold_until)。
+        lagged_signals = [
+            sar_flip_bullish.shift(lag).fillna(False)
+            for lag in range(self.sar_signal_lag_min, self.sar_signal_lag_max + 1)
+        ]
+        sar_in_alignment_window = lagged_signals[0]
+        for signal in lagged_signals[1:]:
+            sar_in_alignment_window = sar_in_alignment_window | signal
         
         # 檢測不斷創新高的股票 (120天內創新高次數過多)
         high_120 = close.rolling(120).max()
@@ -194,8 +227,8 @@ class OscarTWStrategy:
         new_high_ratio_120 = is_new_high.rolling(120).mean()
         constantly_new_high = new_high_ratio_120 > self.new_high_ratio_120
         
-        # 買進條件: SAR在1-2個點範圍 且 不是不斷創新高的股票 且 點數不要太多
-        sar_buy_condition = sar_in_buy_zone & (~constantly_new_high) 
+        # 買進條件: SAR 訊號在對齊時間窗內，且不是不斷創新高。
+        sar_buy_condition = sar_in_alignment_window & (~constantly_new_high)
         
         # 賣出條件: SAR 翻轉到價格上方 (看跌訊號)
         sar_sell_condition = ~sar_below_price
@@ -391,8 +424,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     stock_id = args.stock_id
 
-    # 初始化策略（可調整SAR參數）
-    strategy = OscarTWStrategy(sar_max_dots=2, sar_reject_dots=3)
+    # 初始化策略（可調整 SAR/MACD 對齊時間窗）
+    strategy = OscarTWStrategy(sar_signal_lag_min=0, sar_signal_lag_max=2)
     
     base_position = strategy.base_position
     
