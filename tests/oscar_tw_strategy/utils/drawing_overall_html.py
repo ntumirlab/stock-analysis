@@ -21,7 +21,7 @@ def dataframe_to_sortable_html(
 ) -> str:
     """
     將 DataFrame 轉換為可排序的 HTML 表格
-    
+
     Args:
         df: 包含回測結果的 DataFrame
         output_path: HTML 輸出路徑
@@ -29,65 +29,65 @@ def dataframe_to_sortable_html(
         is_grid_search_result: 是否為網格搜尋結果
         parameter_meanings: 參數欄位說明
         tested_params: 測試參數範圍
-        
+
     Returns:
         str: 輸出檔案路徑
     """
     output_path = Path(output_path)
-    
+
     # 取得欄位名稱
     headers = df.columns.tolist()
-    
+
     # 建立表頭 HTML
-    thead_html = '<tr>\n'
+    thead_html = "<tr>\n"
     for header in headers:
-        thead_html += f'                    <th>{header}</th>\n'
-    thead_html += '                </tr>'
-    
+        thead_html += f"                    <th>{header}</th>\n"
+    thead_html += "                </tr>"
+
     # 建立表格內容 HTML
-    tbody_html = ''
+    tbody_html = ""
     for _, row in df.iterrows():
-        tbody_html += '                <tr>\n'
+        tbody_html += "                <tr>\n"
         for header in headers:
             value = row[header]
             # 格式化數值
             if pd.isna(value):
-                formatted_value = 'N/A'
+                formatted_value = "N/A"
             elif isinstance(value, float):
                 if abs(value) < 1 and abs(value) > 0.001:
-                    formatted_value = f'{value:.6f}'
+                    formatted_value = f"{value:.6f}"
                 else:
-                    formatted_value = f'{value:.2f}'
+                    formatted_value = f"{value:.2f}"
             else:
                 formatted_value = str(value)
-            tbody_html += f'                    <td>{formatted_value}</td>\n'
-        tbody_html += '                </tr>\n'
+            tbody_html += f"                    <td>{formatted_value}</td>\n"
+        tbody_html += "                </tr>\n"
 
     # 參數說明與測試範圍區塊（僅在有資料時顯示）
-    info_panels_html = ''
+    info_panels_html = ""
     if parameter_meanings or tested_params:
-        meaning_rows = ''
-        tested_rows = ''
+        meaning_rows = ""
+        tested_rows = ""
 
         if parameter_meanings:
             for key, desc in parameter_meanings.items():
                 meaning_rows += (
-                    '                        <tr>'
+                    "                        <tr>"
                     f'<td class="info-key">{_html.escape(str(key))}</td>'
-                    f'<td>{_html.escape(str(desc))}</td>'
-                    '</tr>\n'
+                    f"<td>{_html.escape(str(desc))}</td>"
+                    "</tr>\n"
                 )
 
         if tested_params:
             for key, value in tested_params.items():
                 tested_rows += (
-                    '                        <tr>'
+                    "                        <tr>"
                     f'<td class="info-key">{_html.escape(str(key))}</td>'
-                    f'<td>{_html.escape(str(value))}</td>'
-                    '</tr>\n'
+                    f"<td>{_html.escape(str(value))}</td>"
+                    "</tr>\n"
                 )
 
-        info_panels_html = f'''
+        info_panels_html = f"""
         <div class="info-panels">
             <div class="info-card">
                 <h2>Parameter Meaning</h2>
@@ -106,10 +106,10 @@ def dataframe_to_sortable_html(
                 </table>
             </div>
         </div>
-        '''
-    
+        """
+
     # 完整的 HTML 模板
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -290,7 +290,7 @@ def dataframe_to_sortable_html(
 <body>
     <div class="container">
         <h1>{title}</h1>
-        <p class="subtitle">{'Grid Search Result' if is_grid_search_result else 'Backtest Result'} | Total Stocks Tested: {len(df)}</p>
+        <p class="subtitle">{"Grid Search Result" if is_grid_search_result else "Backtest Result"} | Total Stocks Tested: {len(df)}</p>
 
 {info_panels_html}
         
@@ -402,10 +402,10 @@ def dataframe_to_sortable_html(
         }});
     </script>
 </body>
-</html>'''
-    
+</html>"""
+
     # 寫入 HTML 檔案
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    
+
     return str(output_path)
