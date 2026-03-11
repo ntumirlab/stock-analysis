@@ -169,6 +169,14 @@ class SingleStockBayesianExecutor:
             and "buy_score_threshold" in sig_params
             and "sell_score_threshold" in sig_params
         )
+        self._supports_composite_signal_fusion = (
+            "sar_event_decay_alpha" in sig_params
+            and "sar_proximity_weight" in sig_params
+            and "sar_event_weight" in sig_params
+            and "macd_event_decay_alpha" in sig_params
+            and "macd_proximity_weight" in sig_params
+            and "macd_event_weight" in sig_params
+        )
 
         self.trading_days = None
         if self.market_data is not None:
@@ -362,6 +370,23 @@ class SingleStockBayesianExecutor:
                 shared_kwargs["sell_score_threshold"] = params.get(
                     "sell_score_threshold"
                 )
+                if self._supports_composite_signal_fusion:
+                    shared_kwargs["sar_event_decay_alpha"] = params.get(
+                        "sar_event_decay_alpha"
+                    )
+                    shared_kwargs["sar_proximity_weight"] = params.get(
+                        "sar_proximity_weight"
+                    )
+                    shared_kwargs["sar_event_weight"] = params.get("sar_event_weight")
+                    shared_kwargs["macd_event_decay_alpha"] = params.get(
+                        "macd_event_decay_alpha"
+                    )
+                    shared_kwargs["macd_proximity_weight"] = params.get(
+                        "macd_proximity_weight"
+                    )
+                    shared_kwargs["macd_event_weight"] = params.get(
+                        "macd_event_weight"
+                    )
             return self.strategy_class(**shared_kwargs)
 
         # Legacy fallback for environments that still use sar_max_dots/sar_reject_dots.
@@ -524,6 +549,30 @@ class SingleStockBayesianExecutor:
             params["buy_score_threshold"] = buy_score_threshold
             params["sell_score_threshold"] = sell_score_threshold
 
+            sar_event_decay_alpha = trial.suggest_float(
+                "sar_event_decay_alpha", 1.1, 4.0, step=0.1
+            )
+            macd_event_decay_alpha = trial.suggest_float(
+                "macd_event_decay_alpha", 1.1, 4.0, step=0.1
+            )
+
+            params["sar_proximity_weight"] = trial.suggest_float(
+                "sar_proximity_weight", 0.1, 1.5, step=0.1
+            )
+            params["sar_event_weight"] = trial.suggest_float(
+                "sar_event_weight", 0.1, 1.5, step=0.1
+            )
+
+            params["macd_proximity_weight"] = trial.suggest_float(
+                "macd_proximity_weight", 0.1, 1.5, step=0.1
+            )
+            params["macd_event_weight"] = trial.suggest_float(
+                "macd_event_weight", 0.1, 1.5, step=0.1
+            )
+
+            params["sar_event_decay_alpha"] = sar_event_decay_alpha
+            params["macd_event_decay_alpha"] = macd_event_decay_alpha
+
         strategy = self._build_strategy(params)
         try:
             position = self._single_stock_position(strategy)
@@ -621,6 +670,7 @@ class SingleStockBayesianExecutor:
         for trial in study.trials:
             if trial.state != optuna.trial.TrialState.COMPLETE:
                 continue
+            p = trial.params
             comparison_rows.append(
                 {
                     "trial_number": trial.number,
@@ -634,6 +684,12 @@ class SingleStockBayesianExecutor:
                     "max_drawdown": trial.user_attrs.get("max_drawdown"),
                     "sharpe_ratio": trial.user_attrs.get("sharpe_ratio"),
                     "total_trades": trial.user_attrs.get("total_trades"),
+                    "sar_event_decay_alpha": p.get("sar_event_decay_alpha"),
+                    "sar_proximity_weight": p.get("sar_proximity_weight"),
+                    "sar_event_weight": p.get("sar_event_weight"),
+                    "macd_event_decay_alpha": p.get("macd_event_decay_alpha"),
+                    "macd_proximity_weight": p.get("macd_proximity_weight"),
+                    "macd_event_weight": p.get("macd_event_weight"),
                     "params": json.dumps(trial.params, ensure_ascii=False, sort_keys=True),
                 }
             )

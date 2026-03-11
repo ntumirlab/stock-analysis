@@ -74,6 +74,12 @@ class OscarCompositeStrategy:
         signal_weights=None,
         buy_score_threshold=None,
         sell_score_threshold=None,
+        sar_event_decay_alpha=None,
+        sar_proximity_weight=None,
+        sar_event_weight=None,
+        macd_event_decay_alpha=None,
+        macd_proximity_weight=None,
+        macd_event_weight=None,
         preprocess_start_date=None,
         preprocess_lookback_days=None,
         enable_profiling=False,
@@ -197,6 +203,45 @@ class OscarCompositeStrategy:
             self.buy_score_threshold = float(buy_score_threshold)
         if sell_score_threshold is not None:
             self.sell_score_threshold = float(sell_score_threshold)
+
+        self.sar_event_decay_alpha = float(
+            oscar_config.get("sar_event_decay_alpha", 1.8)
+            if sar_event_decay_alpha is None
+            else sar_event_decay_alpha
+        )
+        self.macd_event_decay_alpha = float(
+            oscar_config.get("macd_event_decay_alpha", 1.8)
+            if macd_event_decay_alpha is None
+            else macd_event_decay_alpha
+        )
+
+        sar_proximity = (
+            oscar_config.get("sar_proximity_weight", 1.0)
+            if sar_proximity_weight is None
+            else sar_proximity_weight
+        )
+        sar_event = (
+            oscar_config.get("sar_event_weight", 1.0)
+            if sar_event_weight is None
+            else sar_event_weight
+        )
+        self.sar_proximity_weight, self.sar_event_weight = self._resolve_weight_pair(
+            sar_proximity, sar_event
+        )
+
+        macd_proximity = (
+            oscar_config.get("macd_proximity_weight", 1.0)
+            if macd_proximity_weight is None
+            else macd_proximity_weight
+        )
+        macd_event = (
+            oscar_config.get("macd_event_weight", 1.0)
+            if macd_event_weight is None
+            else macd_event_weight
+        )
+        self.macd_proximity_weight, self.macd_event_weight = self._resolve_weight_pair(
+            macd_proximity, macd_event
+        )
 
         config_preprocess_start = oscar_config.get("preprocess_start_date")
         self.preprocess_start_date = (
@@ -453,14 +498,77 @@ class OscarCompositeStrategy:
     def _expand_event_window(
         self, event_df: pd.DataFrame, lag_min: int, lag_max: int
     ) -> pd.DataFrame:
-        """將事件訊號展開到指定 lag 區間。"""
-        lagged_signals = [
-            event_df.shift(lag).fillna(False) for lag in range(lag_min, lag_max + 1)
-        ]
-        expanded = lagged_signals[0]
-        for signal in lagged_signals[1:]:
-            expanded = expanded | signal
-        return expanded
+        """將事件訊號展開到指定 lag 區間。（保留相容性）"""
+        bool_window, _ = self._build_event_window_and_decay(
+            event_df, lag_min, lag_max, alpha=1.0001
+        )
+        return bool_window
+
+    @staticmethod
+    def _resolve_weight_pair(w1, w2):
+        """Normalize two non-negative weights with safe fallback."""
+        w1f = max(0.0, float(w1))
+        w2f = max(0.0, float(w2))
+        total = w1f + w2f
+        if total <= 0:
+            return 0.5, 0.5
+        return w1f / total, w2f / total
+
+    def _build_event_window_and_decay(
+        self,
+        event_df: pd.DataFrame,
+        lag_min: int,
+        lag_max: int,
+        alpha: float,
+    ):
+        """Single-pass: return (bool_window_df, decay_score_df) together.
+
+        Replaces separate _expand_event_window + _build_event_decay_score calls so
+        we touch the large (T × N) matrix only once per lag value instead of twice.
+        Uses numpy array slicing (no DataFrame.shift overhead in the hot loop).
+        """
+        alpha_safe = max(1.0001, float(alpha))
+        arr = event_df.fillna(False).values.astype(np.float64)  # (T, N)
+        T, N = arr.shape
+        frame_cls = event_df.__class__
+
+        bool_window = np.zeros((T, N), dtype=bool)
+        weighted_sum = np.zeros((T, N), dtype=np.float64)
+        weight_total = 0.0
+
+        for k in range(lag_min, lag_max + 1):
+            weight = float(alpha_safe ** (-k))
+            if k == 0:
+                shifted = arr
+            else:
+                # numpy slice is O(1) view setup, no data copy needed for bool_window OR
+                shifted = np.empty_like(arr)
+                shifted[:k] = 0.0
+                shifted[k:] = arr[:-k]
+            bool_window |= shifted.astype(bool)
+            weighted_sum += shifted * weight
+            weight_total += weight
+
+        if weight_total > 0:
+            weighted_sum /= weight_total
+        np.clip(weighted_sum, 0.0, 1.0, out=weighted_sum)
+
+        idx, cols = event_df.index, event_df.columns
+        return (
+            frame_cls(bool_window, index=idx, columns=cols),
+            frame_cls(weighted_sum, index=idx, columns=cols),
+        )
+
+    def _build_event_decay_score(
+        self,
+        event_df: pd.DataFrame,
+        lag_min: int,
+        lag_max: int,
+        alpha: float,
+    ) -> pd.DataFrame:
+        """Kept for API compatibility; delegates to the combined method."""
+        _, decay_df = self._build_event_window_and_decay(event_df, lag_min, lag_max, alpha)
+        return decay_df
 
     def _quantize_signal(self, signal_df: pd.DataFrame, bins) -> pd.DataFrame:
         """使用分位數分箱將訊號離散化到 [0, 1]。"""
@@ -510,11 +618,12 @@ class OscarCompositeStrategy:
         sar_below_price_prev = sar_below_price.shift(1).fillna(sar_below_price)
         sar_flip_bullish = sar_below_price & (~sar_below_price_prev)
 
-        # SAR 獨立 lag 視窗，可與 MACD 視窗不同步。
-        sar_in_alignment_window = self._expand_event_window(
+        # SAR 獨立 lag 視窗 + 衰減分數，單次 numpy 迴圈同時計算兩者（效能優化）。
+        sar_in_alignment_window, sar_event_proximity = self._build_event_window_and_decay(
             sar_flip_bullish,
             self.sar_signal_lag_min,
             self.sar_signal_lag_max,
+            self.sar_event_decay_alpha,
         )
 
         # 檢測不斷創新高的股票 (120天內創新高次數過多)
@@ -523,13 +632,12 @@ class OscarCompositeStrategy:
         new_high_ratio_120 = is_new_high.rolling(120).mean()
         constantly_new_high = new_high_ratio_120 > self.new_high_ratio_120
 
-        # SAR 訊號強度（0~1）：價格高於 SAR 的距離 + 翻多事件視窗。
-        sar_distance = (close - sar) / close.replace(0, np.nan)
-        sar_distance = sar_distance.clip(lower=0.0, upper=1.0).fillna(0.0)
-        sar_event_strength = sar_in_alignment_window.astype(float)
-        sar_signal_power = (0.7 * sar_distance + 0.3 * sar_event_strength) * (
-            ~constantly_new_high
-        ).astype(float)
+        # SAR 訊號強度（0~1）：翻多事件接近度（含 lag 衰減）+ 當日翻多事件。
+        sar_event_now = sar_flip_bullish.astype(float)
+        sar_signal_power = (
+            self.sar_proximity_weight * sar_event_proximity
+            + self.sar_event_weight * sar_event_now
+        ) * (~constantly_new_high).astype(float)
         sar_signal_power = self._quantize_signal(
             sar_signal_power, self._resolve_bins("sar")
         )
@@ -575,22 +683,26 @@ class OscarCompositeStrategy:
         # 黃金交叉: DIF > MACD 且前一日 DIF <= MACD (剛形成買進訊號)
         # 死亡交叉: DIF < MACD 且前一日 DIF >= MACD
         macd_cross_bullish = (dif > dea) & (dif.shift(1) <= dea.shift(1))
-        macd_buy_condition = self._expand_event_window(
+        # MACD lag 視窗 + 衰減分數，單次 numpy 迴圈同時計算兩者（效能優化）。
+        macd_buy_condition, macd_event_proximity = self._build_event_window_and_decay(
             macd_cross_bullish,
             self.macd_signal_lag_min,
             self.macd_signal_lag_max,
+            self.macd_event_decay_alpha,
         )
         macd_sell_condition = (dif < dea) & (dif.shift(1) >= dea.shift(1))
 
-        # MACD 訊號強度（0~1）：DIF-DEA 相對尺度 + 黃金交叉事件視窗。
+        # MACD 訊號強度（0~1）：DIF-DEA 對零接近度 + 黃金交叉事件接近度（含 lag 衰減）。
         macd_spread = dif - dea
         macd_scale = (
             macd_spread.abs().rolling(60, min_periods=20).max().replace(0, np.nan)
         )
         macd_norm = (macd_spread / macd_scale).clip(lower=-1.0, upper=1.0).fillna(0.0)
-        macd_signal_power = 0.7 * (
-            (macd_norm + 1.0) / 2.0
-        ) + 0.3 * macd_buy_condition.astype(float)
+        macd_zero_closeness = (1.0 - macd_norm.abs()).clip(lower=0.0, upper=1.0)
+        macd_signal_power = (
+            self.macd_proximity_weight * macd_zero_closeness
+            + self.macd_event_weight * macd_event_proximity
+        )
         macd_signal_power = self._quantize_signal(
             macd_signal_power, self._resolve_bins("macd")
         )

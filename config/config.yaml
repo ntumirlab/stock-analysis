@@ -90,6 +90,12 @@ oscar:
       macd: 0.35
       volume: 0.15
       institutional: 0.15
-    buy_score_threshold: 0.6
+    buy_score_threshold: 0.86
     sell_score_threshold: 0.4
+    sar_event_decay_alpha: 1.8
+    sar_proximity_weight: 0.4
+    sar_event_weight: 1.0
+    macd_event_decay_alpha: 1.8
+    macd_proximity_weight: 0.4
+    macd_event_weight: 1.0
   
