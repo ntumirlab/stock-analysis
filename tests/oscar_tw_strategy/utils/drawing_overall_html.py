@@ -5,6 +5,7 @@ Drawing Overall HTML Utility
 將回測結果 DataFrame 轉換為可排序的互動式 HTML 表格
 """
 
+import html as _html
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -72,8 +73,8 @@ def dataframe_to_sortable_html(
             for key, desc in parameter_meanings.items():
                 meaning_rows += (
                     '                        <tr>'
-                    f'<td class="info-key">{key}</td>'
-                    f'<td>{desc}</td>'
+                    f'<td class="info-key">{_html.escape(str(key))}</td>'
+                    f'<td>{_html.escape(str(desc))}</td>'
                     '</tr>\n'
                 )
 
@@ -81,8 +82,8 @@ def dataframe_to_sortable_html(
             for key, value in tested_params.items():
                 tested_rows += (
                     '                        <tr>'
-                    f'<td class="info-key">{key}</td>'
-                    f'<td>{value}</td>'
+                    f'<td class="info-key">{_html.escape(str(key))}</td>'
+                    f'<td>{_html.escape(str(value))}</td>'
                     '</tr>\n'
                 )
 

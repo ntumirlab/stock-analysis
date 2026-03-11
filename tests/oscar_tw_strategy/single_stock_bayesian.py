@@ -109,6 +109,28 @@ class SingleStockBayesianExecutor:
 
         self._adapt_parallelism(cpu_count)
 
+        # Market-data / compat / trading-days init — always runs regardless of whether
+        # parallelism was adjusted (fixes NameError + partially-dead init block).
+        self.market_data = None
+        if preload_market_data:
+            self.market_data = self._load_market_data_once()
+
+        # Cache constructor compatibility once to avoid per-trial TypeError overhead.
+        sig_params = set(inspect.signature(OscarTWStrategy.__init__).parameters.keys())
+        self._supports_new_lag_params = (
+            "sar_signal_lag_min" in sig_params and "sar_signal_lag_max" in sig_params
+        )
+        self._supports_volume_override = "volume_above_avg_ratio" in sig_params
+        self._supports_new_high_override = "new_high_ratio_120" in sig_params
+
+        self.trading_days = None
+        if self.market_data is not None:
+            self.trading_days = self.market_data["close"].loc[self.start_date :].index
+            if self.end_date:
+                self.trading_days = self.trading_days[self.trading_days <= pd.Timestamp(self.end_date)]
+            if len(self.trading_days) == 0:
+                raise ValueError("No trading days available in selected date range.")
+
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.study_dir = self.output_dir / f"{self.stock_id}_{self.start_date}_{self.end_date or 'latest'}"
@@ -176,25 +198,6 @@ class SingleStockBayesianExecutor:
                 budget,
             )
             self.process_workers = adjusted_workers
-
-        self.market_data = None
-        if preload_market_data:
-            self.market_data = self._load_market_data_once()
-
-        # Cache constructor compatibility once to avoid per-trial TypeError overhead.
-        sig_params = set(inspect.signature(OscarTWStrategy.__init__).parameters.keys())
-        self._supports_new_lag_params = (
-            "sar_signal_lag_min" in sig_params and "sar_signal_lag_max" in sig_params
-        )
-        self._supports_volume_override = "volume_above_avg_ratio" in sig_params
-        self._supports_new_high_override = "new_high_ratio_120" in sig_params
-
-        self.trading_days = self.market_data["close"].loc[self.start_date :].index
-        if self.end_date:
-            self.trading_days = self.trading_days[self.trading_days <= pd.Timestamp(self.end_date)]
-
-        if len(self.trading_days) == 0:
-            raise ValueError("No trading days available in selected date range.")
 
     def _load_market_data_once(self):
         """Load market data from local pickle if available; otherwise fetch once and optionally persist."""
@@ -440,12 +443,27 @@ class SingleStockBayesianExecutor:
         storage_url = f"sqlite:///{self.study_dir / 'optuna_study.db'}?timeout=120"
         study_name = f"oscar_bayes_{self.stock_id}_{self.start_date}_{self.end_date or 'latest'}"
 
+        # Guard: SQLite cannot handle concurrent writes from multiple OS processes.
+        if storage_url.startswith("sqlite") and self.process_workers > 1:
+            raise RuntimeError(
+                f"SQLite storage cannot be used with process_workers={self.process_workers} > 1 "
+                "due to database locking under concurrent writes. "
+                "Use process_workers=1 or switch Optuna storage to PostgreSQL/MySQL."
+            )
+
         # Parent process fetches market data once and shares it via local pickle across worker processes.
         # Use per-run file to avoid reading stale/corrupted cache from previous runs.
         market_data_pickle = self.market_data_pickle_path or (self.study_dir / f"market_data_{os.getpid()}.pkl")
         self.market_data_pickle_path = market_data_pickle
         if self.market_data is None:
             self.market_data = self._load_market_data_once()
+        # Lazily compute trading_days if not already set (e.g. preload_market_data=False in __init__).
+        if self.trading_days is None:
+            self.trading_days = self.market_data["close"].loc[self.start_date :].index
+            if self.end_date:
+                self.trading_days = self.trading_days[self.trading_days <= pd.Timestamp(self.end_date)]
+            if len(self.trading_days) == 0:
+                raise ValueError("No trading days available in selected date range.")
         # Always materialize current in-memory data to pickle before spawning workers.
         self._persist_market_data_pickle(self.market_data)
 

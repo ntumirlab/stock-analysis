@@ -207,7 +207,9 @@ class OscarTWStrategy:
         sar_below_price = sar < close
 
         # SAR 翻多事件：當天由非翻多轉為翻多。
-        sar_flip_bullish = sar_below_price & (~sar_below_price.shift(1).fillna(False))
+        # 注意：第一筆資料沒有「前一日」狀態，以當日值填補避免第一筆即觸發虛假翻多訊號。
+        sar_below_price_prev = sar_below_price.shift(1).fillna(sar_below_price)
+        sar_flip_bullish = sar_below_price & (~sar_below_price_prev)
 
         # 以兩參數時間窗檢查 SAR 是否在 MACD 前 lag_min~lag_max 天內出現翻多。
         # 注意: 不要用 pd.DataFrame(...) 初始化，否則會失去 finlab DataFrame 擴充方法 (e.g. hold_until)。
