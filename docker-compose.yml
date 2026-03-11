@@ -1,4 +1,20 @@
 services:
+  optuna-postgres:
+    image: postgres:16-alpine
+    container_name: optuna-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=optuna
+      - POSTGRES_USER=optuna
+      - POSTGRES_PASSWORD=optuna
+      - TZ=Asia/Taipei
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - stock-network
+
   stock-analysis:
     platform: linux/amd64
     build: .
@@ -52,6 +68,9 @@ services:
 networks:
   stock-network:
     driver: bridge
+
+volumes:
+  postgres-data:
 
 # 使用說明:
 # 1. 複製 .env.example 到 .env 並填入敏感資訊
