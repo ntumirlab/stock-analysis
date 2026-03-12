@@ -7,7 +7,6 @@ from finlab.dataframe import FinlabDataFrame
 from strategy_class.roger_tw_strategy_base import RogerTWStrategyBase
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
-
 class MultiReportWrapper:
     def __init__(self, reports_dict):
         self.reports_dict = reports_dict
@@ -21,7 +20,6 @@ class MultiReportWrapper:
             new_path = os.path.join(base_dir, f"{file_base}_{name}{ext}")
             print(f"[{name}] 儲存報告至: {new_path}")
             report.display(save_report_path=new_path, **kwargs)
-
 
 class RogerTWStrategyMonthly(RogerTWStrategyBase):
     def __init__(self, config_path="config.yaml", override_params=None):
@@ -62,7 +60,7 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
             # 正常出場：第 4 週賣出日
             exit_mask = base_position.index.isin(exit_dates)
             normal_exits = pd.DataFrame(
-                np.broadcast_to(exit_mask[:, np.newaxis], base_position.shape),
+                np.broadcast_to(exit_mask[:, np.newaxis], base_position.shape).copy(),
                 index=base_position.index,
                 columns=base_position.columns
             )
@@ -107,7 +105,6 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
 
         self.report = MultiReportWrapper(reports)
         return self.report
-
 
 if __name__ == '__main__':
     strategy = RogerTWStrategyMonthly()

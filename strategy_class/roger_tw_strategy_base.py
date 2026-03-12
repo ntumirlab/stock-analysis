@@ -126,43 +126,19 @@ class RogerTWStrategyBase:
 
         return position.astype(bool), sl_df, tp_df
 
-    def _compute_sl_tp_prices(self, entries, position, sl_df, tp_df):
-        """
-        計算每股的最終 SL/TP 絕對價格矩陣（NaN = 不觸發）。
-        """
-        open_ = data.get('price:開盤價').reindex(index=position.index, columns=position.columns)
-        entry_price = open_.where(entries).ffill()
-
-        final_sl = pd.DataFrame(float('nan'), index=position.index, columns=position.columns)
-        final_tp = pd.DataFrame(float('nan'), index=position.index, columns=position.columns)
-
-        # 停損：DB 絕對價優先；DB 空值才用 global_sl 比例補
-        if self.use_db_sl:
-            db_sl = sl_df.replace(0, float('nan'))
-            final_sl = db_sl.copy()
-            if self.global_sl is not None:
-                global_sl_price = entry_price * (1 - self.global_sl)
-                final_sl = final_sl.where(final_sl.notna(), global_sl_price)
-        elif self.global_sl is not None:
-            final_sl = entry_price * (1 - self.global_sl)
-
-        # 停利：DB 絕對價優先；DB 空值才用 global_tp 比例補
-        if self.use_db_tp:
-            db_tp = tp_df.replace(0, float('nan'))
-            final_tp = db_tp.copy()
-            if self.global_tp is not None:
-                global_tp_price = entry_price * (1 + self.global_tp)
-                final_tp = final_tp.where(final_tp.notna(), global_tp_price)
-        elif self.global_tp is not None:
-            final_tp = entry_price * (1 + self.global_tp)
-
-        return final_sl, final_tp
-
     def _build_sl_tp_exits(self, entries, position, sl_df, tp_df):
         """
         計算個股 SL/TP 出場訊號矩陣。
         回傳值：FinlabDataFrame bool，True 代表當日觸發 SL 或 TP 應出場。
         買入當天不觸發（避免同日進出）。
+
+        價格基準說明：
+        - DB 絕對價（分析師設定的實際市價）：
+            使用非還原價 price:最低價 / 最高價，與 DB 設定單位一致。
+        - global 比例 SL/TP（與 sim() 內部邏輯一致）：
+            使用還原價 etl:adj_open 計算進場成本，etl:adj_low / adj_high 判斷觸發，
+            確保除權息後的報酬計算與 sim() 採用相同基準。
+            若同一股票已有 DB 絕對價，該股不再套用 global 比例（DB 優先）。
         """
         has_any_config = (
             self.use_db_sl or self.use_db_tp
@@ -172,18 +148,51 @@ class RogerTWStrategyBase:
         if not has_any_config:
             return pd.DataFrame(False, index=position.index, columns=position.columns)
 
-        low  = data.get('price:最低價').reindex(index=position.index, columns=position.columns)
-        high = data.get('price:最高價').reindex(index=position.index, columns=position.columns)
-
-        final_sl, final_tp = self._compute_sl_tp_prices(entries, position, sl_df, tp_df)
-
         sl_exit = pd.DataFrame(False, index=position.index, columns=position.columns)
         tp_exit = pd.DataFrame(False, index=position.index, columns=position.columns)
 
-        if final_sl.notna().any(axis=None):
-            sl_exit = (low < final_sl).fillna(False)
-        if final_tp.notna().any(axis=None):
-            tp_exit = (high > final_tp).fillna(False)
+        # DB 絕對價：使用非還原價
+        if self.use_db_sl or self.use_db_tp:
+            raw_low  = data.get('price:最低價').reindex(index=position.index, columns=position.columns)
+            raw_high = data.get('price:最高價').reindex(index=position.index, columns=position.columns)
+
+            if self.use_db_sl:
+                db_sl = sl_df.replace(0, float('nan'))
+                if db_sl.notna().any(axis=None):
+                    sl_exit = sl_exit | (raw_low < db_sl).fillna(False)
+
+            if self.use_db_tp:
+                db_tp = tp_df.replace(0, float('nan'))
+                if db_tp.notna().any(axis=None):
+                    tp_exit = tp_exit | (raw_high > db_tp).fillna(False)
+
+        # global 比例：使用還原價
+        if self.global_sl is not None or self.global_tp is not None:
+            adj_open = data.get('etl:adj_open').reindex(index=position.index, columns=position.columns)
+            adj_entry_price = adj_open.where(entries).ffill()
+
+            if self.global_sl is not None:
+                # DB 已有值的欄位不補 global（DB 優先）
+                db_sl_mask = (
+                    sl_df.replace(0, float('nan')).notna()
+                    if self.use_db_sl
+                    else pd.DataFrame(False, index=position.index, columns=position.columns)
+                )
+                adj_low = data.get('etl:adj_low').reindex(index=position.index, columns=position.columns)
+                global_sl_price = adj_entry_price * (1 - self.global_sl)
+                global_sl_exit = (adj_low < global_sl_price).fillna(False) & ~db_sl_mask
+                sl_exit = sl_exit | global_sl_exit
+
+            if self.global_tp is not None:
+                db_tp_mask = (
+                    tp_df.replace(0, float('nan')).notna()
+                    if self.use_db_tp
+                    else pd.DataFrame(False, index=position.index, columns=position.columns)
+                )
+                adj_high = data.get('etl:adj_high').reindex(index=position.index, columns=position.columns)
+                global_tp_price = adj_entry_price * (1 + self.global_tp)
+                global_tp_exit = (adj_high > global_tp_price).fillna(False) & ~db_tp_mask
+                tp_exit = tp_exit | global_tp_exit
 
         # 買入當天不觸發 SL/TP
         return FinlabDataFrame((sl_exit | tp_exit) & ~entries)
@@ -224,7 +233,7 @@ class RogerTWStrategyBase:
         # 正常出場：賣出日
         sell_mask = (dow == self.sell_weekday).to_numpy()
         normal_exits = pd.DataFrame(
-            np.broadcast_to(sell_mask[:, np.newaxis], position.shape),
+            np.broadcast_to(sell_mask[:, np.newaxis], position.shape).copy(),
             index=position.index,
             columns=position.columns
         )
