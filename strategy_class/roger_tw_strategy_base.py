@@ -91,19 +91,21 @@ class RogerTWStrategyBase:
                     if tp_price is not None:
                         tp_records.append({'date': aligned_date, 'stock_id': sid, 'tp_price': tp_price})
 
-        def _pivot(recs, value_col, ref_position):
+        def _pivot(recs, value_col, fallback_index):
+            """
+            將 records 轉為 (date × stock_id) 的 pivot DataFrame
+            """
             df = pd.DataFrame(recs)
             if df.empty:
-                return pd.DataFrame(0, index=ref_position.index, columns=ref_position.columns)
+                return pd.DataFrame(index=fallback_index, dtype=float)
             df = df.drop_duplicates(subset=['date', 'stock_id'])
-            df = df.pivot(index='date', columns='stock_id', values=value_col).fillna(0)
-            return df
+            return df.pivot(index='date', columns='stock_id', values=value_col).fillna(0)
 
         df = pd.DataFrame(records).drop_duplicates(subset=['date', 'stock_id'])
         position = df.pivot(index='date', columns='stock_id', values='signal').fillna(0)
 
-        sl_df = _pivot(sl_records, 'sl_price', position)
-        tp_df = _pivot(tp_records, 'tp_price', position)
+        sl_df = _pivot(sl_records, 'sl_price', position.index)
+        tp_df = _pivot(tp_records, 'tp_price', position.index)
 
         # 轉為每日資料並 Forward Fill
         position = position.resample('D').ffill()
@@ -126,19 +128,24 @@ class RogerTWStrategyBase:
 
         return position.astype(bool), sl_df, tp_df
 
-    def _build_sl_tp_exits(self, entries, position, sl_df, tp_df):
+    def _build_sl_tp_exits(self, entries, position, sl_df, tp_df,
+                           raw_low=None, raw_high=None):
         """
-        計算個股 SL/TP 出場訊號矩陣。
-        回傳值：FinlabDataFrame bool，True 代表當日觸發 SL 或 TP 應出場。
-        買入當天不觸發（避免同日進出）。
+        計算個股 SL/TP 出場訊號矩陣
+        回傳值：FinlabDataFrame bool，True 代表當日觸發 SL 或 TP 應出場
+        買入當天不觸發（避免同日進出）
 
         價格基準說明：
         - DB 絕對價（分析師設定的實際市價）：
-            使用非還原價 price:最低價 / 最高價，與 DB 設定單位一致。
-        - global 比例 SL/TP（與 sim() 內部邏輯一致）：
+            使用非還原價 price:最低價 / 最高價，與 DB 設定單位一致
+        - global 比例 SL/TP （與 sim() 內部邏輯一致）：
             使用還原價 etl:adj_open 計算進場成本，etl:adj_low / adj_high 判斷觸發，
-            確保除權息後的報酬計算與 sim() 採用相同基準。
-            若同一股票已有 DB 絕對價，該股不再套用 global 比例（DB 優先）。
+            確保除權息後的報酬計算與 sim() 採用相同基準
+            若同一股票已有 DB 絕對價，該股不再套用 global 比例（DB 優先）
+
+        raw_low / raw_high：
+            可選，供月策略在 loop 外預先載好傳入，避免每個 offset 重複 reindex
+            未傳入時（週策略預設行為）在內部載入
         """
         has_any_config = (
             self.use_db_sl or self.use_db_tp
@@ -153,8 +160,10 @@ class RogerTWStrategyBase:
 
         # DB 絕對價：使用非還原價
         if self.use_db_sl or self.use_db_tp:
-            raw_low  = data.get('price:最低價').reindex(index=position.index, columns=position.columns)
-            raw_high = data.get('price:最高價').reindex(index=position.index, columns=position.columns)
+            if raw_low is None:
+                raw_low = data.get('price:最低價').reindex(index=position.index, columns=position.columns)
+            if raw_high is None:
+                raw_high = data.get('price:最高價').reindex(index=position.index, columns=position.columns)
 
             if self.use_db_sl:
                 db_sl = sl_df.replace(0, float('nan'))
@@ -207,7 +216,7 @@ class RogerTWStrategyBase:
         5. shift(-1)：今日訊號 → 明日執行（FinLab sim 慣例）
 
         touched_exit 模式（use_db_sl=False, use_db_tp=False, global_sl/tp 有值）：
-        SL/TP 完全交給 sim() 處理，hold_until 不介入，避免雙重計算。
+        SL/TP 完全交給 sim() 處理，hold_until 不介入，避免雙重計算
         """
         universe = data.get('price:收盤價')
         position, sl_df, tp_df = self._create_df(universe)

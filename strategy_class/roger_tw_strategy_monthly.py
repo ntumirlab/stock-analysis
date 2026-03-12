@@ -12,7 +12,7 @@ class MultiReportWrapper:
         self.reports_dict = reports_dict
 
     def display(self, save_report_path=None, **kwargs):
-        """將多個回測報告分別儲存，以不同後綴區分。"""
+        """將多個回測報告分別儲存，以不同後綴區分"""
         base_dir, file_name = os.path.split(save_report_path)
         file_base, ext = os.path.splitext(file_name)
 
@@ -38,6 +38,11 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
         # selected_weeks 為每週日（resample('W') 預設以週日為週末錨點）
         weekly_dates = base_position.resample('W').last().index
 
+        pre_raw_low, pre_raw_high = None, None
+        if not use_touched_exit and (self.use_db_sl or self.use_db_tp):
+            pre_raw_low  = data.get('price:最低價').reindex(index=base_position.index, columns=base_position.columns)
+            pre_raw_high = data.get('price:最高價').reindex(index=base_position.index, columns=base_position.columns)
+
         reports = {}
         print("開始執行 4 種不同起始週的回測...")
 
@@ -55,7 +60,10 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
             if use_touched_exit:
                 sl_tp_exits = pd.DataFrame(False, index=base_position.index, columns=base_position.columns)
             else:
-                sl_tp_exits = self._build_sl_tp_exits(entries, base_position, sl_df, tp_df)
+                sl_tp_exits = self._build_sl_tp_exits(
+                    entries, base_position, sl_df, tp_df,
+                    raw_low=pre_raw_low, raw_high=pre_raw_high
+                )
 
             # 正常出場：第 4 週賣出日
             exit_mask = base_position.index.isin(exit_dates)
