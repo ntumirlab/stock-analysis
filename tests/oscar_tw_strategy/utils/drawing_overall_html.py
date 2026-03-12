@@ -5,6 +5,7 @@ Drawing Overall HTML Utility
 將回測結果 DataFrame 轉換為可排序的互動式 HTML 表格
 """
 
+import html as _html
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -13,51 +14,105 @@ from typing import Optional
 def dataframe_to_sortable_html(
     df: pd.DataFrame,
     output_path: str,
-    title: str = "Backtest Results"
+    title: str = "Backtest Results",
+    is_grid_search_result: bool = False,
+    parameter_meanings: Optional[dict] = None,
+    tested_params: Optional[dict] = None,
 ) -> str:
     """
     將 DataFrame 轉換為可排序的 HTML 表格
-    
+
     Args:
         df: 包含回測結果的 DataFrame
         output_path: HTML 輸出路徑
         title: 表格標題
-        
+        is_grid_search_result: 是否為網格搜尋結果
+        parameter_meanings: 參數欄位說明
+        tested_params: 測試參數範圍
+
     Returns:
         str: 輸出檔案路徑
     """
     output_path = Path(output_path)
-    
+
     # 取得欄位名稱
     headers = df.columns.tolist()
-    
+    default_sort_column = 1 if len(headers) > 1 else 0
+    annual_return_index = headers.index("annual_return") if "annual_return" in headers else None
+    sharpe_ratio_index = headers.index("sharpe_ratio") if "sharpe_ratio" in headers else None
+
     # 建立表頭 HTML
-    thead_html = '<tr>\n'
+    thead_html = "<tr>\n"
     for header in headers:
-        thead_html += f'                    <th>{header}</th>\n'
-    thead_html += '                </tr>'
-    
+        thead_html += f"                    <th>{header}</th>\n"
+    thead_html += "                </tr>"
+
     # 建立表格內容 HTML
-    tbody_html = ''
+    tbody_html = ""
     for _, row in df.iterrows():
-        tbody_html += '                <tr>\n'
+        tbody_html += "                <tr>\n"
         for header in headers:
             value = row[header]
             # 格式化數值
             if pd.isna(value):
-                formatted_value = 'N/A'
+                formatted_value = "N/A"
             elif isinstance(value, float):
                 if abs(value) < 1 and abs(value) > 0.001:
-                    formatted_value = f'{value:.6f}'
+                    formatted_value = f"{value:.6f}"
                 else:
-                    formatted_value = f'{value:.2f}'
+                    formatted_value = f"{value:.2f}"
             else:
                 formatted_value = str(value)
-            tbody_html += f'                    <td>{formatted_value}</td>\n'
-        tbody_html += '                </tr>\n'
-    
+            tbody_html += f"                    <td>{formatted_value}</td>\n"
+        tbody_html += "                </tr>\n"
+
+    # 參數說明與測試範圍區塊（僅在有資料時顯示）
+    info_panels_html = ""
+    if parameter_meanings or tested_params:
+        meaning_rows = ""
+        tested_rows = ""
+
+        if parameter_meanings:
+            for key, desc in parameter_meanings.items():
+                meaning_rows += (
+                    "                        <tr>"
+                    f'<td class="info-key">{_html.escape(str(key))}</td>'
+                    f"<td>{_html.escape(str(desc))}</td>"
+                    "</tr>\n"
+                )
+
+        if tested_params:
+            for key, value in tested_params.items():
+                tested_rows += (
+                    "                        <tr>"
+                    f'<td class="info-key">{_html.escape(str(key))}</td>'
+                    f"<td>{_html.escape(str(value))}</td>"
+                    "</tr>\n"
+                )
+
+        info_panels_html = f"""
+        <div class="info-panels">
+            <div class="info-card">
+                <h2>Parameter Meaning</h2>
+                <table class="info-table">
+                    <tbody>
+{meaning_rows if meaning_rows else '                        <tr><td colspan="2">N/A</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+            <div class="info-card">
+                <h2>Tested Params</h2>
+                <table class="info-table">
+                    <tbody>
+{tested_rows if tested_rows else '                        <tr><td colspan="2">N/A</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        """
+
     # 完整的 HTML 模板
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -102,6 +157,45 @@ def dataframe_to_sortable_html(
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin-bottom: 30px;
+        }}
+
+        .info-panels {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }}
+
+        .info-card {{
+            border: 1px solid #e6e6e6;
+            border-radius: 8px;
+            padding: 16px;
+            background: #fafafa;
+        }}
+
+        .info-card h2 {{
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #333;
+        }}
+
+        .info-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }}
+
+        .info-table td {{
+            border-bottom: 1px solid #ececec;
+            padding: 8px 6px;
+            vertical-align: top;
+        }}
+
+        .info-key {{
+            white-space: nowrap;
+            width: 36%;
+            font-weight: 600;
+            color: #444;
         }}
         
         .stat-card {{
@@ -199,7 +293,9 @@ def dataframe_to_sortable_html(
 <body>
     <div class="container">
         <h1>{title}</h1>
-        <p class="subtitle">Total Stocks Tested: {len(df)}</p>
+        <p class="subtitle">{"Grid Search Result" if is_grid_search_result else "Backtest Result"} | Total Stocks Tested: {len(df)}</p>
+
+{info_panels_html}
         
         <div class="summary-stats" id="summaryStats">
             <!-- Will be populated by JavaScript -->
@@ -229,7 +325,7 @@ def dataframe_to_sortable_html(
                 responsive: true,
                 pageLength: 25,
                 lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-                order: [[1, 'desc']], // Default sort by annual_return
+                order: [[{default_sort_column}, 'desc']], // Default sort by first metric column
                 columnDefs: [
                     {{
                         targets: '_all',
@@ -268,8 +364,10 @@ def dataframe_to_sortable_html(
             
             for (var i = 0; i < totalStocks; i++) {{
                 var row = data[i];
-                var annualReturn = parseFloat(row[1]); // Assuming annual_return is column 1
-                var sharpe = parseFloat(row[3]); // Assuming sharpe_ratio is column 3
+                var annualReturn = {annual_return_index if annual_return_index is not None else 'null'};
+                annualReturn = annualReturn === null ? NaN : parseFloat(row[annualReturn]);
+                var sharpe = {sharpe_ratio_index if sharpe_ratio_index is not None else 'null'};
+                sharpe = sharpe === null ? NaN : parseFloat(row[sharpe]);
                 
                 if (!isNaN(annualReturn)) {{
                     avgReturn += annualReturn;
@@ -309,10 +407,10 @@ def dataframe_to_sortable_html(
         }});
     </script>
 </body>
-</html>'''
-    
+</html>"""
+
     # 寫入 HTML 檔案
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    
+
     return str(output_path)

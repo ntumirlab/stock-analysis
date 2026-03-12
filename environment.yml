@@ -25,6 +25,7 @@ dependencies:
       - python-dotenv
       - loguru==0.6.0
       - tqdm
+      - optuna
       - PyYAML
       - google-api-python-client==2.188.0
       - google-auth-oauthlib==1.2.4
@@ -32,3 +33,5 @@ dependencies:
       - google.genai==1.59.0
       - flask-autoindex==0.6.6
       - keyring==23.5.0
+      - scikit-learn
+      - psycopg2-binary

@@ -11,109 +11,172 @@ from typing import List, Dict
 
 
 def create_param_comparison_chart(
-    stock_id: str,
-    param_results: List[Dict],
-    output_path: str
+    stock_id: str, param_results: List[Dict], output_path: str
 ) -> str:
     """
     建立參數比較表格（可排序的 HTML 表格）
-    
+
     Args:
         stock_id: 股票代碼
         param_results: 參數測試結果列表，每個元素包含參數設定和績效指標
         output_path: HTML 輸出路徑
-        
+
     Returns:
         str: 輸出檔案路徑
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # 轉換為 DataFrame
     df = pd.DataFrame(param_results)
-    
+
+    # 相容新舊參數格式：
+    # - 新格式: sar_signal_lag_min/sar_signal_lag_max
+    # - 舊格式: sar_max_dots
+    has_lag_window = {"sar_signal_lag_min", "sar_signal_lag_max"}.issubset(df.columns)
+
     # 選擇要顯示的欄位並排序
-    display_columns = ['sar_max_dots', 'sar_accel', 'sar_maximum',
-                      'macd_fast', 'macd_slow', 'macd_signal', 
-                      'annual_return', 'max_drawdown', 'sharpe_ratio', 'total_trades']
-    
+    if has_lag_window:
+        display_columns = [
+            "sar_signal_lag_min",
+            "sar_signal_lag_max",
+            "sar_accel",
+            "sar_maximum",
+            "macd_fast",
+            "macd_slow",
+            "macd_signal",
+            "total_reward_amount",
+            "annual_return",
+            "max_drawdown",
+            "sharpe_ratio",
+            "total_trades",
+        ]
+    else:
+        display_columns = [
+            "sar_max_dots",
+            "sar_accel",
+            "sar_maximum",
+            "macd_fast",
+            "macd_slow",
+            "macd_signal",
+            "total_reward_amount",
+            "annual_return",
+            "max_drawdown",
+            "sharpe_ratio",
+            "total_trades",
+        ]
+
     # 提取 SAR 參數到獨立欄位
-    df['sar_accel'] = df['params'].apply(lambda x: x['sar_params']['acceleration'])
-    df['sar_maximum'] = df['params'].apply(lambda x: x['sar_params']['maximum'])
-    
+    df["sar_accel"] = df["params"].apply(lambda x: x["sar_params"]["acceleration"])
+    df["sar_maximum"] = df["params"].apply(lambda x: x["sar_params"]["maximum"])
+
     df = df[display_columns]
-    
-    # 依年化報酬率排序
-    df = df.sort_values(by='annual_return', ascending=False).reset_index(drop=True)
-    
+
+    # 依總報酬金額與夏普比率排序
+    df = df.sort_values(
+        by=["total_reward_amount", "sharpe_ratio"],
+        ascending=[False, False],
+        na_position="last",
+    ).reset_index(drop=True)
+
     # 找出最佳值（用於高亮顯示）
-    best_annual_return = df['annual_return'].max()
-    best_sharpe = df['sharpe_ratio'].max() if df['sharpe_ratio'].notna().any() else None
-    min_drawdown = df['max_drawdown'].max()  # 最大回檔越接近0越好（負值較小）
-    
+    best_total_reward = df["total_reward_amount"].max()
+    best_annual_return = df["annual_return"].max()
+    best_sharpe = df["sharpe_ratio"].max() if df["sharpe_ratio"].notna().any() else None
+    min_drawdown = df["max_drawdown"].max()  # 最大回檔越接近0越好（負值較小）
+
     # 建立表頭 HTML
     headers = {
-        'sar_max_dots': 'SAR Dots',
-        'sar_accel': 'SAR Accel',
-        'sar_maximum': 'SAR Max',
-        'macd_fast': 'MACD Fast',
-        'macd_slow': 'MACD Slow',
-        'macd_signal': 'MACD Signal',
-        'annual_return': 'Annual Return',
-        'max_drawdown': 'Max Drawdown',
-        'sharpe_ratio': 'Sharpe Ratio',
-        'total_trades': 'Total Trades'
+        "sar_max_dots": "SAR Dots",
+        "sar_signal_lag_min": "SAR Lag Min",
+        "sar_signal_lag_max": "SAR Lag Max",
+        "sar_accel": "SAR Accel",
+        "sar_maximum": "SAR Max",
+        "macd_fast": "MACD Fast",
+        "macd_slow": "MACD Slow",
+        "macd_signal": "MACD Signal",
+        "total_reward_amount": "Total Reward",
+        "annual_return": "Annual Return",
+        "max_drawdown": "Max Drawdown",
+        "sharpe_ratio": "Sharpe Ratio",
+        "total_trades": "Total Trades",
     }
-    
-    thead_html = '<tr>\n'
+
+    thead_html = "<tr>\n"
     for col in display_columns:
-        thead_html += f'                    <th>{headers[col]}</th>\n'
-    thead_html += '                </tr>'
-    
+        thead_html += f"                    <th>{headers[col]}</th>\n"
+    thead_html += "                </tr>"
+
     # 建立表格內容 HTML（高亮最佳值）
-    tbody_html = ''
+    tbody_html = ""
     for idx, row in df.iterrows():
         # 判斷是否為最佳參數（第一行）
-        is_best_row = (idx == 0)
-        row_class = ' class="best-row"' if is_best_row else ''
-        
-        tbody_html += f'                <tr{row_class}>\n'
-        
+        is_best_row = idx == 0
+        row_class = ' class="best-row"' if is_best_row else ""
+
+        tbody_html += f"                <tr{row_class}>\n"
+
         for col in display_columns:
             value = row[col]
-            
+
             # 格式化數值
             if pd.isna(value):
-                formatted_value = 'N/A'
-                cell_class = ''
-            elif col == 'annual_return':
-                formatted_value = f'{value:.2%}'
+                formatted_value = "N/A"
+                cell_class = ""
+            elif col == "total_reward_amount":
+                formatted_value = f"{value:.2f}"
+                cell_class = (
+                    ' class="highlight-best"'
+                    if abs(value - best_total_reward) < 1e-6
+                    else ""
+                )
+            elif col == "annual_return":
+                formatted_value = f"{value:.2%}"
                 # 高亮最佳年化報酬
-                cell_class = ' class="highlight-best"' if abs(value - best_annual_return) < 1e-6 else ''
-            elif col == 'max_drawdown':
-                formatted_value = f'{value:.2%}'
+                cell_class = (
+                    ' class="highlight-best"'
+                    if abs(value - best_annual_return) < 1e-6
+                    else ""
+                )
+            elif col == "max_drawdown":
+                formatted_value = f"{value:.2%}"
                 # 高亮最小回檔
-                cell_class = ' class="highlight-best"' if abs(value - min_drawdown) < 1e-6 else ''
-            elif col == 'sharpe_ratio':
-                formatted_value = f'{value:.2f}'
+                cell_class = (
+                    ' class="highlight-best"'
+                    if abs(value - min_drawdown) < 1e-6
+                    else ""
+                )
+            elif col == "sharpe_ratio":
+                formatted_value = f"{value:.2f}"
                 # 高亮最佳夏普比率
-                cell_class = ' class="highlight-best"' if best_sharpe and abs(value - best_sharpe) < 1e-6 else ''
-            elif col in ['sar_max_dots', 'total_trades']:
+                cell_class = (
+                    ' class="highlight-best"'
+                    if best_sharpe and abs(value - best_sharpe) < 1e-6
+                    else ""
+                )
+            elif col in [
+                "sar_max_dots",
+                "sar_signal_lag_min",
+                "sar_signal_lag_max",
+                "total_trades",
+            ]:
                 formatted_value = str(int(value))
-                cell_class = ''
-            elif col in ['sar_accel', 'sar_maximum']:
-                formatted_value = f'{value:.2f}'
-                cell_class = ''
+                cell_class = ""
+            elif col in ["sar_accel", "sar_maximum"]:
+                formatted_value = f"{value:.2f}"
+                cell_class = ""
             else:
                 formatted_value = str(int(value))
-                cell_class = ''
-            
-            tbody_html += f'                    <td{cell_class}>{formatted_value}</td>\n'
-        
-        tbody_html += '                </tr>\n'
-    
+                cell_class = ""
+
+            tbody_html += (
+                f"                    <td{cell_class}>{formatted_value}</td>\n"
+            )
+
+        tbody_html += "                </tr>\n"
+
     # 完整的 HTML 模板
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -322,10 +385,10 @@ def create_param_comparison_chart(
         }});
     </script>
 </body>
-</html>'''
-    
+</html>"""
+
     # 寫入 HTML 檔案
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    
+
     return str(output_path)

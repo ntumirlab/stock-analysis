@@ -74,5 +74,33 @@ roger:
 
 # Oscar 策略專用參數
 oscar:
-  volume_above_avg_ratio: 0.25
-  new_high_ratio_120: 0.3
+  general:
+    preprocess_start_date: null
+    preprocess_lookback_days: 252
+    prefilter_enabled: false
+    prefilter_min_avg_volume_30: 1000000
+    prefilter_min_history_days: 120
+    sim_fast_mode: false
+    volume_above_avg_ratio: 0.25
+    min_avg_volume_30: 1000000
+    max_volume_spike_ratio: 10.0
+    new_high_ratio_120: 0.3
+  andor:
+    # no config now
+  composite:
+    signal_quantile_bins: null
+    signal_weights:
+      sar: 0.35
+      macd: 0.35
+      volume: 0.15
+      institutional: 0.15
+    buy_score_threshold: 0.86
+    sell_score_threshold: 0.4
+    # SAR signal fusion: event proximity (lag-decay) vs. current-bar event
+    sar_event_decay_alpha: 1.8
+    sar_proximity_weight: 0.4
+    sar_event_weight: 1.0
+    # MACD signal fusion: DIF-DEA zero-closeness vs. golden-cross event proximity (lag-decay)
+    macd_event_decay_alpha: 1.8
+    macd_proximity_weight: 0.4
+    macd_event_weight: 1.0
