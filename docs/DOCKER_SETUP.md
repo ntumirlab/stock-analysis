@@ -210,6 +210,35 @@ stock-scheduler      stock-analysis:latest  Up
 
 ---
 
+## Optuna 多進程優化（PostgreSQL）
+
+`single_stock_bayesian` 已固定使用 PostgreSQL 作為 Optuna storage（不再提供 DB backend 切換選項）。
+
+### 1. 啟動 PostgreSQL
+
+```bash
+docker compose up -d optuna-postgres
+docker compose ps optuna-postgres
+```
+
+### 2. 以 PostgreSQL storage 執行 Bayesian
+
+```bash
+python -m tests.oscar_tw_strategy.single_stock_bayesian_composite \
+  --stock_id 2330 \
+  --process_workers 8
+```
+
+### 3. 套件需求
+
+若使用 PostgreSQL URL，Python 環境需有 PostgreSQL driver（例如 `psycopg2` 或 `psycopg2-binary`）。
+
+```bash
+pip install psycopg2-binary
+```
+
+---
+
 ## 配置說明
 
 ### 目錄結構
