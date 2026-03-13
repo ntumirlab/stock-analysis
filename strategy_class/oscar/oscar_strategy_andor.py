@@ -23,10 +23,12 @@ Oscar 四大指標策略 (Oscar Four Key Indicators Strategy)
 """
 
 from finlab import data
+from finlab.dataframe import FinlabDataFrame
 from finlab.markets.tw import TWMarket
 from finlab.backtest import sim
 import pandas as pd
 import numpy as np
+import talib
 from time import perf_counter
 from utils.config_loader import ConfigLoader
 
@@ -291,7 +293,9 @@ class OscarAndOrStrategy:
         # 🚀 優化：預先計算所有指標（只計算一次，避免重複）
         indicator_t0 = perf_counter()
         self._cached_sar_buy, self._cached_sar_sell = self._calculate_sar_condition(
-            market_data["close"]
+            market_data["close"],
+            market_data["high"],
+            market_data["low"],
         )
         self._cached_macd_buy, self._cached_macd_sell = self._calculate_macd_condition(
             market_data["close"]
@@ -387,14 +391,121 @@ class OscarAndOrStrategy:
             self.profile_stats["prefilter_kept_symbols"] = int(len(keep_cols))
         return filtered
 
-    def _get_cached_indicator(self, name, **kwargs):
-        """Cache finlab indicator results in-process to avoid repeated heavy calls."""
-        key = (name, tuple(sorted(kwargs.items())))
-        if key not in OscarAndOrStrategy._INDICATOR_CACHE:
-            if len(OscarAndOrStrategy._INDICATOR_CACHE) >= self._MAX_INDICATOR_CACHE_SIZE:
-                OscarAndOrStrategy._INDICATOR_CACHE.clear()
-            OscarAndOrStrategy._INDICATOR_CACHE[key] = data.indicator(name, **kwargs)
-        return OscarAndOrStrategy._INDICATOR_CACHE[key]
+    @staticmethod
+    def _indicator_scope_key(df: pd.DataFrame):
+        if df is None or df.empty:
+            return ("empty",)
+        return (
+            tuple(df.columns.tolist()),
+            pd.Timestamp(df.index[0]),
+            pd.Timestamp(df.index[-1]),
+            int(len(df.index)),
+        )
+
+    @classmethod
+    def _cache_indicator_value(cls, key, factory):
+        if key not in cls._INDICATOR_CACHE:
+            if len(cls._INDICATOR_CACHE) >= cls._MAX_INDICATOR_CACHE_SIZE:
+                cls._INDICATOR_CACHE.clear()
+            cls._INDICATOR_CACHE[key] = factory()
+        return cls._INDICATOR_CACHE[key]
+
+    @staticmethod
+    def _compute_local_sar_indicator(
+        high: pd.DataFrame,
+        low: pd.DataFrame,
+        acceleration: float,
+        maximum: float,
+    ) -> FinlabDataFrame:
+        result = np.full(high.shape, np.nan, dtype=np.float64)
+        for col_idx, col_name in enumerate(high.columns):
+            high_arr = high[col_name].to_numpy(dtype=np.float64, copy=False)
+            low_arr = low[col_name].to_numpy(dtype=np.float64, copy=False)
+            valid_mask = np.isfinite(high_arr) & np.isfinite(low_arr)
+            if valid_mask.sum() < 2:
+                continue
+            sar_values = np.full(high_arr.shape, np.nan, dtype=np.float64)
+            sar_values[valid_mask] = talib.SAR(
+                high_arr[valid_mask],
+                low_arr[valid_mask],
+                acceleration=acceleration,
+                maximum=maximum,
+            )
+            result[:, col_idx] = sar_values
+        return FinlabDataFrame(result, index=high.index, columns=high.columns)
+
+    @staticmethod
+    def _compute_local_macd_indicator(
+        close: pd.DataFrame,
+        fastperiod: int,
+        slowperiod: int,
+        signalperiod: int,
+    ):
+        dif_result = np.full(close.shape, np.nan, dtype=np.float64)
+        dea_result = np.full(close.shape, np.nan, dtype=np.float64)
+        hist_result = np.full(close.shape, np.nan, dtype=np.float64)
+        for col_idx, col_name in enumerate(close.columns):
+            close_arr = close[col_name].to_numpy(dtype=np.float64, copy=False)
+            valid_mask = np.isfinite(close_arr)
+            if valid_mask.sum() < slowperiod:
+                continue
+            dif_col, dea_col, hist_col = talib.MACD(
+                close_arr[valid_mask],
+                fastperiod=fastperiod,
+                slowperiod=slowperiod,
+                signalperiod=signalperiod,
+            )
+            dif_values = np.full(close_arr.shape, np.nan, dtype=np.float64)
+            dea_values = np.full(close_arr.shape, np.nan, dtype=np.float64)
+            hist_values = np.full(close_arr.shape, np.nan, dtype=np.float64)
+            dif_values[valid_mask] = dif_col
+            dea_values[valid_mask] = dea_col
+            hist_values[valid_mask] = hist_col
+            dif_result[:, col_idx] = dif_values
+            dea_result[:, col_idx] = dea_values
+            hist_result[:, col_idx] = hist_values
+        idx = close.index
+        cols = close.columns
+        return (
+            FinlabDataFrame(dif_result, index=idx, columns=cols),
+            FinlabDataFrame(dea_result, index=idx, columns=cols),
+            FinlabDataFrame(hist_result, index=idx, columns=cols),
+        )
+
+    def _get_cached_sar_indicator(self, high: pd.DataFrame, low: pd.DataFrame):
+        key = (
+            "SAR_LOCAL",
+            self._indicator_scope_key(high),
+            round(float(self.sar_params["acceleration"]), 6),
+            round(float(self.sar_params["maximum"]), 6),
+        )
+        return self._cache_indicator_value(
+            key,
+            lambda: self._compute_local_sar_indicator(
+                high,
+                low,
+                acceleration=float(self.sar_params["acceleration"]),
+                maximum=float(self.sar_params["maximum"]),
+            ),
+        )
+
+    def _get_cached_macd_indicator(self, close: pd.DataFrame):
+        key = (
+            "MACD_LOCAL",
+            self._indicator_scope_key(close),
+            int(self.macd_params["fastperiod"]),
+            int(self.macd_params["slowperiod"]),
+            int(self.macd_params["signalperiod"]),
+        )
+        return self._cache_indicator_value(
+            key,
+            lambda: self._compute_local_macd_indicator(
+                close,
+                fastperiod=int(self.macd_params["fastperiod"]),
+                slowperiod=int(self.macd_params["slowperiod"]),
+                signalperiod=int(self.macd_params["signalperiod"]),
+            ),
+        )
 
     @staticmethod
     def load_market_data():
@@ -478,7 +589,7 @@ class OscarAndOrStrategy:
             return self.signal_quantile_bins.get(signal_name)
         return self.signal_quantile_bins
 
-    def _calculate_sar_condition(self, close):
+    def _calculate_sar_condition(self, close, high, low):
         """
         計算 SAR 指標條件
 
@@ -490,12 +601,9 @@ class OscarAndOrStrategy:
             sar_sell_condition: SAR賣出條件
         """
         # 使用 finlab 的 indicator API 計算 SAR (使用原始價格)
-        sar = self._get_cached_indicator(
-            "SAR",
-            acceleration=self.sar_params["acceleration"],
-            maximum=self.sar_params["maximum"],
-            adjust_price=False,
-        ).reindex(index=close.index, columns=close.columns)
+        sar = self._get_cached_sar_indicator(high, low).reindex(
+            index=close.index, columns=close.columns
+        )
 
         # 儲存 SAR 值供視覺化使用
         self.sar_values = sar
@@ -554,13 +662,7 @@ class OscarAndOrStrategy:
             macd_sell_condition: MACD賣出條件
         """
         # 使用 finlab 的 indicator API 計算 MACD (使用原始價格)
-        dif, dea, histogram = self._get_cached_indicator(
-            "MACD",
-            fastperiod=self.macd_params["fastperiod"],
-            slowperiod=self.macd_params["slowperiod"],
-            signalperiod=self.macd_params["signalperiod"],
-            adjust_price=False,
-        )
+        dif, dea, histogram = self._get_cached_macd_indicator(close)
         dif = dif.reindex(index=close.index, columns=close.columns)
         dea = dea.reindex(index=close.index, columns=close.columns)
         histogram = histogram.reindex(index=close.index, columns=close.columns)

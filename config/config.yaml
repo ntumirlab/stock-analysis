@@ -75,31 +75,56 @@ roger:
 # Oscar 策略專用參數
 oscar:
   general:
-    preprocess_start_date: null
-    preprocess_lookback_days: 252
-    prefilter_enabled: false
-    prefilter_min_avg_volume_30: 1000000
-    prefilter_min_history_days: 120
-    sim_fast_mode: false
     volume_above_avg_ratio: 0.25
     min_avg_volume_30: 1000000
     max_volume_spike_ratio: 10.0
     new_high_ratio_120: 0.3
   andor:
-    # no config now
+    sim_fast_mode: false
+    preprocess_start_date: null
+    preprocess_lookback_days: 252
+    prefilter_enabled: false
+    prefilter_min_avg_volume_30: 1000000
+    prefilter_min_history_days: 120
   composite:
-    signal_quantile_bins: null
+    sar_params:
+      acceleration: 0.045
+      maximum: 0.21
+    macd_params:
+      fastperiod: 8
+      slowperiod: 13
+      signalperiod: 5
+    sar_signal_lag_max: 0
+    macd_signal_lag_max: 0
+    signal_quantile_bins:
+      sar: 10
+      macd: 100
+      volume: 50
+      institutional: null
     signal_weights:
-      sar: 0.35
-      macd: 0.35
-      volume: 0.15
-      institutional: 0.15
+      sar: 0.45
+      macd: 0.33
+      volume: 0.11
+      institutional: 0.11
     buy_score_threshold: 0.86
-    sell_score_threshold: 0.4
+    sell_score_threshold: 0.79
+    # SAR signal fusion: event proximity (lag-decay) vs. current-bar event
     sar_event_decay_alpha: 1.8
-    sar_proximity_weight: 0.4
-    sar_event_weight: 1.0
+    sar_proximity_weight: 1.3
+    sar_event_weight: 2.0
+    sar_near_sigmoid_slope: 3.0
+    sar_near_distance_scale: 0.045
+    sar_event_sigmoid_slope: 10.5
+    sar_event_distance_scale: 0.08
+    sar_history_lookback: 1
+    sar_history_decay_alpha: 3.4
+    # MACD signal fusion: DIF-DEA zero-closeness vs. golden-cross event proximity (lag-decay)
     macd_event_decay_alpha: 1.8
-    macd_proximity_weight: 0.4
-    macd_event_weight: 1.0
-  
+    macd_proximity_weight: 1.7
+    macd_event_weight: 0.1
+    macd_near_sigmoid_slope: 13.5
+    macd_near_distance_scale: 2.25
+    macd_event_sigmoid_slope: 5.0
+    macd_event_distance_scale: 2.3
+    macd_history_lookback: 8
+    macd_history_decay_alpha: 1.7
