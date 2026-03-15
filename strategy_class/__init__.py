@@ -1,5 +1,6 @@
 from .alan_tw_strategy_base import AlanTWStrategyBase, AdjustTWMarketInfo
 from .alan_tw_strategy_ACE import AlanTWStrategyACE
 from .alan_tw_strategy_FG import AlanTWStrategyFG
+from .alan_tw_strategy_EFG import AlanTWStrategyEFG
 from .oscar.oscar_strategy_andor import OscarAndOrStrategy
 from .oscar.oscar_strategy_composite import OscarCompositeStrategy
