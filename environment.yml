@@ -35,3 +35,4 @@ dependencies:
       - keyring==23.5.0
       - scikit-learn
       - psycopg2-binary
+      - matplotlib

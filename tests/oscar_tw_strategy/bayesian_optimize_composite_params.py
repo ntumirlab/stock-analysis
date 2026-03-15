@@ -28,6 +28,7 @@ from strategy_class.oscar.oscar_strategy_composite_params import OscarCompositeP
 from tests.oscar_tw_strategy.utils.custom_report_metrics import (
     compute_total_reward_amount_from_creturn,
 )
+from tests.oscar_tw_strategy.utils.objective_functions import build_objective
 
 MIN_OBJECTIVE_VALUE = -1e18
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +58,7 @@ class CompositeBayesianOptimizer:
         market_data_pickle_path: str | None = None,
         storage_url: str | None = None,
         allow_market_data_fetch: bool = True,
+        objective_name: str = "train_sharpe",
     ):
         self.config_path = config_path
         self.start_date = start_date
@@ -72,6 +74,7 @@ class CompositeBayesianOptimizer:
         )
         self.storage_url = storage_url
         self.allow_market_data_fetch = bool(allow_market_data_fetch)
+        self.objective_name = objective_name
 
         run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.study_dir = Path(output_dir) / f"composite_{run_tag}"
@@ -79,6 +82,7 @@ class CompositeBayesianOptimizer:
 
         self.market_data = market_data
         self.base_params = OscarCompositeStrategy(config_path=self.config_path)._load_params_from_config()
+        self.objective = build_objective(self.objective_name, initial_capital=self.initial_capital)
 
     def _load_market_data_once(self) -> dict:
         if self.market_data is not None:
@@ -183,6 +187,11 @@ class CompositeBayesianOptimizer:
             "sell_score_threshold", sell_lower, sell_upper, step=0.01
         )
 
+        sar_signal_lag_max = trial.suggest_int("sar_signal_lag_max", 0, 10)
+        macd_signal_lag_max = trial.suggest_int("macd_signal_lag_max", 0, 10)
+        sar_event_decay_alpha = trial.suggest_float("sar_event_decay_alpha", 1.1, 4.0, step=0.1)
+        macd_event_decay_alpha = trial.suggest_float("macd_event_decay_alpha", 1.1, 4.0, step=0.1)
+
         params_dict["sar_params"] = {
             "acceleration": sar_acceleration,
             "maximum": sar_maximum,
@@ -204,6 +213,10 @@ class CompositeBayesianOptimizer:
         }
         params_dict["buy_score_threshold"] = buy_score_threshold
         params_dict["sell_score_threshold"] = sell_score_threshold
+        params_dict["sar_signal_lag_max"] = sar_signal_lag_max
+        params_dict["macd_signal_lag_max"] = macd_signal_lag_max
+        params_dict["sar_event_decay_alpha"] = sar_event_decay_alpha
+        params_dict["macd_event_decay_alpha"] = macd_event_decay_alpha
         params_dict["signal_quantile_bins"] = {
             "sar": trial.suggest_categorical("bins_sar", [5, 10, 20, 50, 100, 200, 500, 1000]),
             "macd": trial.suggest_categorical("bins_macd", [5, 10, 20, 50, 100, 200, 500, 1000]),
@@ -262,6 +275,10 @@ class CompositeBayesianOptimizer:
         }
         base_params["buy_score_threshold"] = float(flat_params["buy_score_threshold"])
         base_params["sell_score_threshold"] = float(flat_params["sell_score_threshold"])
+        base_params["sar_signal_lag_max"] = int(flat_params["sar_signal_lag_max"])
+        base_params["macd_signal_lag_max"] = int(flat_params["macd_signal_lag_max"])
+        base_params["sar_event_decay_alpha"] = float(flat_params["sar_event_decay_alpha"])
+        base_params["macd_event_decay_alpha"] = float(flat_params["macd_event_decay_alpha"])
         base_params["signal_quantile_bins"] = {
             "sar": flat_params.get("bins_sar"),
             "macd": flat_params.get("bins_macd"),
@@ -315,8 +332,14 @@ class CompositeBayesianOptimizer:
             annual_return = self._safe_float(metrics.get("profitability", {}).get("annualReturn", None), default=None)
             max_drawdown = self._safe_float(metrics.get("risk", {}).get("maxDrawdown", None), default=None)
 
-            objective_value = self._safe_float(total_reward, default=None)
-            trial.set_user_attr("objective", "total_reward_amount")
+            objective_result = self.objective.evaluate(
+                report,
+                start_date=self.start_date,
+                end_date=self.end_date,
+            )
+            objective_value = self._safe_float(objective_result.value, default=None)
+
+            trial.set_user_attr("objective", objective_result.name)
             trial.set_user_attr("sharpe_ratio", sharpe_ratio)
             trial.set_user_attr("annual_return", annual_return)
             trial.set_user_attr("max_drawdown", max_drawdown)
@@ -325,17 +348,15 @@ class CompositeBayesianOptimizer:
                 trial.set_user_attr("trial_status", "invalid_objective_nan")
                 trial.set_user_attr("failure_reason", "objective_value is NaN/inf/None")
                 trial.set_user_attr("objective_value", MIN_OBJECTIVE_VALUE)
-                trial.set_user_attr("total_reward_amount", None)
+                trial.set_user_attr("total_reward_amount", total_reward)
                 logger.warning("Trial %s invalid objective (NaN/inf/None). params=%s", trial.number, trial.params)
                 return MIN_OBJECTIVE_VALUE
 
             trial.set_user_attr("trial_status", "ok")
             trial.set_user_attr("failure_reason", None)
             trial.set_user_attr("objective_value", objective_value)
-            trial.set_user_attr("total_reward_amount", objective_value)
+            trial.set_user_attr("total_reward_amount", total_reward)
 
-            if sharpe_ratio is not None:
-                return objective_value + (sharpe_ratio * 1e-9)
             return objective_value
         except Exception as exc:
             trial.set_user_attr("trial_status", "exception")
@@ -371,6 +392,7 @@ class CompositeBayesianOptimizer:
                 "config_path": self.config_path,
                 "start_date": self.start_date,
                 "end_date": self.end_date,
+                "objective_name": self.objective_name,
                 "output_dir": str(self.study_dir.parent),
                 "initial_capital": self.initial_capital,
                 "fee_ratio": self.fee_ratio,
@@ -426,6 +448,7 @@ class CompositeBayesianOptimizer:
                 "config_path": self.config_path,
                 "start_date": self.start_date,
                 "end_date": self.end_date,
+                "objective_name": self.objective_name,
                 "n_trials": self.n_trials,
                 "workers": self.workers,
                 "initial_capital": self.initial_capital,
@@ -449,6 +472,7 @@ class CompositeBayesianOptimizer:
                     "failure_reason": t.user_attrs.get("failure_reason"),
                     "objective_value": t.user_attrs.get("objective_value"),
                     "total_reward_amount": t.user_attrs.get("total_reward_amount"),
+                    "objective": t.user_attrs.get("objective"),
                     "sharpe_ratio": t.user_attrs.get("sharpe_ratio"),
                     "annual_return": t.user_attrs.get("annual_return"),
                     "max_drawdown": t.user_attrs.get("max_drawdown"),
@@ -470,6 +494,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-path", default="config.yaml")
     parser.add_argument("--start-date", default="2020-01-01")
     parser.add_argument("--end-date", default=None)
+    parser.add_argument(
+        "--objective-name",
+        default="train_sharpe",
+        choices=["train_sharpe", "train_annual_return", "train_total_reward", "train_calmar"],
+        help="Objective function computed from finlab report on train window.",
+    )
     parser.add_argument("--n-trials", type=int, default=1000, help="Number of optimization trials.")
     parser.add_argument("--workers", type=int, default=1, help="Parallel process workers.")
     parser.add_argument("--seed", type=int, default=42)
@@ -493,6 +523,7 @@ def _run_bayesian_worker(worker_payload, storage_spec, study_name: str, n_trials
         config_path=worker_payload["config_path"],
         start_date=worker_payload["start_date"],
         end_date=worker_payload["end_date"],
+        objective_name=worker_payload.get("objective_name", "train_sharpe"),
         n_trials=n_trials,
         workers=1,
         seed=seed,
@@ -516,6 +547,7 @@ def main() -> None:
         config_path=args.config_path,
         start_date=args.start_date,
         end_date=args.end_date,
+        objective_name=args.objective_name,
         n_trials=args.n_trials,
         workers=args.workers,
         seed=args.seed,
