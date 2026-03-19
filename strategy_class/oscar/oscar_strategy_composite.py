@@ -270,7 +270,7 @@ class OscarCompositeStrategy:
             "SAR",
             acceleration=params.sar_params.acceleration,
             maximum=params.sar_params.maximum,
-            adjust_price=False,
+            adjust_price=True,
         ).reindex(index=close.index, columns=close.columns)
         self.sar_values = sar
 
@@ -333,7 +333,7 @@ class OscarCompositeStrategy:
             fastperiod=params.macd_params.fastperiod,
             slowperiod=params.macd_params.slowperiod,
             signalperiod=params.macd_params.signalperiod,
-            adjust_price=False,
+            adjust_price=True,
         )
 
         dif = dif.reindex(index=close.index, columns=close.columns)

@@ -153,7 +153,7 @@ class OscarAndOrStrategy:
             "SAR",
             acceleration=self.sar_params["acceleration"],
             maximum=self.sar_params["maximum"],
-            adjust_price=False,
+            adjust_price=True,
         ).reindex(index=close.index, columns=close.columns)
 
         self.sar_values = sar
@@ -183,7 +183,7 @@ class OscarAndOrStrategy:
             fastperiod=self.macd_params["fastperiod"],
             slowperiod=self.macd_params["slowperiod"],
             signalperiod=self.macd_params["signalperiod"],
-            adjust_price=False,
+            adjust_price=True,
         )
         dif = dif.reindex(index=close.index, columns=close.columns)
         dea = dea.reindex(index=close.index, columns=close.columns)
