@@ -28,13 +28,6 @@ import numpy as np
 from .oscar_strategy_composite_params import OscarCompositeParams
 from utils.config_loader import ConfigLoader
 
-
-class AdjustTWMarketInfo(TWMarket):
-    """Custom market class: trade at next bar open after signal generation."""
-
-    def get_trading_price(self, name, adj=True):
-        return self.get_price(name, adj=adj).shift(1)
-
 class OscarCompositeStrategy:
     """Oscar composite strategy with lazy run-time signal computation."""
 
@@ -78,7 +71,7 @@ class OscarCompositeStrategy:
         - 為了效率，市場數據將在第一次請求時載入並緩存在實例中，後續請求將直接使用緩存數據。
         '''
         if self._market_data_cache is None:
-            with data.universe(market="TSE"):
+            with data.universe(market="TSE_OTC"):
                 self._market_data_cache = {
                     "open": data.get("price:開盤價"),
                     "close": data.get("price:收盤價"),
@@ -141,7 +134,7 @@ class OscarCompositeStrategy:
 
         truncated_index = close.index[slice_pos:]
         return {
-            key: frame.loc[truncated_index]
+            key: frame.reindex(truncated_index)
             for key, frame in market_data.items()
         }
 
@@ -302,9 +295,9 @@ class OscarCompositeStrategy:
         )
         sar_event = sar_event_magnitude * sar_flip_bullish.astype(float)
 
-        sar_history_near = self._build_exponential_complement_history(
+        sar_history_near = self._build_decay(
             sar_near,
-            lookback=max(1, int(params.sar_history_lookback)),
+            lag_max=max(1, int(params.sar_history_lookback)),
             alpha=self._safe_positive(params.sar_history_decay_alpha, fallback=1.8, minimum=1.0001),
         )
 
@@ -369,9 +362,9 @@ class OscarCompositeStrategy:
         )
         macd_event = macd_event_magnitude * macd_cross_bullish.astype(float)
 
-        macd_history_near = self._build_exponential_complement_history(
+        macd_history_near = self._build_decay(
             macd_near,
-            lookback=max(1, int(params.macd_history_lookback)),
+            lag_max=max(1, int(params.macd_history_lookback)),
             alpha=self._safe_positive(params.macd_history_decay_alpha, fallback=1.8, minimum=1.0001),
         )
 
@@ -589,7 +582,6 @@ class OscarCompositeStrategy:
             position=final_position,
             resample=sim_resample,
             upload=False,
-            market=AdjustTWMarketInfo(),
             trade_at_price="open",
             fee_ratio=fee_ratio,
             tax_ratio=tax_ratio,

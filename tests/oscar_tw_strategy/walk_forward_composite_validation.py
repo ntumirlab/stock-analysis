@@ -29,10 +29,7 @@ import numpy as np
 import pandas as pd
 
 from finlab.backtest import sim
-from strategy_class.oscar.oscar_strategy_composite import (
-    AdjustTWMarketInfo,
-    OscarCompositeStrategy,
-)
+from strategy_class.oscar.oscar_strategy_composite import OscarCompositeStrategy
 from strategy_class.oscar.oscar_strategy_composite_params import OscarCompositeParams
 from tests.oscar_tw_strategy.bayesian_optimize_composite_params import (
     CompositeBayesianOptimizer,
@@ -190,7 +187,6 @@ def _simulate_test_window(
         position=final_position,
         resample="D",
         upload=False,
-        market=AdjustTWMarketInfo(),
         trade_at_price="open",
         fee_ratio=fee_ratio,
         tax_ratio=tax_ratio,
@@ -266,7 +262,6 @@ def _simulate_position_report(
         position=position,
         resample="D",
         upload=False,
-        market=AdjustTWMarketInfo(),
         trade_at_price="open",
         fee_ratio=fee_ratio,
         tax_ratio=tax_ratio,
