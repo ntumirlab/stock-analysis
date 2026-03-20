@@ -95,6 +95,7 @@ class SingleStockBayesianExecutor:
         preload_market_data: bool = True,
         allow_market_data_fetch: bool = True,
         seed: int = 42,
+        storage_url: Optional[str] = None,
         fee_ratio: float = 0.001425,
         tax_ratio: float = 0.003,
         volume_above_avg_ratio: float = 0.25,
@@ -108,6 +109,7 @@ class SingleStockBayesianExecutor:
         self.end_date = end_date
         self.n_trials = n_trials
         self.seed = seed
+        self.storage_url = storage_url
         self.fee_ratio = fee_ratio
         self.tax_ratio = tax_ratio
         self.volume_above_avg_ratio = volume_above_avg_ratio
@@ -177,6 +179,7 @@ class SingleStockBayesianExecutor:
             and "macd_proximity_weight" in sig_params
             and "macd_event_weight" in sig_params
         )
+        self._supports_preprocess_window = "preprocess_start_date" in sig_params
 
         self.trading_days = None
         if self.market_data is not None:
@@ -341,6 +344,8 @@ class SingleStockBayesianExecutor:
             shared_kwargs["volume_above_avg_ratio"] = self.volume_above_avg_ratio
         if self._supports_new_high_override:
             shared_kwargs["new_high_ratio_120"] = self.new_high_ratio_120
+        if self._supports_preprocess_window:
+            shared_kwargs["preprocess_start_date"] = self.start_date
 
         if self._supports_new_lag_params:
             shared_kwargs["sar_signal_lag_min"] = params["sar_signal_lag_min"]
@@ -847,8 +852,14 @@ class SingleStockBayesianExecutor:
         )
 
     def _resolve_storage_url(self) -> str:
-        """Always use PostgreSQL storage for consistent multi-worker behavior."""
-        return DEFAULT_OPTUNA_POSTGRES_URL
+        if self.storage_url:
+            return self.storage_url
+
+        env_storage_url = os.getenv("OPTUNA_STORAGE_URL")
+        if env_storage_url:
+            return env_storage_url
+
+        return f"sqlite:///{(self.study_dir / 'optuna_study.db').as_posix()}"
 
     def optimize(self) -> Dict:
         storage_url = self._resolve_storage_url()
@@ -856,8 +867,14 @@ class SingleStockBayesianExecutor:
             f"oscar_bayes_{self.stock_id}_{self.start_date}_{self.end_date or 'latest'}"
         )
 
-        logger.info("Optuna storage backend: postgresql")
+        logger.info("Optuna storage backend: %s", storage_url.split(":", 1)[0])
         logger.info("Optuna storage URL: %s", storage_url)
+
+        if storage_url.startswith("sqlite") and self.process_workers > 1:
+            raise ValueError(
+                "SQLite storage does not support the requested multi-process Optuna setup. "
+                "Use --storage_url with PostgreSQL/MySQL or set --process_workers 1."
+            )
 
         # Parent process fetches market data once and shares it via local pickle across worker processes.
         # Use per-run file to avoid reading stale/corrupted cache from previous runs.
@@ -1053,6 +1070,12 @@ def build_cli_parser(
         help="市場資料 pickle 路徑（可重用，避免重抓）",
     )
     parser.add_argument(
+        "--storage_url",
+        type=str,
+        default=None,
+        help="Optuna storage URL（未提供時優先讀取 OPTUNA_STORAGE_URL，否則使用本地 SQLite）",
+    )
+    parser.add_argument(
         "--objective",
         type=str,
         default="total_reward_amount",
@@ -1102,6 +1125,7 @@ def run_cli(
         process_workers=args.process_workers,
         market_data_pickle_path=args.market_data_pickle,
         seed=args.seed,
+        storage_url=args.storage_url,
         fee_ratio=args.fee_ratio,
         tax_ratio=args.tax_ratio,
         volume_above_avg_ratio=args.volume_ratio,
@@ -1140,6 +1164,7 @@ if __name__ == "__main__":
         process_workers=args.process_workers,
         market_data_pickle_path=args.market_data_pickle,
         seed=args.seed,
+        storage_url=args.storage_url,
         fee_ratio=args.fee_ratio,
         tax_ratio=args.tax_ratio,
         volume_above_avg_ratio=args.volume_ratio,

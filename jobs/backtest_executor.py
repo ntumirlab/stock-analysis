@@ -63,7 +63,7 @@ class BacktestExecutor:
         elif self.strategy_class_name == 'RogerTWStrategyMonthly':
             from strategy_class.roger_tw_strategy_monthly import RogerTWStrategyMonthly as strategy_class
         elif self.strategy_class_name == 'OscarAndOrStrategy':
-            from strategy_class import OscarAndOrStrategy as strategy_class
+            from strategy_class.oscar.oscar_strategy_andor import OscarAndOrStrategy as strategy_class
         elif self.strategy_class_name == 'OscarCompositeStrategy':
             from strategy_class import OscarCompositeStrategy as strategy_class
         else:
