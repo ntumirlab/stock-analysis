@@ -4,12 +4,14 @@
 # 每天 20:30 - 抓取當日持股和帳戶資訊
 30 20 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.scheduler --user_name=junting --broker_name=shioaji >> /app/logs/fetch.log 2>&1
 
-# 每天 22:00 - 執行回測
-0 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyACE >> /app/logs/backtest.log 2>&1
-5 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG >> /app/logs/backtest.log 2>&1
+# 每天 21:55 - 執行回測
+55 21 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyACE >> /app/logs/backtest.log 2>&1
+0 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG >> /app/logs/backtest.log 2>&1
+5 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFGObserve >> /app/logs/backtest.log 2>&1
 10 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyNotStartA >> /app/logs/backtest.log 2>&1
 15 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyNotStartB >> /app/logs/backtest.log 2>&1
 20 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=PeterWuStrategy >> /app/logs/backtest.log 2>&1
+
 25 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=RogerTWStrategyWeekly >> /app/logs/backtest.log 2>&1
 30 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=RogerTWStrategyMonthly >> /app/logs/backtest.log 2>&1
 35 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=OscarCompositeStrategy >> /app/logs/backtest.log 2>&1
