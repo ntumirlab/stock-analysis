@@ -17,6 +17,8 @@ dependencies:
   - lxml
   - pip
   - pip:
+      - html5lib
+      - beautifulsoup4
       - finlab==1.3.0
       - shioaji==1.2.5
       - fugle-trade==1.2.0
