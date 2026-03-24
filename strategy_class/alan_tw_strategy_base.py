@@ -132,6 +132,11 @@ class AlanTWStrategyBase:
                                        bias_60_range, bias_120_range, bias_240_range,
                                        new_high_days=120, new_high_pct=1.0, min_amount=None):
         """建立技術面條件"""
+        # Validate new_high_pct to avoid degenerate or unsafe signal behavior
+        if not (0 < new_high_pct <= 1.0):
+            raise ValueError(
+                f"new_high_pct must be in the range (0, 1.0], got {new_high_pct!r}"
+            )
         if min_amount is None:
             min_amount = self.min_amount
 
