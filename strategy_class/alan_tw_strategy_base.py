@@ -389,7 +389,7 @@ class AlanTWStrategyBase:
         for config in configs:
             new_high_pct = config.get('new_high_pct', 1.0)
             new_high_str = f"創{config['new_high_days']}天新高"
-            if new_high_pct < 1.0:
+            if new_high_pct != 1.0:
                 new_high_str += f"*{new_high_pct:.0%}"
             print(f"  - 策略 {config['name']}: top_n={config['top_n']}, "
                   f"營益率 {(config['op_growth']-1)*100:.1f}%, "
