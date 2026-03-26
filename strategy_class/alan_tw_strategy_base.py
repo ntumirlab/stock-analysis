@@ -130,8 +130,13 @@ class AlanTWStrategyBase:
 
     def _build_technical_buy_condition(self, bias_5_range, bias_10_range, bias_20_range,
                                        bias_60_range, bias_120_range, bias_240_range,
-                                       new_high_days=120, min_amount=None):
+                                       new_high_days=120, new_high_pct=1.0, min_amount=None):
         """建立技術面條件"""
+        # Validate new_high_pct to avoid degenerate or unsafe signal behavior
+        if not (0 < new_high_pct <= 1.0):
+            raise ValueError(
+                f"new_high_pct must be in the range (0, 1.0], got {new_high_pct!r}"
+            )
         if min_amount is None:
             min_amount = self.min_amount
 
@@ -208,9 +213,9 @@ class AlanTWStrategyBase:
 
         macd_dif_buy_condition = dif > dif.shift(1)
 
-        # 創新高
+        # 創新高 (支援百分比，如 0.95 代表 95% 新高)
         high_n = self.adj_close.rolling(window=new_high_days).max()
-        new_high_condition = self.adj_close >= high_n
+        new_high_condition = self.adj_close >= (high_n * new_high_pct)
 
         # 技術面綜合條件
         technical_buy_condition = (
@@ -260,6 +265,7 @@ class AlanTWStrategyBase:
                 - op_growth: 營益率成長門檻
                 - bias_ranges: 乖離率範圍 dict
                 - new_high_days: 創新高天數
+                - new_high_pct: 創新高百分比 (預設 1.0，即 100%)
 
         Returns:
             buy_signal: 買入訊號 DataFrame
@@ -272,7 +278,8 @@ class AlanTWStrategyBase:
             bias_60_range=config['bias_ranges']['bias_60'],
             bias_120_range=config['bias_ranges']['bias_120'],
             bias_240_range=config['bias_ranges']['bias_240'],
-            new_high_days=config['new_high_days']
+            new_high_days=config['new_high_days'],
+            new_high_pct=config.get('new_high_pct', 1.0)
         )
         fundamental_condition = self._build_fundamental_buy_condition(config['op_growth'])
 
@@ -380,9 +387,13 @@ class AlanTWStrategyBase:
         print("=" * 50)
         print(f"策略組合: {' | '.join([c['name'] for c in configs])}")
         for config in configs:
+            new_high_pct = config.get('new_high_pct', 1.0)
+            new_high_str = f"創{config['new_high_days']}天新高"
+            if new_high_pct != 1.0:
+                new_high_str += f"*{new_high_pct:.0%}"
             print(f"  - 策略 {config['name']}: top_n={config['top_n']}, "
                   f"營益率 {(config['op_growth']-1)*100:.1f}%, "
-                  f"創{config['new_high_days']}天新高")
+                  f"{new_high_str}")
         print("=" * 50)
 
     def get_report(self):
