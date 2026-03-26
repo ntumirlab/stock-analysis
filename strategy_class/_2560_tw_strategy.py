@@ -10,6 +10,7 @@ from finlab.backtest import sim
 from time import perf_counter
 from utils.config_loader import ConfigLoader
 
+
 class _2560TWStrategy:
     """
     2560 均線波段策略
@@ -21,12 +22,12 @@ class _2560TWStrategy:
         base_position:  基礎持倉訊號
     """
 
-    _MARKET_DATA_CACHE = None
+    _MARKET_DATA_CACHE: dict = {}
 
     def __init__(
         self,
-        config_path="config.yaml",
-        market_data=None,
+        config_path: str = "config.yaml",
+        market_data: dict = None,
         ma_short: int = 5,
         ma_mid: int = 25,
         ma_long: int = 60,
@@ -36,7 +37,7 @@ class _2560TWStrategy:
         ma5_slope_tolerance: float = 0.97,
         pullback_ma25_tolerance: float = 0.03,
         pullback_volume_ratio: float = 0.8,
-        doji_threshold: float = 0.01,
+        doji_threshold: float = 0.025,
         deviation_exit_threshold: float = 0.15,
         kdj_j_overbought: float = 100.0,
         kdj_j_single_day_turn: bool = True,
@@ -48,8 +49,13 @@ class _2560TWStrategy:
         tech_stop_volume_ratio: float = 1.5,
         kdj_params: dict = None,
         macd_params: dict = None,
-        kdj_golden_cross_window: int = 3,
-        min_avg_volume_30: float = 1_000_000,
+        kdj_golden_cross_window: int = 2,       # 縮短金叉有效窗口
+        min_avg_volume_30: float = 500.0,       # 改為張數單位（500張）
+        enable_low_volume_signal: bool = False, # 縮量黑馬開關
+        low_vol_ratio_threshold: float = 1.05,  # 5均量/60均量貼近比例
+        low_vol_lookback: int = 20,             # 地量偵測窗口
+        enable_market_filter: bool = True,      # 大盤濾網開關
+        market_ma_period: int = 60,
         preprocess_start_date: str = None,
         preprocess_lookback_days: int = 252,
         enable_profiling: bool = False,
@@ -85,6 +91,11 @@ class _2560TWStrategy:
         self.macd_params              = macd_params or {"fastperiod": 12, "slowperiod": 26, "signalperiod": 9}
         self.kdj_golden_cross_window  = int(cfg.get("kdj_golden_cross_window", kdj_golden_cross_window))
         self.min_avg_volume_30        = float(cfg.get("min_avg_volume_30", min_avg_volume_30))
+        self.enable_low_volume_signal = bool(cfg.get("enable_low_volume_signal", enable_low_volume_signal))
+        self.low_vol_ratio_threshold  = float(cfg.get("low_vol_ratio_threshold", low_vol_ratio_threshold))
+        self.low_vol_lookback         = int(cfg.get("low_vol_lookback", low_vol_lookback))
+        self.enable_market_filter     = bool(cfg.get("enable_market_filter", enable_market_filter))
+        self.market_ma_period         = int(cfg.get("market_ma_period", market_ma_period))
         self.preprocess_start_date    = preprocess_start_date or cfg.get("preprocess_start_date")
         self.preprocess_lookback_days = max(0, int(cfg.get("preprocess_lookback_days", preprocess_lookback_days)))
         self.sim_fast_mode_default    = bool(cfg.get("sim_fast_mode", sim_fast_mode_default))
@@ -111,32 +122,33 @@ class _2560TWStrategy:
         self.base_position = self.buy_signal.hold_until(self.sell_signal)
         self._record_profile("init_total_sec", init_t0)
 
-    # =========================================================================
-    # 數據載入
-    # =========================================================================
-
     @staticmethod
-    def load_market_data() -> dict:
-        if _2560TWStrategy._MARKET_DATA_CACHE is not None:
-            return _2560TWStrategy._MARKET_DATA_CACHE
+    def load_market_data(cache_key: str = "default") -> dict:
+        cache = _2560TWStrategy._MARKET_DATA_CACHE
+        if cache_key in cache:
+            return cache[cache_key]
 
         with data.universe(market="TSE_OTC"):
             loaded = {
                 "open":   data.get("price:開盤價"),
                 "close":  data.get("price:收盤價"),
                 "high":   data.get("price:最高價"),
-                "volume": data.get("price:成交股數"),
+                "volume": data.get("price:成交股數") / 1000,
             }
 
-        _2560TWStrategy._MARKET_DATA_CACHE = loaded
+        cache[cache_key] = loaded
         return loaded
 
     def _load_data(self) -> dict:
-        return self.load_market_data()
+        key = self.preprocess_start_date or "default"
+        return self.load_market_data(cache_key=key)
 
     @classmethod
-    def clear_cache(cls):
-        cls._MARKET_DATA_CACHE = None
+    def clear_cache(cls, cache_key: str = None):
+        if cache_key:
+            cls._MARKET_DATA_CACHE.pop(cache_key, None)
+        else:
+            cls._MARKET_DATA_CACHE.clear()
 
     # =========================================================================
     # 輔助工具
@@ -169,15 +181,20 @@ class _2560TWStrategy:
         close  = market_data["close"]
         volume = market_data["volume"]
 
+        # 價格均線
         self.ma5   = close.average(self.ma_short)
         self.ma25  = close.average(self.ma_mid)
         self.ma60  = close.average(self.ma_long)
         self.ma120 = close.average(self.ma_extra_long)
 
+        # 成交量均線
+        self.vol_ma5  = volume.average(self.ma_short)
+        self.vol_ma60 = volume.average(self.ma_long)
+
         self.avg_volume_30 = volume.average(30)
         self.avg_volume_60 = volume.average(60)
 
-        # KDJ / MACD：收盤後計算即可使用
+        # KDJ / MACD
         self.kdj_k, self.kdj_d = self._calculate_kdj(close)
         self.kdj_j = 3.0 * self.kdj_k - 2.0 * self.kdj_d
 
@@ -225,29 +242,46 @@ class _2560TWStrategy:
         open_  = self.market_data["open"]
         volume = self.market_data["volume"]
 
-        # 前提條件：25MA 向上傾斜 & 5MA > 60MA
+        # 前提條件：25MA 向上 & 5日均量 > 60日均量（均量金叉）
         prerequisites = (
             self.ma25.rise(self.ma25_slope_lookback)
-            & (self.ma5 > self.ma60)
+            & (self.vol_ma5 > self.vol_ma60)
         )
 
         # 突破式進場：收盤站上 MA25 的第一天
-        breakout_entry = (close > self.ma25).is_entry()
+        breakout_entry = (
+            (close > self.ma25)
+            & (volume > self.vol_ma60)
+        ).is_entry()
 
         # 回踩式進場：接近 MA25（±tolerance）+ 縮量 + 星線
-        close_to_ma25  = (close - self.ma25).abs() / self.ma25.replace(0, np.nan) < self.pullback_ma25_tolerance
-        low_volume     = volume < (self.avg_volume_60 * self.pullback_volume_ratio)
-        doji_candle    = (close - open_).abs() / close.replace(0, np.nan) < self.doji_threshold
+        close_to_ma25 = (
+            (close - self.ma25).abs() / self.ma25.replace(0, np.nan)
+            < self.pullback_ma25_tolerance
+        )
+        low_volume    = volume < (self.avg_volume_60 * self.pullback_volume_ratio)
+        doji_body     = (close - open_).abs() / close.replace(0, np.nan)
+        doji_candle   = doji_body < self.doji_threshold
         pullback_entry = close_to_ma25 & low_volume & doji_candle
 
-        entry_signal = breakout_entry | pullback_entry
+        # 縮量黑馬條件：5 均量貼近 60 均量 + 近期地量
+        if self.enable_low_volume_signal:
+            vol_ratio         = self.vol_ma5 / self.vol_ma60.replace(0, np.nan)
+            vol_near_cross    = (vol_ratio >= 1.0) & (vol_ratio < self.low_vol_ratio_threshold)
+            vol_at_low        = (
+                volume <= volume.rolling(self.low_vol_lookback, min_periods=5).min() * 1.05
+            )
+            low_vol_signal    = vol_near_cross & vol_at_low
+            entry_signal      = breakout_entry | pullback_entry | low_vol_signal
+        else:
+            entry_signal = breakout_entry | pullback_entry
 
         # Filter 1：5MA 不急速下降
         ma5_not_plunging = (
             self.ma5 >= self.ma5.shift(self.ma5_slope_lookback) * self.ma5_slope_tolerance
         )
 
-        # Filter 2：KDJ 金叉（窗口內至少發生一次）
+        # Filter 2：KDJ 金叉（縮短窗口至 kdj_golden_cross_window 天）
         kdj_golden_cross = (
             (self.kdj_k > self.kdj_d)
             .is_entry()
@@ -260,6 +294,12 @@ class _2560TWStrategy:
         # 流動性過濾
         sufficient_liquidity = self.avg_volume_30 > self.min_avg_volume_30
 
+        # 大盤環境濾網：加權指數站上其 MA
+        if self.enable_market_filter:
+            market_filter = self._build_market_filter(close)
+        else:
+            market_filter = pd.DataFrame(True, index=close.index, columns=close.columns)
+
         buy_condition = (
             prerequisites
             & entry_signal
@@ -267,9 +307,32 @@ class _2560TWStrategy:
             & kdj_golden_cross
             & macd_momentum_positive
             & sufficient_liquidity
+            & market_filter
         )
 
         return buy_condition
+
+    def _build_market_filter(self, close: pd.DataFrame) -> pd.DataFrame:
+        """
+        大盤環境濾網：加權指數須站上 60 日均線
+        將大盤條件廣播至全部股票欄位。
+        """
+        try:
+            market_close = data.get("taiex_total_index:收盤指數")
+            market_ma    = market_close.average(self.market_ma_period)
+            market_above = (market_close > market_ma).iloc[:, 0]
+            # 廣播至所有股票欄位
+            market_filter = pd.DataFrame(
+                np.tile(market_above.reindex(close.index).fillna(True).values[:, None],
+                        (1, len(close.columns))),
+                index=close.index,
+                columns=close.columns,
+                dtype=bool,
+            )
+        except Exception:
+            # 取不到指數時不阻擋訊號
+            market_filter = pd.DataFrame(True, index=close.index, columns=close.columns)
+        return market_filter
 
     # =========================================================================
     # 賣出條件
@@ -283,7 +346,8 @@ class _2560TWStrategy:
 
         # 退出一：乖離過大
         exit_deviation = (
-            (close - self.ma25) / self.ma25.replace(0, np.nan) > self.deviation_exit_threshold
+            (close - self.ma25) / self.ma25.replace(0, np.nan)
+            > self.deviation_exit_threshold
         )
 
         # 退出二：KDJ 超買 / J 線從高位轉折
@@ -300,14 +364,14 @@ class _2560TWStrategy:
             )
         exit_kdj = j_overbought | j_turning_down
 
-        # 退出三：接近前高阻力位（但尚未突破）
+        # 退出三：接近前高阻力
         prior_resistance = high.shift(1).rolling(
             self.resistance_lookback, min_periods=self.resistance_lookback // 2
         ).max()
         _resist = prior_resistance.replace(0, np.nan)
         exit_resistance = (
             (close / _resist) >= (1 - self.resistance_tolerance)
-        ) & (close <= _resist)
+        )
 
         # 退出四：衝高失敗（近 10 日高點低於前 10 日高點，且收黑）
         recent_high      = high.rolling(10, min_periods=5).max()
@@ -326,9 +390,13 @@ class _2560TWStrategy:
             & (volume > self.avg_volume_60 * self.tech_stop_volume_ratio)
         )
 
-        # 退出七：時間停損（預設停用）
+        # 退出七：時間停損
         if self.time_stop_days > 0:
-            exit_time_stop = ~close.rise(self.time_stop_days)
+            # 持有期間若 N 天內最高收盤未超過進場均值則出場
+            exit_time_stop = (
+                close.rolling(self.time_stop_days, min_periods=self.time_stop_days).max()
+                <= close.shift(self.time_stop_days)
+            )
         else:
             exit_time_stop = pd.DataFrame(False, index=close.index, columns=close.columns)
 
@@ -391,15 +459,17 @@ class _2560TWStrategy:
     def get_report(self):
         return self.report if self.report is not None else "report物件為空，請先運行策略"
 
-
 if __name__ == "__main__":
     strategy = _2560TWStrategy(
+        # 核心均線參數
         ma_short=5,
         ma_mid=25,
         ma_long=60,
+        # 進場條件
         pullback_ma25_tolerance=0.03,
         pullback_volume_ratio=0.8,
-        doji_threshold=0.01,
+        doji_threshold=0.025,
+        # 退出條件
         deviation_exit_threshold=0.15,
         kdj_j_overbought=100.0,
         kdj_j_single_day_turn=True,
@@ -409,6 +479,10 @@ if __name__ == "__main__":
         stop_loss_pct=0.07,
         time_stop_days=0,
         tech_stop_volume_ratio=1.5,
+        # 其他功能
+        enable_low_volume_signal=False,  # 可設 True 開啟縮量黑馬訊號
+        enable_market_filter=True,       # 大盤環境濾網
     )
 
     report = strategy.run_strategy(start_date="2020-01-01")
+    print(report)
