@@ -25,10 +25,8 @@ from optuna.storages.journal import JournalFileBackend
 
 from strategy_class.oscar.oscar_strategy_composite import OscarCompositeStrategy
 from strategy_class.oscar.oscar_strategy_composite_params import OscarCompositeParams
-from tests.oscar_tw_strategy.utils.custom_report_metrics import (
-    compute_total_reward_amount_from_creturn,
-)
-from tests.oscar_tw_strategy.utils.objective_functions import build_objective
+from tests.oscar_tw_strategy.utils.objective_functions import ObjectiveName, build_objective
+from tests.oscar_tw_strategy.utils.trial_result import TrialResult
 
 MIN_OBJECTIVE_VALUE = -1e18
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,14 +49,13 @@ class CompositeBayesianOptimizer:
         workers: int = 1,
         seed: int = 42,
         output_dir: str = "assets/OscarTWStrategy/composite_bayesian_params",
-        initial_capital: float = 100_000.0,
         fee_ratio: float = 0.001425,
         tax_ratio: float = 0.003,
         market_data: dict | None = None,
         market_data_pickle_path: str | None = None,
         storage_url: str | None = None,
         allow_market_data_fetch: bool = True,
-        objective_name: str = "train_sharpe",
+        objective_name: ObjectiveName = ObjectiveName.SHARPE,
     ):
         self.config_path = config_path
         self.start_date = start_date
@@ -66,7 +63,6 @@ class CompositeBayesianOptimizer:
         self.n_trials = int(n_trials)
         self.workers = max(1, int(workers))
         self.seed = int(seed)
-        self.initial_capital = float(initial_capital)
         self.fee_ratio = float(fee_ratio)
         self.tax_ratio = float(tax_ratio)
         self.market_data_pickle_path = (
@@ -82,7 +78,7 @@ class CompositeBayesianOptimizer:
 
         self.market_data = market_data
         self.base_params = OscarCompositeStrategy(config_path=self.config_path)._load_params_from_config()
-        self.objective = build_objective(self.objective_name, initial_capital=self.initial_capital)
+        self.objective = build_objective(self.objective_name)
 
     def _load_market_data_once(self) -> dict:
         if self.market_data is not None:
@@ -242,9 +238,6 @@ class CompositeBayesianOptimizer:
 
         return OscarCompositeParams(**params_dict)
 
-    def _suggest_params(self, trial: optuna.Trial) -> OscarCompositeParams:
-        return self._build_trial_params(trial)
-
     def _flat_params_to_dataclass(self, flat_params: dict) -> OscarCompositeParams:
         base_params = asdict(self.base_params)
         weight_sar = float(flat_params["weight_sar"])
@@ -306,7 +299,7 @@ class CompositeBayesianOptimizer:
 
     def _objective(self, trial: optuna.Trial) -> float:
         try:
-            params = self._suggest_params(trial)
+            params = self._build_trial_params(trial)
 
             strategy = OscarCompositeStrategy(
                 config_path=self.config_path,
@@ -320,56 +313,27 @@ class CompositeBayesianOptimizer:
                 tax_ratio=self.tax_ratio,
             )
 
-            total_reward = compute_total_reward_amount_from_creturn(
-                creturn=getattr(report, "creturn", None),
-                initial_capital=self.initial_capital,
-                start_date=self.start_date,
-                end_date=self.end_date,
-            )
-
-            metrics = report.get_metrics()
-            sharpe_ratio = self._safe_float(metrics.get("ratio", {}).get("sharpeRatio", None), default=None)
-            annual_return = self._safe_float(metrics.get("profitability", {}).get("annualReturn", None), default=None)
-            max_drawdown = self._safe_float(metrics.get("risk", {}).get("maxDrawdown", None), default=None)
-
             objective_result = self.objective.evaluate(
                 report,
                 start_date=self.start_date,
                 end_date=self.end_date,
             )
-            objective_value = self._safe_float(objective_result.value, default=None)
 
-            trial.set_user_attr("objective", objective_result.name)
-            trial.set_user_attr("sharpe_ratio", sharpe_ratio)
-            trial.set_user_attr("annual_return", annual_return)
-            trial.set_user_attr("max_drawdown", max_drawdown)
+            result = TrialResult.from_report(report, objective_result, end_date=self.end_date)
+            result.apply_to_trial(trial)
 
-            if objective_value is None:
-                trial.set_user_attr("trial_status", "invalid_objective_nan")
-                trial.set_user_attr("failure_reason", "objective_value is NaN/inf/None")
-                trial.set_user_attr("objective_value", MIN_OBJECTIVE_VALUE)
-                trial.set_user_attr("total_reward_amount", total_reward)
+            if result.trial_status != "ok":
                 logger.warning("Trial %s invalid objective (NaN/inf/None). params=%s", trial.number, trial.params)
                 return MIN_OBJECTIVE_VALUE
 
-            trial.set_user_attr("trial_status", "ok")
-            trial.set_user_attr("failure_reason", None)
-            trial.set_user_attr("objective_value", objective_value)
-            trial.set_user_attr("total_reward_amount", total_reward)
-
-            return objective_value
+            return result.objective_value
         except Exception as exc:
-            trial.set_user_attr("trial_status", "exception")
-            trial.set_user_attr("failure_reason", f"{type(exc).__name__}: {exc}")
-            trial.set_user_attr("objective_value", MIN_OBJECTIVE_VALUE)
-            trial.set_user_attr("total_reward_amount", None)
+            TrialResult.from_exception(exc).apply_to_trial(trial)
             logger.exception("Trial %s failed. params=%s", trial.number, trial.params)
             raise
 
     def run(self) -> Path:
         study_name = f"oscar_composite_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        # Parent process loads market data exactly once via the strategy private loader,
-        # then materializes a shared pickle for worker-only reads.
         market_data = self._load_market_data_once()
         self._persist_market_data_pickle(market_data)
 
@@ -394,7 +358,6 @@ class CompositeBayesianOptimizer:
                 "end_date": self.end_date,
                 "objective_name": self.objective_name,
                 "output_dir": str(self.study_dir.parent),
-                "initial_capital": self.initial_capital,
                 "fee_ratio": self.fee_ratio,
                 "tax_ratio": self.tax_ratio,
                 "market_data_pickle_path": str(self.market_data_pickle_path),
@@ -451,14 +414,13 @@ class CompositeBayesianOptimizer:
                 "objective_name": self.objective_name,
                 "n_trials": self.n_trials,
                 "workers": self.workers,
-                "initial_capital": self.initial_capital,
                 "fee_ratio": self.fee_ratio,
                 "tax_ratio": self.tax_ratio,
             },
             "best_params_dataclass_view": asdict(self._flat_params_to_dataclass(best_params)),
         }
 
-        with open(self.study_dir / "best_params.json", "w", encoding="utf-8") as f:
+        with open(self.study_dir / f"best_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "w", encoding="utf-8") as f:
             json.dump(best_report, f, ensure_ascii=False, indent=2)
 
         rows = []
@@ -481,10 +443,6 @@ class CompositeBayesianOptimizer:
             )
 
         pd.DataFrame(rows).to_csv(self.study_dir / "trials.csv", index=False, encoding="utf-8-sig")
-        try:
-            pd.DataFrame(rows).to_html(self.study_dir / "trials.html", index=False)
-        except Exception:
-            pass
 
         return self.study_dir
 
@@ -496,15 +454,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-date", default=None)
     parser.add_argument(
         "--objective-name",
-        default="train_sharpe",
-        choices=["train_sharpe", "train_annual_return", "train_total_reward", "train_calmar"],
+        default=ObjectiveName.SHARPE.value,
+        choices=[e.value for e in ObjectiveName],
         help="Objective function computed from finlab report on train window.",
     )
     parser.add_argument("--n-trials", type=int, default=1000, help="Number of optimization trials.")
     parser.add_argument("--workers", type=int, default=1, help="Parallel process workers.")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-dir", default="assets/OscarTWStrategy/composite_bayesian_params")
-    parser.add_argument("--initial-capital", type=float, default=100_000.0)
+    parser.add_argument("--output-dir", default=f"assets/OscarCompositeStrategy/bayesian_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
     parser.add_argument(
         "--market-data-pickle-path",
         default=str(DEFAULT_MARKET_DATA_PICKLE),
@@ -523,12 +481,11 @@ def _run_bayesian_worker(worker_payload, storage_spec, study_name: str, n_trials
         config_path=worker_payload["config_path"],
         start_date=worker_payload["start_date"],
         end_date=worker_payload["end_date"],
-        objective_name=worker_payload.get("objective_name", "train_sharpe"),
+        objective_name=ObjectiveName(worker_payload.get("objective_name", ObjectiveName.SHARPE.value)),
         n_trials=n_trials,
         workers=1,
         seed=seed,
         output_dir=worker_payload["output_dir"],
-        initial_capital=worker_payload["initial_capital"],
         fee_ratio=worker_payload["fee_ratio"],
         tax_ratio=worker_payload["tax_ratio"],
         market_data=None,
@@ -552,7 +509,6 @@ def main() -> None:
         workers=args.workers,
         seed=args.seed,
         output_dir=args.output_dir,
-        initial_capital=args.initial_capital,
         fee_ratio=0.001425,
         tax_ratio=0.003,
         market_data_pickle_path=args.market_data_pickle_path,
