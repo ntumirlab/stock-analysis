@@ -6,18 +6,9 @@
 import numpy as np
 import pandas as pd
 from finlab import data
-from finlab.markets.tw import TWMarket
 from finlab.backtest import sim
 from time import perf_counter
 from utils.config_loader import ConfigLoader
-
-
-class AdjustTWMarketInfo(TWMarket):
-    """訊號使用收盤後資料，對齊至下一交易日開盤成交。"""
-
-    def get_trading_price(self, name, adj=True):
-        return self.get_price("open", adj=adj).shift(1)
-
 
 class _2560TWStrategy:
     """
@@ -27,7 +18,7 @@ class _2560TWStrategy:
         report:         回測報告物件
         buy_signal:     買入訊號 (DataFrame[bool])
         sell_signal:    賣出訊號 (DataFrame[bool])
-        base_position:  基礎持倉訊號（已套用百分比停損）
+        base_position:  基礎持倉訊號
     """
 
     _MARKET_DATA_CACHE = None
@@ -109,7 +100,6 @@ class _2560TWStrategy:
         self._record_profile("scope_market_data_sec", scope_t0)
 
         self.market_data = market_data
-        self.trade_price = market_data["open"]
 
         indicator_t0 = perf_counter()
         self._precompute_indicators(market_data)
@@ -118,11 +108,7 @@ class _2560TWStrategy:
         self.buy_signal  = self._build_buy_condition()
         self.sell_signal = self._build_sell_condition()
 
-        _sl = self.stop_loss_pct if self.stop_loss_pct > 0 else -np.inf
-        self.base_position = self.buy_signal.hold_until(
-            self.sell_signal,
-            stop_loss=_sl,
-        )
+        self.base_position = self.buy_signal.hold_until(self.sell_signal)
         self._record_profile("init_total_sec", init_t0)
 
     # =========================================================================
@@ -191,6 +177,7 @@ class _2560TWStrategy:
         self.avg_volume_30 = volume.average(30)
         self.avg_volume_60 = volume.average(60)
 
+        # KDJ / MACD：收盤後計算即可使用
         self.kdj_k, self.kdj_d = self._calculate_kdj(close)
         self.kdj_j = 3.0 * self.kdj_k - 2.0 * self.kdj_d
 
@@ -244,10 +231,10 @@ class _2560TWStrategy:
             & (self.ma5 > self.ma60)
         )
 
-        # 突破式進場
+        # 突破式進場：收盤站上 MA25 的第一天
         breakout_entry = (close > self.ma25).is_entry()
 
-        # 回踩式進場：接近 MA25（±3%）+ 縮量 + 星線
+        # 回踩式進場：接近 MA25（±tolerance）+ 縮量 + 星線
         close_to_ma25  = (close - self.ma25).abs() / self.ma25.replace(0, np.nan) < self.pullback_ma25_tolerance
         low_volume     = volume < (self.avg_volume_60 * self.pullback_volume_ratio)
         doji_candle    = (close - open_).abs() / close.replace(0, np.nan) < self.doji_threshold
@@ -382,13 +369,16 @@ class _2560TWStrategy:
         ).fillna(0.0)
         self._record_profile("build_final_position_sec", run_t0)
 
+        _stop_loss = self.stop_loss_pct if self.stop_loss_pct > 0 else None
+
         self.report = sim(
             position=final_position,
             resample=sim_resample,
             upload=False,
-            market=AdjustTWMarketInfo(),
+            trade_at_price='open',
             fee_ratio=fee_ratio,
             tax_ratio=tax_ratio,
+            stop_loss=_stop_loss,
             fast_mode=(
                 self.sim_fast_mode_default if sim_fast_mode is None else bool(sim_fast_mode)
             ),
