@@ -53,9 +53,8 @@ class CompositeBayesianOptimizer:
         tax_ratio: float = 0.003,
         market_data: dict | None = None,
         market_data_pickle_path: str | None = None,
-        storage_url: str | None = None,
         allow_market_data_fetch: bool = True,
-        objective_name: ObjectiveName = ObjectiveName.SHARPE,
+        objective_name: ObjectiveName = ObjectiveName.ANNUAL_RETURN,
     ):
         self.config_path = config_path
         self.start_date = start_date
@@ -68,7 +67,6 @@ class CompositeBayesianOptimizer:
         self.market_data_pickle_path = (
             Path(market_data_pickle_path) if market_data_pickle_path else DEFAULT_MARKET_DATA_PICKLE
         )
-        self.storage_url = storage_url
         self.allow_market_data_fetch = bool(allow_market_data_fetch)
         self.objective_name = objective_name
 
@@ -104,25 +102,8 @@ class CompositeBayesianOptimizer:
             os.fsync(f.fileno())
         os.replace(tmp_path, self.market_data_pickle_path)
 
-    def _resolve_storage_spec(self) -> dict | None:
-        if self.storage_url:
-            return {"type": "url", "value": self.storage_url}
-        if self.workers > 1:
-            return {
-                "type": "journal",
-                "value": str(self.study_dir / "optuna_journal.log"),
-            }
-        return None
-
-    @staticmethod
-    def _build_storage(storage_spec: dict | None):
-        if storage_spec is None:
-            return None
-        if storage_spec["type"] == "url":
-            return storage_spec["value"]
-        if storage_spec["type"] == "journal":
-            return JournalStorage(JournalFileBackend(storage_spec["value"]))
-        raise ValueError(f"Unsupported storage spec: {storage_spec}")
+    def _build_storage(self):
+        return JournalStorage(JournalFileBackend(str(self.study_dir / "optuna_journal.log")))
 
     def _create_or_load_study(self, storage, study_name: str, seed: int):
         return optuna.create_study(
@@ -134,8 +115,8 @@ class CompositeBayesianOptimizer:
             load_if_exists=True,
         )
 
-    def _optimize_study(self, storage, study_name: str, n_trials: int, seed: int) -> None:
-        study = self._create_or_load_study(storage, study_name, seed)
+    def _optimize_study(self, study_name: str, n_trials: int, seed: int) -> None:
+        study = self._create_or_load_study(self._build_storage(), study_name, seed)
         study.optimize(self._objective, n_trials=n_trials, n_jobs=1, show_progress_bar=False)
 
     @staticmethod
@@ -337,8 +318,7 @@ class CompositeBayesianOptimizer:
         market_data = self._load_market_data_once()
         self._persist_market_data_pickle(market_data)
 
-        storage_spec = self._resolve_storage_spec()
-        storage = self._build_storage(storage_spec)
+        storage = self._build_storage()
         study = self._create_or_load_study(storage, study_name, self.seed)
 
         if self.workers <= 1:
@@ -371,7 +351,6 @@ class CompositeBayesianOptimizer:
                     target=_run_bayesian_worker,
                     args=(
                         worker_payload,
-                        storage_spec,
                         study_name,
                         worker_trials,
                         self.seed + worker_id,
@@ -389,7 +368,7 @@ class CompositeBayesianOptimizer:
             if failed:
                 raise RuntimeError("One or more bayesian worker processes failed.")
 
-            study = self._create_or_load_study(self._build_storage(storage_spec), study_name, self.seed)
+            study = self._create_or_load_study(self._build_storage(), study_name, self.seed)
 
         completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if not completed:
@@ -403,7 +382,7 @@ class CompositeBayesianOptimizer:
             ),
         )
         best_params = dict(best_trial.params)
-        best_report = {
+        self.best_report = {
             "best_value": best_trial.user_attrs.get("objective_value"),
             "best_params": best_params,
             "best_user_attrs": best_trial.user_attrs,
@@ -419,6 +398,7 @@ class CompositeBayesianOptimizer:
             },
             "best_params_dataclass_view": asdict(self._flat_params_to_dataclass(best_params)),
         }
+        best_report = self.best_report
 
         with open(self.study_dir / f"best_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "w", encoding="utf-8") as f:
             json.dump(best_report, f, ensure_ascii=False, indent=2)
@@ -454,7 +434,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-date", default=None)
     parser.add_argument(
         "--objective-name",
-        default=ObjectiveName.SHARPE.value,
+        default=ObjectiveName.ANNUAL_RETURN.value,
         choices=[e.value for e in ObjectiveName],
         help="Objective function computed from finlab report on train window.",
     )
@@ -468,20 +448,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_MARKET_DATA_PICKLE),
         help="Shared pickle path for market data. Parent writes once; workers read only.",
     )
-    parser.add_argument(
-        "--storage-url",
-        default=None,
-        help="Optional Optuna storage URL for robust parallel execution across processes/machines.",
-    )
     return parser
 
 
-def _run_bayesian_worker(worker_payload, storage_spec, study_name: str, n_trials: int, seed: int) -> None:
+def _run_bayesian_worker(worker_payload, study_name: str, n_trials: int, seed: int) -> None:
     executor = CompositeBayesianOptimizer(
         config_path=worker_payload["config_path"],
         start_date=worker_payload["start_date"],
         end_date=worker_payload["end_date"],
-        objective_name=ObjectiveName(worker_payload.get("objective_name", ObjectiveName.SHARPE.value)),
+        objective_name=ObjectiveName(worker_payload.get("objective_name", ObjectiveName.ANNUAL_RETURN.value)),
         n_trials=n_trials,
         workers=1,
         seed=seed,
@@ -490,11 +465,10 @@ def _run_bayesian_worker(worker_payload, storage_spec, study_name: str, n_trials
         tax_ratio=worker_payload["tax_ratio"],
         market_data=None,
         market_data_pickle_path=worker_payload["market_data_pickle_path"],
-        storage_url=None,
         allow_market_data_fetch=False,
     )
     executor._load_market_data_once()
-    executor._optimize_study(executor._build_storage(storage_spec), study_name, n_trials, seed)
+    executor._optimize_study(study_name, n_trials, seed)
 
 
 def main() -> None:
@@ -512,7 +486,6 @@ def main() -> None:
         fee_ratio=0.001425,
         tax_ratio=0.003,
         market_data_pickle_path=args.market_data_pickle_path,
-        storage_url=args.storage_url,
     )
     out = optimizer.run()
     print(f"Bayesian optimization completed. Outputs: {out}")
