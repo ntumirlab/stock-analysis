@@ -55,6 +55,7 @@ class CompositeBayesianOptimizer:
         market_data_pickle_path: str | None = None,
         allow_market_data_fetch: bool = True,
         objective_name: ObjectiveName = ObjectiveName.ANNUAL_RETURN,
+        study_dir: str | None = None,
     ):
         self.config_path = config_path
         self.start_date = start_date
@@ -70,8 +71,11 @@ class CompositeBayesianOptimizer:
         self.allow_market_data_fetch = bool(allow_market_data_fetch)
         self.objective_name = objective_name
 
-        run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.study_dir = Path(output_dir) / f"composite_{run_tag}"
+        if study_dir is not None:
+            self.study_dir = Path(study_dir)
+        else:
+            run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.study_dir = Path(output_dir) / f"composite_{run_tag}"
         self.study_dir.mkdir(parents=True, exist_ok=True)
 
         self.market_data = market_data
@@ -316,7 +320,8 @@ class CompositeBayesianOptimizer:
     def run(self) -> Path:
         study_name = f"oscar_composite_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         market_data = self._load_market_data_once()
-        self._persist_market_data_pickle(market_data)
+        if not self.market_data_pickle_path.exists():
+            self._persist_market_data_pickle(market_data)
 
         storage = self._build_storage()
         study = self._create_or_load_study(storage, study_name, self.seed)
@@ -337,7 +342,7 @@ class CompositeBayesianOptimizer:
                 "start_date": self.start_date,
                 "end_date": self.end_date,
                 "objective_name": self.objective_name,
-                "output_dir": str(self.study_dir.parent),
+                "study_dir": str(self.study_dir),
                 "fee_ratio": self.fee_ratio,
                 "tax_ratio": self.tax_ratio,
                 "market_data_pickle_path": str(self.market_data_pickle_path),
@@ -460,7 +465,7 @@ def _run_bayesian_worker(worker_payload, study_name: str, n_trials: int, seed: i
         n_trials=n_trials,
         workers=1,
         seed=seed,
-        output_dir=worker_payload["output_dir"],
+        study_dir=worker_payload["study_dir"],
         fee_ratio=worker_payload["fee_ratio"],
         tax_ratio=worker_payload["tax_ratio"],
         market_data=None,

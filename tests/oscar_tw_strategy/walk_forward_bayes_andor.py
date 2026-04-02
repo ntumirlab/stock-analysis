@@ -73,6 +73,7 @@ class WalkForwardAndOr:
         tax_ratio: float = 0.003,
         market_data_pickle_path: str | None = None,
         objective_name: ObjectiveName = ObjectiveName.ANNUAL_RETURN,
+        checkpoints: list[int] | None = None,
     ):
         self.config_path = config_path
         self.start_date = start_date
@@ -88,6 +89,7 @@ class WalkForwardAndOr:
             Path(market_data_pickle_path) if market_data_pickle_path else DEFAULT_MARKET_DATA_PICKLE
         )
         self.objective_name = objective_name
+        self.checkpoints = checkpoints
 
         run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir = Path(output_dir) / f"wf_andor_{run_tag}"
@@ -163,7 +165,7 @@ class WalkForwardAndOr:
             output_dir=str(window_output_dir),
             fee_ratio=self.fee_ratio,
             tax_ratio=self.tax_ratio,
-            market_data=self.market_data if self.workers <= 1 else None,
+            market_data=self.market_data,
             market_data_pickle_path=str(self.market_data_pickle_path),
             allow_market_data_fetch=False,
             objective_name=self.objective_name,
@@ -207,6 +209,78 @@ class WalkForwardAndOr:
         if len(base_position.index) == 0:
             raise ValueError(f"No trading days in OOS window [{start_str}, {end_str}].")
         return strategy._build_equal_weight_position(base_position.astype(bool))
+
+    # ------------------------------------------------------------------
+    # Checkpoint analysis
+    # ------------------------------------------------------------------
+
+    def _get_best_params_at_checkpoint(self, window_dir: Path, max_trials: int) -> dict | None:
+        """Return best params among the first max_trials completed trials in window_dir."""
+        csv_files = list(window_dir.glob("*/trials.csv"))
+        if not csv_files:
+            return None
+        df = pd.read_csv(csv_files[0])
+        completed = df[
+            (df["state"] == "TrialState.COMPLETE")
+            & (df["trial_status"] == "ok")
+            & (df["number"] < max_trials)
+        ].copy()
+        completed["objective_value"] = pd.to_numeric(completed["objective_value"], errors="coerce")
+        completed = completed.dropna(subset=["objective_value"])
+        if completed.empty:
+            return None
+        best_row = completed.loc[completed["objective_value"].idxmax()]
+        return json.loads(best_row["params"])
+
+    def _run_checkpoint_analysis(
+        self,
+        windows: list[tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]],
+        checkpoints: list[int],
+    ) -> None:
+        """For each checkpoint, build OOS positions using the best params at that trial count."""
+        for cp in checkpoints:
+            logger.info("Checkpoint analysis: max_trials=%d", cp)
+            oos_positions: list[pd.DataFrame] = []
+            skipped = []
+            for idx, (_, _, oos_start, oos_end) in enumerate(windows):
+                window_dir = self.output_dir / f"window_{idx:03d}"
+                best_params = self._get_best_params_at_checkpoint(window_dir, cp)
+                if best_params is None:
+                    logger.warning("Checkpoint %d: window %d has no completed trials, skipping.", cp, idx)
+                    skipped.append(idx)
+                    continue
+                try:
+                    oos_pos = self._get_oos_position(best_params, oos_start, oos_end)
+                    oos_positions.append(oos_pos)
+                except Exception as exc:
+                    logger.warning("Checkpoint %d: window %d OOS failed: %s", cp, idx, exc)
+                    skipped.append(idx)
+
+            if not oos_positions:
+                logger.warning("Checkpoint %d: no valid windows, skipping report.", cp)
+                continue
+
+            if skipped:
+                logger.warning("Checkpoint %d: skipped windows %s", cp, skipped)
+
+            combined = pd.concat(oos_positions).sort_index()
+            combined = combined[~combined.index.duplicated(keep="first")]
+
+            cp_dir = self.output_dir / f"checkpoint_{cp:04d}"
+            cp_dir.mkdir(exist_ok=True)
+            combined.to_csv(cp_dir / "positions.csv", encoding="utf-8-sig")
+
+            report = sim(
+                position=combined,
+                resample="D",
+                upload=False,
+                trade_at_price="open",
+                fee_ratio=self.fee_ratio,
+                tax_ratio=self.tax_ratio,
+                position_limit=1.0,
+            )
+            report.display(save_report_path=str(cp_dir / "report.html"))
+            logger.info("Checkpoint %d report saved to %s", cp, cp_dir)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -287,6 +361,9 @@ class WalkForwardAndOr:
         report.display(save_report_path=str(report_path))
         logger.info("Walk-forward report saved to %s", report_path)
 
+        if self.checkpoints:
+            self._run_checkpoint_analysis(windows, self.checkpoints)
+
         return report
 
 
@@ -319,11 +396,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--market-data-pickle-path",
         default=str(DEFAULT_MARKET_DATA_PICKLE),
     )
+    parser.add_argument(
+        "--checkpoints",
+        default=None,
+        help="Comma-separated trial counts for checkpoint analysis, e.g. 50,100,150",
+    )
     return parser
 
 
 def main() -> None:
     args = _build_arg_parser().parse_args()
+    checkpoints = (
+        [int(x.strip()) for x in args.checkpoints.split(",") if x.strip()]
+        if args.checkpoints
+        else None
+    )
     wf = WalkForwardAndOr(
         config_path=args.config_path,
         start_date=args.start_date,
@@ -338,6 +425,7 @@ def main() -> None:
         tax_ratio=0.003,
         market_data_pickle_path=args.market_data_pickle_path,
         objective_name=ObjectiveName(args.objective_name),
+        checkpoints=checkpoints,
     )
     report = wf.run()
     print(f"Walk-forward AndOr complete. Output dir: {wf.output_dir}")

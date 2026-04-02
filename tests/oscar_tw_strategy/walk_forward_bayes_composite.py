@@ -164,7 +164,7 @@ class WalkForwardComposite:
             output_dir=str(window_output_dir),
             fee_ratio=self.fee_ratio,
             tax_ratio=self.tax_ratio,
-            market_data=self.market_data if self.workers <= 1 else None,
+            market_data=self.market_data,
             market_data_pickle_path=str(self.market_data_pickle_path),
             allow_market_data_fetch=False,
             objective_name=self.objective_name,
