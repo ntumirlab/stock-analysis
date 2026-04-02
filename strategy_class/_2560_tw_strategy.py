@@ -13,6 +13,7 @@ import pandas as pd
 from finlab import data
 from finlab.backtest import sim
 
+
 class _2560TWStrategy:
     """
     2560 均線波段策略
@@ -27,6 +28,7 @@ class _2560TWStrategy:
         self,
         ma25_slope_lookback: int = 3,       # MA25 向上判斷回溯天數
         pullback_tolerance: float = 0.02,   # 回踩容差 ±2%
+        small_candle_threshold: float = 0.02,  # 小星線：當日漲跌幅 < 2%
         deviation_threshold: float = 0.15,  # 退出觸發一：乖離門檻 15%
         surge_lookback: int = 5,            # 退出觸發三：漲幅計算天數
         surge_pct: float = 0.08,            # 退出觸發三：漲幅門檻 8%
@@ -34,28 +36,30 @@ class _2560TWStrategy:
         stop_loss_pct: float = 0.07,        # 百分比停損 7%（5–8% 中間值）
         take_profit_pct: float = 0.125,     # 停利 12.5%（10–15% 中間值）
     ):
-        self.ma25_slope_lookback  = ma25_slope_lookback
-        self.pullback_tolerance   = pullback_tolerance
-        self.deviation_threshold  = deviation_threshold
-        self.surge_lookback       = surge_lookback
-        self.surge_pct            = surge_pct
-        self.high_lookback        = high_lookback
-        self.stop_loss_pct        = stop_loss_pct
-        self.take_profit_pct      = take_profit_pct
+        self.ma25_slope_lookback    = ma25_slope_lookback
+        self.pullback_tolerance     = pullback_tolerance
+        self.small_candle_threshold = small_candle_threshold
+        self.deviation_threshold    = deviation_threshold
+        self.surge_lookback         = surge_lookback
+        self.surge_pct              = surge_pct
+        self.high_lookback          = high_lookback
+        self.stop_loss_pct          = stop_loss_pct
+        self.take_profit_pct        = take_profit_pct
 
         self.report = None
 
         market_data = self._load_data()
         self._compute_indicators(market_data)
 
-        self.buy_signal  = self._build_buy_signal()
-        self.sell_signal = self._build_sell_signal()
+        self.buy_signal    = self._build_buy_signal()
+        self.sell_signal   = self._build_sell_signal()
         self.base_position = self.buy_signal.hold_until(self.sell_signal)
 
     def _load_data(self) -> dict:
         with data.universe(market="TSE_OTC"):
             market_data = {
                 "close":  data.get("price:收盤價"),
+                "open":   data.get("price:開盤價"),   # 新增：小星線計算需要
                 "high":   data.get("price:最高價"),
                 "volume": data.get("price:成交股數") / 1000,  # 換算為張
             }
@@ -72,6 +76,7 @@ class _2560TWStrategy:
 
     def _build_buy_signal(self) -> pd.DataFrame:
         close  = self.market_data["close"]
+        open_  = self.market_data["open"]
         volume = self.market_data["volume"]
 
         # ── 前提條件（兩者必須同時成立）──────────────────────────────────────
@@ -84,15 +89,35 @@ class _2560TWStrategy:
         prerequisites = ma25_rising & vol_filter
 
         # ── 進場觸發（二選一）────────────────────────────────────────────────
-        # A. 突破式進場：收盤站上 MA25 且當日成交量 > Vol_MA60（放量突破）
+        # A. 突破式進場：收盤站上 MA25 且當日成交量 > Vol_MA60
         breakout_entry = (
-            (close > self.ma25) & (volume > self.vol_ma60)
-        ).is_entry()
+            (close > self.ma25)
+            & (close.shift(1) <= self.ma25.shift(1))  # 昨天還在 MA25 之下
+            & (volume > self.vol_ma60)
+        ).fillna(False)
 
-        # B. 回踩式進場：價格回踩至 MA25 ±2%，且成交量 < Vol_MA60（縮量）
-        near_ma25      = (close - self.ma25).abs() / self.ma25.replace(0, np.nan) < self.pullback_tolerance
-        low_volume     = volume < self.vol_ma60
-        pullback_entry = (near_ma25 & low_volume).is_entry()
+        # B. 回踩式進場：
+        #    - 近 5 天內曾在 MA25 之上（從上方回踩）
+        #    - 價格回踩至 MA25 ±2%
+        #    - 成交量縮量（< Vol_MA60）
+        #    - 小星線止跌確認：當日漲跌幅 < small_candle_threshold
+        recently_above = (
+            (close.shift(1) > self.ma25.shift(1))
+            .rolling(5, min_periods=1)
+            .max()
+            .astype(bool)
+        )
+        near_ma25 = (
+            recently_above
+            & ((close - self.ma25).abs() / self.ma25.replace(0, np.nan) < self.pullback_tolerance)
+        )
+        low_volume = volume < self.vol_ma60
+
+        # 小星線：以收盤相對前日收盤的漲跌幅來衡量當日波動幅度
+        daily_change = (close - close.shift(1)).abs() / close.shift(1).replace(0, np.nan)
+        small_candle = daily_change < self.small_candle_threshold
+
+        pullback_entry = near_ma25 & low_volume & small_candle
 
         entry_signal = breakout_entry | pullback_entry
 
@@ -108,13 +133,15 @@ class _2560TWStrategy:
         )
 
         # 退出觸發二：資金動能轉弱（Vol_MA5 跌破 Vol_MA60）
-        exit_vol_cross = (self.vol_ma5 < self.vol_ma60).is_entry()
+        exit_vol_cross = self.vol_ma5 < self.vol_ma60
 
         # 退出觸發三：衝高失敗
         # 近 5 日漲幅 > 8%，但收盤未突破前 20 日最高點
-        surge = close / close.shift(self.surge_lookback).replace(0, np.nan) - 1
-        prior_high = high.shift(1).rolling(self.high_lookback, min_periods=self.high_lookback // 2).max()
-        exit_failed_surge = ((surge > self.surge_pct) & (close < prior_high)).is_entry()
+        surge      = close / close.shift(self.surge_lookback).replace(0, np.nan) - 1
+        prior_high = high.shift(1).rolling(
+            self.high_lookback, min_periods=self.high_lookback // 2
+        ).max()
+        exit_failed_surge = (surge > self.surge_pct) & (close < prior_high)
 
         # 技術停損：收盤跌破 MA25
         exit_tech_stop = close < self.ma25
@@ -164,10 +191,12 @@ class _2560TWStrategy:
             return "report 物件為空，請先運行策略"
         return self.report
 
+
 if __name__ == "__main__":
     strategy = _2560TWStrategy(
         ma25_slope_lookback=3,
         pullback_tolerance=0.02,
+        small_candle_threshold=0.02,
         deviation_threshold=0.15,
         surge_lookback=5,
         surge_pct=0.08,
