@@ -23,10 +23,8 @@ from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend
 
 from strategy_class.oscar.oscar_strategy_andor import OscarAndOrStrategy
-from tests.oscar_tw_strategy.utils.custom_report_metrics import (
-    compute_total_reward_amount_from_creturn,
-)
-from tests.oscar_tw_strategy.utils.objective_functions import build_objective
+from tests.oscar_tw_strategy.utils.objective_functions import ObjectiveName, build_objective
+from tests.oscar_tw_strategy.utils.trial_result import TrialResult
 
 MIN_OBJECTIVE_VALUE = -1e18
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -49,14 +47,13 @@ class AndOrBayesianOptimizer:
         workers: int = 1,
         seed: int = 42,
         output_dir: str = "assets/OscarTWStrategy/andor_bayesian_params",
-        initial_capital: float = 100_000.0,
         fee_ratio: float = 0.001425,
         tax_ratio: float = 0.003,
         market_data: dict | None = None,
         market_data_pickle_path: str | None = None,
-        storage_url: str | None = None,
         allow_market_data_fetch: bool = True,
-        objective_name: str = "train_sharpe",
+        objective_name: ObjectiveName = ObjectiveName.ANNUAL_RETURN,
+        study_dir: str | None = None,
     ):
         self.config_path = config_path
         self.start_date = start_date
@@ -64,22 +61,23 @@ class AndOrBayesianOptimizer:
         self.n_trials = int(n_trials)
         self.workers = max(1, int(workers))
         self.seed = int(seed)
-        self.initial_capital = float(initial_capital)
         self.fee_ratio = float(fee_ratio)
         self.tax_ratio = float(tax_ratio)
         self.market_data_pickle_path = (
             Path(market_data_pickle_path) if market_data_pickle_path else DEFAULT_MARKET_DATA_PICKLE
         )
-        self.storage_url = storage_url
         self.allow_market_data_fetch = bool(allow_market_data_fetch)
         self.objective_name = objective_name
 
-        run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.study_dir = Path(output_dir) / f"andor_{run_tag}"
+        if study_dir is not None:
+            self.study_dir = Path(study_dir)
+        else:
+            run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.study_dir = Path(output_dir) / f"andor_{run_tag}"
         self.study_dir.mkdir(parents=True, exist_ok=True)
 
         self.market_data = market_data
-        self.objective = build_objective(self.objective_name, initial_capital=self.initial_capital)
+        self.objective = build_objective(self.objective_name)
 
     def _load_market_data_once(self) -> dict:
         if self.market_data is not None:
@@ -104,25 +102,8 @@ class AndOrBayesianOptimizer:
             os.fsync(f.fileno())
         os.replace(tmp_path, self.market_data_pickle_path)
 
-    def _resolve_storage_spec(self) -> dict | None:
-        if self.storage_url:
-            return {"type": "url", "value": self.storage_url}
-        if self.workers > 1:
-            return {
-                "type": "journal",
-                "value": str(self.study_dir / "optuna_journal.log"),
-            }
-        return None
-
-    @staticmethod
-    def _build_storage(storage_spec: dict | None):
-        if storage_spec is None:
-            return None
-        if storage_spec["type"] == "url":
-            return storage_spec["value"]
-        if storage_spec["type"] == "journal":
-            return JournalStorage(JournalFileBackend(storage_spec["value"]))
-        raise ValueError(f"Unsupported storage spec: {storage_spec}")
+    def _build_storage(self):
+        return JournalStorage(JournalFileBackend(str(self.study_dir / "optuna_journal.log")))
 
     def _create_or_load_study(self, storage, study_name: str, seed: int):
         return optuna.create_study(
@@ -134,8 +115,8 @@ class AndOrBayesianOptimizer:
             load_if_exists=True,
         )
 
-    def _optimize_study(self, storage, study_name: str, n_trials: int, seed: int) -> None:
-        study = self._create_or_load_study(storage, study_name, seed)
+    def _optimize_study(self, study_name: str, n_trials: int, seed: int) -> None:
+        study = self._create_or_load_study(self._build_storage(), study_name, seed)
         study.optimize(self._objective, n_trials=n_trials, n_jobs=1, show_progress_bar=False)
 
     @staticmethod
@@ -189,75 +170,48 @@ class AndOrBayesianOptimizer:
         }
         return strategy_kwargs
 
-    def _suggest_run_kwargs(self, trial: optuna.Trial) -> dict:
+    def _suggest_run_kwargs(self) -> dict:
         return {
             "start_date": self.start_date,
             "fee_ratio": self.fee_ratio,
             "tax_ratio": self.tax_ratio,
             "sim_resample": "D",
-            "max_stocks": trial.suggest_categorical("max_stocks", [None, 5, 10, 20, 50]),
         }
 
     def _objective(self, trial: optuna.Trial) -> float:
         try:
             strategy_kwargs = self._suggest_strategy_kwargs(trial)
-            run_kwargs = self._suggest_run_kwargs(trial)
+            run_kwargs = self._suggest_run_kwargs()
 
             strategy = OscarAndOrStrategy(**strategy_kwargs)
             report = strategy.run_strategy(**run_kwargs)
-
-            total_reward = compute_total_reward_amount_from_creturn(
-                creturn=getattr(report, "creturn", None),
-                initial_capital=self.initial_capital,
-                start_date=self.start_date,
-                end_date=self.end_date,
-            )
-
-            metrics = report.get_metrics()
-            sharpe_ratio = self._safe_float(metrics.get("ratio", {}).get("sharpeRatio", None), default=None)
-            annual_return = self._safe_float(metrics.get("profitability", {}).get("annualReturn", None), default=None)
-            max_drawdown = self._safe_float(metrics.get("risk", {}).get("maxDrawdown", None), default=None)
 
             objective_result = self.objective.evaluate(
                 report,
                 start_date=self.start_date,
                 end_date=self.end_date,
             )
-            objective_value = self._safe_float(objective_result.value, default=None)
 
-            trial.set_user_attr("objective", objective_result.name)
-            trial.set_user_attr("sharpe_ratio", sharpe_ratio)
-            trial.set_user_attr("annual_return", annual_return)
-            trial.set_user_attr("max_drawdown", max_drawdown)
+            result = TrialResult.from_report(report, objective_result, end_date=self.end_date)
+            result.apply_to_trial(trial)
 
-            if objective_value is None:
-                trial.set_user_attr("trial_status", "invalid_objective_nan")
-                trial.set_user_attr("failure_reason", "objective_value is NaN/inf/None")
-                trial.set_user_attr("objective_value", MIN_OBJECTIVE_VALUE)
-                trial.set_user_attr("total_reward_amount", total_reward)
+            if result.trial_status != "ok":
                 logger.warning("Trial %s invalid objective (NaN/inf/None). params=%s", trial.number, trial.params)
                 return MIN_OBJECTIVE_VALUE
 
-            trial.set_user_attr("trial_status", "ok")
-            trial.set_user_attr("failure_reason", None)
-            trial.set_user_attr("objective_value", objective_value)
-            trial.set_user_attr("total_reward_amount", total_reward)
-            return objective_value
+            return result.objective_value
         except Exception as exc:
-            trial.set_user_attr("trial_status", "exception")
-            trial.set_user_attr("failure_reason", f"{type(exc).__name__}: {exc}")
-            trial.set_user_attr("objective_value", MIN_OBJECTIVE_VALUE)
-            trial.set_user_attr("total_reward_amount", None)
+            TrialResult.from_exception(exc).apply_to_trial(trial)
             logger.exception("Trial %s failed. params=%s", trial.number, trial.params)
             raise
 
     def run(self) -> Path:
         study_name = f"oscar_andor_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         market_data = self._load_market_data_once()
-        self._persist_market_data_pickle(market_data)
+        if not self.market_data_pickle_path.exists():
+            self._persist_market_data_pickle(market_data)
 
-        storage_spec = self._resolve_storage_spec()
-        storage = self._build_storage(storage_spec)
+        storage = self._build_storage()
         study = self._create_or_load_study(storage, study_name, self.seed)
 
         if self.workers <= 1:
@@ -276,8 +230,7 @@ class AndOrBayesianOptimizer:
                 "start_date": self.start_date,
                 "end_date": self.end_date,
                 "objective_name": self.objective_name,
-                "output_dir": str(self.study_dir.parent),
-                "initial_capital": self.initial_capital,
+                "study_dir": str(self.study_dir),
                 "fee_ratio": self.fee_ratio,
                 "tax_ratio": self.tax_ratio,
                 "market_data_pickle_path": str(self.market_data_pickle_path),
@@ -291,7 +244,6 @@ class AndOrBayesianOptimizer:
                     target=_run_bayesian_worker,
                     args=(
                         worker_payload,
-                        storage_spec,
                         study_name,
                         worker_trials,
                         self.seed + worker_id,
@@ -309,7 +261,7 @@ class AndOrBayesianOptimizer:
             if failed:
                 raise RuntimeError("One or more bayesian worker processes failed.")
 
-            study = self._create_or_load_study(self._build_storage(storage_spec), study_name, self.seed)
+            study = self._create_or_load_study(self._build_storage(), study_name, self.seed)
 
         completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if not completed:
@@ -323,7 +275,7 @@ class AndOrBayesianOptimizer:
             ),
         )
 
-        best_report = {
+        self.best_report = {
             "best_value": best_trial.user_attrs.get("objective_value"),
             "best_params": dict(best_trial.params),
             "best_user_attrs": best_trial.user_attrs,
@@ -334,14 +286,13 @@ class AndOrBayesianOptimizer:
                 "objective_name": self.objective_name,
                 "n_trials": self.n_trials,
                 "workers": self.workers,
-                "initial_capital": self.initial_capital,
                 "fee_ratio": self.fee_ratio,
                 "tax_ratio": self.tax_ratio,
             },
         }
 
         with open(self.study_dir / "best_params.json", "w", encoding="utf-8") as f:
-            json.dump(best_report, f, ensure_ascii=False, indent=2)
+            json.dump(self.best_report, f, ensure_ascii=False, indent=2)
 
         rows = []
         for t in study.trials:
@@ -352,9 +303,8 @@ class AndOrBayesianOptimizer:
                     "value": t.value,
                     "trial_status": t.user_attrs.get("trial_status"),
                     "failure_reason": t.user_attrs.get("failure_reason"),
+                    "objective_name": t.user_attrs.get("objective_name"),
                     "objective_value": t.user_attrs.get("objective_value"),
-                    "total_reward_amount": t.user_attrs.get("total_reward_amount"),
-                    "objective": t.user_attrs.get("objective"),
                     "sharpe_ratio": t.user_attrs.get("sharpe_ratio"),
                     "annual_return": t.user_attrs.get("annual_return"),
                     "max_drawdown": t.user_attrs.get("max_drawdown"),
@@ -363,10 +313,6 @@ class AndOrBayesianOptimizer:
             )
 
         pd.DataFrame(rows).to_csv(self.study_dir / "trials.csv", index=False, encoding="utf-8-sig")
-        try:
-            pd.DataFrame(rows).to_html(self.study_dir / "trials.html", index=False)
-        except Exception:
-            pass
 
         return self.study_dir
 
@@ -378,48 +324,41 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-date", default=None)
     parser.add_argument(
         "--objective-name",
-        default="train_sharpe",
-        choices=["train_sharpe", "train_annual_return", "train_total_reward", "train_calmar"],
+        default=ObjectiveName.ANNUAL_RETURN.value,
+        choices=[e.value for e in ObjectiveName],
         help="Objective function computed from finlab report on train window.",
     )
     parser.add_argument("--n-trials", type=int, default=1000, help="Number of optimization trials.")
     parser.add_argument("--workers", type=int, default=1, help="Parallel process workers.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="assets/OscarTWStrategy/andor_bayesian_params")
-    parser.add_argument("--initial-capital", type=float, default=100_000.0)
+
     parser.add_argument(
         "--market-data-pickle-path",
         default=str(DEFAULT_MARKET_DATA_PICKLE),
         help="Shared pickle path for market data. Parent writes once; workers read only.",
     )
-    parser.add_argument(
-        "--storage-url",
-        default=None,
-        help="Optional Optuna storage URL for robust parallel execution across processes/machines.",
-    )
     return parser
 
 
-def _run_bayesian_worker(worker_payload, storage_spec, study_name: str, n_trials: int, seed: int) -> None:
+def _run_bayesian_worker(worker_payload, study_name: str, n_trials: int, seed: int) -> None:
     executor = AndOrBayesianOptimizer(
         config_path=worker_payload["config_path"],
         start_date=worker_payload["start_date"],
         end_date=worker_payload["end_date"],
-        objective_name=worker_payload.get("objective_name", "train_sharpe"),
+        objective_name=ObjectiveName(worker_payload.get("objective_name", ObjectiveName.ANNUAL_RETURN.value)),
         n_trials=n_trials,
         workers=1,
         seed=seed,
-        output_dir=worker_payload["output_dir"],
-        initial_capital=worker_payload["initial_capital"],
+        study_dir=worker_payload["study_dir"],
         fee_ratio=worker_payload["fee_ratio"],
         tax_ratio=worker_payload["tax_ratio"],
         market_data=None,
         market_data_pickle_path=worker_payload["market_data_pickle_path"],
-        storage_url=None,
         allow_market_data_fetch=False,
     )
     executor._load_market_data_once()
-    executor._optimize_study(executor._build_storage(storage_spec), study_name, n_trials, seed)
+    executor._optimize_study(study_name, n_trials, seed)
 
 
 def main() -> None:
@@ -434,11 +373,9 @@ def main() -> None:
         workers=args.workers,
         seed=args.seed,
         output_dir=args.output_dir,
-        initial_capital=args.initial_capital,
         fee_ratio=0.001425,
         tax_ratio=0.003,
         market_data_pickle_path=args.market_data_pickle_path,
-        storage_url=args.storage_url,
     )
     out = optimizer.run()
     print(f"Bayesian optimization completed. Outputs: {out}")

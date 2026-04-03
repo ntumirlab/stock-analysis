@@ -250,20 +250,8 @@ class OscarAndOrStrategy:
         selected_count = selected_mask.sum(axis=1)
         return selected_mask.div(selected_count.replace(0, np.nan), axis=0).fillna(0.0)
 
-    @staticmethod
-    def _apply_max_stocks_mask(selected_mask: pd.DataFrame, max_stocks: int) -> pd.DataFrame:
-        max_n = max(1, int(max_stocks))
-        capped_mask = pd.DataFrame(False, index=selected_mask.index, columns=selected_mask.columns)
-        for dt in selected_mask.index:
-            row = selected_mask.loc[dt]
-            chosen = row[row].index[:max_n]
-            if len(chosen) > 0:
-                capped_mask.loc[dt, chosen] = True
-        return capped_mask
-
     def run_strategy(
         self,
-        max_stocks: int | None = None,
         start_date: str = "2020-01-01",
         fee_ratio: float = 0.001425,
         tax_ratio: float = 0.003,
@@ -273,11 +261,7 @@ class OscarAndOrStrategy:
         if len(base_position.index) == 0:
             raise ValueError("No trading days available after start_date.")
 
-        selected_mask = base_position.astype(bool)
-        if max_stocks is not None:
-            selected_mask = self._apply_max_stocks_mask(selected_mask, max_stocks=max_stocks)
-
-        final_position = self._build_equal_weight_position(selected_mask)
+        final_position = self._build_equal_weight_position(base_position.astype(bool))
 
         self.report = sim(
             position=final_position,
