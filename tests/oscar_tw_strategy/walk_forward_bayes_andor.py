@@ -238,23 +238,40 @@ class WalkForwardAndOr:
         checkpoints: list[int],
     ) -> None:
         """For each checkpoint, build OOS positions using the best params at that trial count."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _process_window(idx: int, oos_start: pd.Timestamp, oos_end: pd.Timestamp, cp: int):
+            window_dir = self.output_dir / f"window_{idx:03d}"
+            best_params = self._get_best_params_at_checkpoint(window_dir, cp)
+            if best_params is None:
+                return idx, None, "no completed trials"
+            try:
+                return idx, self._get_oos_position(best_params, oos_start, oos_end), None
+            except Exception as exc:
+                return idx, None, str(exc)
+
         for cp in checkpoints:
             logger.info("Checkpoint analysis: max_trials=%d", cp)
+
+            window_args = [
+                (idx, oos_start, oos_end, cp)
+                for idx, (_, _, oos_start, oos_end) in enumerate(windows)
+            ]
+
+            results = []
+            with ThreadPoolExecutor(max_workers=len(windows)) as executor:
+                futures = [executor.submit(_process_window, *args) for args in window_args]
+                results = [f.result() for f in futures]
+
+            # Collect in window order so concat is chronologically sorted.
             oos_positions: list[pd.DataFrame] = []
             skipped = []
-            for idx, (_, _, oos_start, oos_end) in enumerate(windows):
-                window_dir = self.output_dir / f"window_{idx:03d}"
-                best_params = self._get_best_params_at_checkpoint(window_dir, cp)
-                if best_params is None:
-                    logger.warning("Checkpoint %d: window %d has no completed trials, skipping.", cp, idx)
+            for idx, oos_pos, error in results:
+                if oos_pos is None:
+                    logger.warning("Checkpoint %d: window %d skipped: %s", cp, idx, error)
                     skipped.append(idx)
-                    continue
-                try:
-                    oos_pos = self._get_oos_position(best_params, oos_start, oos_end)
+                else:
                     oos_positions.append(oos_pos)
-                except Exception as exc:
-                    logger.warning("Checkpoint %d: window %d OOS failed: %s", cp, idx, exc)
-                    skipped.append(idx)
 
             if not oos_positions:
                 logger.warning("Checkpoint %d: no valid windows, skipping report.", cp)
