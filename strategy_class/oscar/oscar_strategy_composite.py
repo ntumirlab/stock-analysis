@@ -78,6 +78,9 @@ class OscarCompositeStrategy:
                     "high": data.get("price:最高價"),
                     "low": data.get("price:最低價"),
                     "volume": data.get("price:成交股數"),
+                    "adj_close": data.get("etl:adj_close"),
+                    "adj_high": data.get("etl:adj_high"),
+                    "adj_low": data.get("etl:adj_low"),
                     "foreign_net_buy_shares":
                         data.get("institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)")
                         + data.get("institutional_investors_trading_summary:外資自營商買賣超股數"),
