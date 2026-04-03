@@ -271,7 +271,7 @@ class WalkForwardComposite:
         # Single sim call
         report = sim(
             position=combined,
-            resample="D",
+            resample=None,
             upload=False,
             trade_at_price="open",
             fee_ratio=self.fee_ratio,
