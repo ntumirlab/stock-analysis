@@ -26,25 +26,33 @@ class _2560TWStrategy:
 
     def __init__(
         self,
-        ma25_slope_lookback: int = 3,       # MA25 向上判斷回溯天數
-        pullback_tolerance: float = 0.02,   # 回踩容差 ±2%
+        ma25_slope_lookback: int = 3,          # MA25 向上判斷回溯天數
+        pullback_tolerance: float = 0.02,      # 回踩容差 ±2%
         small_candle_threshold: float = 0.02,  # 小星線：當日漲跌幅 < 2%
-        deviation_threshold: float = 0.15,  # 退出觸發一：乖離門檻 15%
-        surge_lookback: int = 5,            # 退出觸發三：漲幅計算天數
-        surge_pct: float = 0.08,            # 退出觸發三：漲幅門檻 8%
-        high_lookback: int = 20,            # 退出觸發三：前高回溯天數
-        stop_loss_pct: float = 0.07,        # 百分比停損 7%（5–8% 中間值）
-        take_profit_pct: float = 0.125,     # 停利 12.5%（10–15% 中間值）
+        deviation_threshold: float = 0.15,     # 退出觸發一：乖離門檻 15%
+        surge_lookback: int = 5,               # 退出觸發三：漲幅計算天數
+        surge_pct: float = 0.08,               # 退出觸發三：漲幅門檻 8%
+        high_lookback: int = 20,               # 退出觸發三：前高回溯天數
+        stop_loss_pct: float = 0.07,           # 百分比停損 7%
+        take_profit_pct: float = 0.125,        # 停利 12.5%
+        max_positions: int = 15,               # 最大持股數
+        market_ma_period: int = 60,            # 大盤過濾：加權指數均線天數
+        pullback_no_new_low_days: int = 2,     # 回踩確認：連續不創新低天數 N
+        pullback_away_pct: float = 0.08,       # 回踩確認：遠離 MA25 乖離門檻 M
     ):
-        self.ma25_slope_lookback    = ma25_slope_lookback
-        self.pullback_tolerance     = pullback_tolerance
-        self.small_candle_threshold = small_candle_threshold
-        self.deviation_threshold    = deviation_threshold
-        self.surge_lookback         = surge_lookback
-        self.surge_pct              = surge_pct
-        self.high_lookback          = high_lookback
-        self.stop_loss_pct          = stop_loss_pct
-        self.take_profit_pct        = take_profit_pct
+        self.ma25_slope_lookback      = ma25_slope_lookback
+        self.pullback_tolerance       = pullback_tolerance
+        self.small_candle_threshold   = small_candle_threshold
+        self.deviation_threshold      = deviation_threshold
+        self.surge_lookback           = surge_lookback
+        self.surge_pct                = surge_pct
+        self.high_lookback            = high_lookback
+        self.stop_loss_pct            = stop_loss_pct
+        self.take_profit_pct          = take_profit_pct
+        self.max_positions            = max_positions
+        self.market_ma_period         = market_ma_period
+        self.pullback_no_new_low_days = pullback_no_new_low_days
+        self.pullback_away_pct        = pullback_away_pct
 
         self.report = None
 
@@ -59,25 +67,44 @@ class _2560TWStrategy:
         with data.universe(market="TSE_OTC"):
             market_data = {
                 "close":  data.get("price:收盤價"),
-                "open":   data.get("price:開盤價"),   # 新增：小星線計算需要
+                "open":   data.get("price:開盤價"),
                 "high":   data.get("price:最高價"),
+                "low":    data.get("price:最低價"),
                 "volume": data.get("price:成交股數") / 1000,  # 換算為張
             }
+
+        # 大盤加權指數
+        market_data["taiex"] = data.get("market_transaction_info:收盤指數")["TAIEX"]
+
         return market_data
 
     def _compute_indicators(self, market_data: dict) -> None:
         self.market_data = market_data
         close  = market_data["close"]
         volume = market_data["volume"]
+        taiex  = market_data["taiex"]
 
         self.ma25     = close.average(25)
         self.vol_ma5  = volume.average(5)
         self.vol_ma60 = volume.average(60)
 
+        # 大盤 MA60（Series）
+        taiex_ma60 = taiex.rolling(
+            self.market_ma_period, min_periods=self.market_ma_period // 2
+        ).mean()
+
+        # 大盤站上 MA60：True/False Series，對齊個股 index
+        self.market_filter = (taiex > taiex_ma60).reindex(close.index).ffill()
+
     def _build_buy_signal(self) -> pd.DataFrame:
         close  = self.market_data["close"]
         open_  = self.market_data["open"]
         volume = self.market_data["volume"]
+
+        # ── 大盤過濾：加權指數站上 MA60 才允許進場 ───────────────────────────
+        # market_filter 是 Series，用 reindex 對齊後直接廣播
+        market_series = self.market_filter.reindex(close.index).ffill().fillna(False)
+        market_ok = close.apply(lambda _: market_series)
 
         # ── 前提條件（兩者必須同時成立）──────────────────────────────────────
         # 1. 趨勢確認：MA25 向上傾斜
@@ -86,7 +113,7 @@ class _2560TWStrategy:
         # 2. 動能過濾：5日均量 > 60日均量
         vol_filter = self.vol_ma5 > self.vol_ma60
 
-        prerequisites = ma25_rising & vol_filter
+        prerequisites = market_ok & ma25_rising & vol_filter
 
         # ── 進場觸發（二選一）────────────────────────────────────────────────
         # A. 突破式進場：收盤站上 MA25 且當日成交量 > Vol_MA60
@@ -97,10 +124,14 @@ class _2560TWStrategy:
         ).fillna(False)
 
         # B. 回踩式進場：
-        #    - 近 5 天內曾在 MA25 之上（從上方回踩）
+        #    - 近 5 天內曾在 MA25 之上（從上方回踩，不含今天）
         #    - 價格回踩至 MA25 ±2%
         #    - 成交量縮量（< Vol_MA60）
         #    - 小星線止跌確認：當日漲跌幅 < small_candle_threshold
+        #    - 不創新低：連續 N 天低點未創新低
+        #    - 第一次回踩：曾遠離 MA25 超過 M%，且中間未再觸碰 MA25 附近
+        low = self.market_data["low"]
+
         recently_above = (
             (close.shift(1) > self.ma25.shift(1))
             .rolling(5, min_periods=1)
@@ -117,9 +148,38 @@ class _2560TWStrategy:
         daily_change = (close - close.shift(1)).abs() / close.shift(1).replace(0, np.nan)
         small_candle = daily_change < self.small_candle_threshold
 
-        pullback_entry = near_ma25 & low_volume & small_candle
+        # 不創新低：過去 N 天每日低點都高於前一日低點
+        # rolling(N).min() 取近 N 天「low > low.shift(1)」的最小值，全為 True(1) 才通過
+        no_new_low = (
+            (low > low.shift(1))
+            .rolling(self.pullback_no_new_low_days, min_periods=self.pullback_no_new_low_days)
+            .min()
+            .astype(bool)
+        )
+
+        # 第一次回踩：
+        #   step1. 曾遠離 MA25（乖離 > M%），用 lookback 窗口找最近一次遠離的位置
+        #   step2. 從那次遠離之後，到今天為止，中間沒有再進入 MA25 ±pullback_tolerance 範圍
+        #          實作：近 30 天內曾遠離，且上次進入 near_ma25 之前先有一次遠離
+        away_from_ma25 = (
+            (close - self.ma25) / self.ma25.replace(0, np.nan) > self.pullback_away_pct
+        )
+        # 近 30 天內曾遠離過 MA25
+        recently_away = (
+            away_from_ma25.shift(1)
+            .rolling(30, min_periods=1)
+            .max()
+            .astype(bool)
+        )
+        # 第一次接觸：昨天不在 MA25 附近，今天才是第一天進入
+        # 避免在同一段回踩過程中重複進場
+        first_pullback = recently_away & ~near_ma25.shift(1).fillna(False)
+
+        pullback_entry = near_ma25 & low_volume & small_candle & no_new_low & first_pullback
 
         entry_signal = breakout_entry | pullback_entry
+        # entry_signal = breakout_entry
+        # entry_signal = pullback_entry
 
         return prerequisites & entry_signal
 
@@ -132,10 +192,7 @@ class _2560TWStrategy:
             (close - self.ma25) / self.ma25.replace(0, np.nan) > self.deviation_threshold
         )
 
-        # 退出觸發二：資金動能轉弱（Vol_MA5 跌破 Vol_MA60）
-        exit_vol_cross = self.vol_ma5 < self.vol_ma60
-
-        # 退出觸發三：衝高失敗
+        # 退出觸發二：衝高失敗
         # 近 5 日漲幅 > 8%，但收盤未突破前 20 日最高點
         surge      = close / close.shift(self.surge_lookback).replace(0, np.nan) - 1
         prior_high = high.shift(1).rolling(
@@ -146,12 +203,25 @@ class _2560TWStrategy:
         # 技術停損：收盤跌破 MA25
         exit_tech_stop = close < self.ma25
 
+        # ※ exit_vol_cross 已移除（Vol_MA5 < Vol_MA60 與回踩進場邏輯自相矛盾）
+
         return (
             exit_deviation
-            | exit_vol_cross
             | exit_failed_surge
             | exit_tech_stop
         )
+
+    def _rank_and_limit(self, selected_mask: pd.DataFrame) -> pd.DataFrame:
+        """
+        以量能比率（Vol_MA5 / Vol_MA60）對當日訊號股票排序，
+        只保留前 max_positions 檔。
+        """
+        vol_ratio  = self.vol_ma5 / self.vol_ma60.replace(0, np.nan)
+        score      = vol_ratio.where(selected_mask)
+        ranked     = score.rank(axis=1, ascending=False, method="first")
+        top_n_mask = ranked <= self.max_positions
+
+        return top_n_mask.fillna(False).astype(bool)
 
     def run_strategy(
         self,
@@ -164,12 +234,15 @@ class _2560TWStrategy:
         if len(base_position.index) == 0:
             raise ValueError(f"start_date={start_date} 之後無可用交易日，請確認日期範圍。")
 
-        selected_mask  = base_position.astype(bool)
-        selected_count = selected_mask.sum(axis=1)
+        selected_mask = base_position.astype(bool)
 
-        # 等權重分配倉位（每筆佔總資金相等比例）
-        final_position = selected_mask.div(
-            selected_count.replace(0, np.nan), axis=0
+        # 量能排序 + 持股數限制
+        top_n_mask = self._rank_and_limit(selected_mask)
+
+        # 等權重分配倉位
+        top_n_count    = top_n_mask.sum(axis=1)
+        final_position = top_n_mask.div(
+            top_n_count.replace(0, np.nan), axis=0
         ).fillna(0.0)
 
         self.report = sim(
@@ -203,6 +276,10 @@ if __name__ == "__main__":
         high_lookback=20,
         stop_loss_pct=0.07,
         take_profit_pct=0.125,
+        max_positions=15,
+        market_ma_period=60,
+        pullback_no_new_low_days=2,
+        pullback_away_pct=0.08,
     )
 
     report = strategy.run_strategy(start_date="2020-01-01")
