@@ -132,16 +132,7 @@ class _2560TWStrategy:
         #    - 第一次回踩：曾遠離 MA25 超過 M%，且中間未再觸碰 MA25 附近
         low = self.market_data["low"]
 
-        recently_above = (
-            (close.shift(1) > self.ma25.shift(1))
-            .rolling(5, min_periods=1)
-            .max()
-            .astype(bool)
-        )
-        near_ma25 = (
-            recently_above
-            & ((close - self.ma25).abs() / self.ma25.replace(0, np.nan) < self.pullback_tolerance)
-        )
+        near_ma25 = (close - self.ma25).abs() / self.ma25.replace(0, np.nan) < self.pullback_tolerance
         low_volume = volume < self.vol_ma60
 
         # 小星線：以收盤相對前日收盤的漲跌幅來衡量當日波動幅度
