@@ -19,11 +19,9 @@ class CustomPriceTWMarket(TWMarket):
 
     Supported trade_at_price strings
     ---------------------------------
-    'slippage' : blended DataFrame — buy_price on entry days, sell_price on exit days,
+    'custom' : blended DataFrame — buy_price on entry days, sell_price on exit days,
                  NaN (falls back to close) on hold/flat days.
-    'ideal'    : buy_price on entry days, sell_price on exit days,
-                 mid-price ((buy+sell)/2) on hold days.
-    Any standard string ('open', 'close', 'high', 'low', etc.) falls through to TWMarket.
+    Any standard string ('open', 'close', 'high', 'low', etc.) raises ValueError since those are not supported by this custom market.
     """
 
     def __init__(
@@ -45,14 +43,9 @@ class CustomPriceTWMarket(TWMarket):
     # ------------------------------------------------------------------
 
     def get_trading_price(self, name: str, adj: bool = True) -> pd.DataFrame:
-        if name == 'slippage':
-            return self._get_or_build('slippage', self._build_slippage)
-        elif name == 'ideal':
-            return self._get_or_build('ideal', self._build_ideal)
-        else:
-            # 標準價格名稱（open/close/high/low/…）交給 TWMarket 處理
-            # finlab 內部分析（如 liquidityAnalysis）也會呼叫 get_trading_price('close')
-            return super().get_trading_price(name, adj=adj)
+        if name == 'custom':
+            return self._get_or_build('custom', self._build_custom)
+        raise ValueError(f"Unsupported trade_at_price name in CustomPriceTWMarket: {name}")
 
     # ------------------------------------------------------------------
     # Internal builders
@@ -75,7 +68,7 @@ class CustomPriceTWMarket(TWMarket):
         exiting = diff < 0
         return entering, exiting
 
-    def _build_slippage(self) -> pd.DataFrame:
+    def _build_custom(self) -> pd.DataFrame:
         """buy_price on entry, sell_price on exit, NaN elsewhere (hold/flat days)."""
         entering, exiting = self._entry_exit_masks()
 
@@ -84,16 +77,6 @@ class CustomPriceTWMarket(TWMarket):
             index=self._buy_price.index,
             columns=self._buy_price.columns,
         )
-        blended[entering] = self._buy_price[entering]
-        blended[exiting] = self._sell_price[exiting]
-        return blended
-
-    def _build_ideal(self) -> pd.DataFrame:
-        """buy_price on entry, sell_price on exit, mid-price on hold days."""
-        entering, exiting = self._entry_exit_masks()
-        mid = (self._buy_price + self._sell_price) / 2
-
-        blended = mid.copy()
         blended[entering] = self._buy_price[entering]
         blended[exiting] = self._sell_price[exiting]
         return blended
