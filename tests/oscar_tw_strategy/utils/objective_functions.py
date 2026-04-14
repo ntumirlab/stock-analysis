@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -14,6 +15,7 @@ class ObjectiveName(str, Enum):
     SHARPE = "train_sharpe"
     ANNUAL_RETURN = "train_annual_return"
     CALMAR = "train_calmar"
+    SHARPE_TRADE_ADJUSTED = "train_sharpe_trade_adjusted"
 
 
 @dataclass(frozen=True)
@@ -76,10 +78,43 @@ class CalmarObjective(BaseReportObjective):
         return ObjectiveResult(name=self.name, value=annual_return / abs(max_drawdown))
 
 
+class SharpeTradeAdjustedObjective(BaseReportObjective):
+    """Score = Sharpe × sqrt(TradeCount / 252) × (1 - Penalty_MDD).
+
+    Penalty_MDD = min(|maxDrawdown|, 1.0), so a 30% drawdown gives a 0.70 multiplier.
+    TradeCount is the number of completed trades from report.get_trades().
+    """
+
+    name = ObjectiveName.SHARPE_TRADE_ADJUSTED
+
+    def evaluate(self, report, start_date: str | None = None, end_date: str | None = None) -> ObjectiveResult:
+        metrics = get_metrics_with_fixed_annual_return(report, start_date=start_date, end_date=end_date)
+
+        sharpe = metrics.get("ratio", {}).get("sharpeRatio")
+        max_drawdown = metrics.get("risk", {}).get("maxDrawdown")
+
+        try:
+            sharpe = float(sharpe)
+            max_drawdown = float(max_drawdown)
+        except (TypeError, ValueError):
+            return ObjectiveResult(name=self.name, value=None)
+
+        try:
+            trades = report.get_trades()
+            trade_count = len(trades) if trades is not None else 0
+        except Exception:
+            trade_count = 0
+
+        penalty_mdd = min(abs(max_drawdown), 1.0)
+        score = sharpe * math.sqrt(trade_count / 252) * (1.0 - penalty_mdd)
+        return ObjectiveResult(name=self.name, value=score)
+
+
 _OBJECTIVES: dict[ObjectiveName, type[BaseReportObjective]] = {
     ObjectiveName.SHARPE: SharpeObjective,
     ObjectiveName.ANNUAL_RETURN: AnnualReturnObjective,
     ObjectiveName.CALMAR: CalmarObjective,
+    ObjectiveName.SHARPE_TRADE_ADJUSTED: SharpeTradeAdjustedObjective,
 }
 
 

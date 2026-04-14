@@ -117,7 +117,8 @@ class AndOrBayesianOptimizer:
 
     def _optimize_study(self, study_name: str, n_trials: int, seed: int) -> None:
         study = self._create_or_load_study(self._build_storage(), study_name, seed)
-        study.optimize(self._objective, n_trials=n_trials, n_jobs=1, show_progress_bar=False)
+        # catch=(Exception,) prevents a single failing trial from crashing the entire worker process.
+        study.optimize(self._objective, n_trials=n_trials, n_jobs=1, show_progress_bar=False, catch=(Exception,))
 
     @staticmethod
     def _snap_upper_to_step(lower: float, upper: float, step: float) -> float:
@@ -236,6 +237,7 @@ class AndOrBayesianOptimizer:
                 "market_data_pickle_path": str(self.market_data_pickle_path),
             }
 
+            error_queue = mp.Queue()
             processes = []
             for worker_id, worker_trials in enumerate(trials_per_worker):
                 if worker_trials <= 0:
@@ -247,6 +249,7 @@ class AndOrBayesianOptimizer:
                         study_name,
                         worker_trials,
                         self.seed + worker_id,
+                        error_queue,
                     ),
                 )
                 process.start()
@@ -259,9 +262,26 @@ class AndOrBayesianOptimizer:
                     failed = True
 
             if failed:
-                raise RuntimeError("One or more bayesian worker processes failed.")
+                captured_errors = []
+                while not error_queue.empty():
+                    try:
+                        captured_errors.append(error_queue.get_nowait())
+                    except Exception:
+                        break
+                detail = "\n\n".join(captured_errors) if captured_errors else "(no exception details captured — check worker stderr)"
+                logger.warning("One or more bayesian worker processes failed (skipping).\n%s", detail)
 
             study = self._create_or_load_study(self._build_storage(), study_name, self.seed)
+
+            # Mark any zombie RUNNING trials (left by crashed workers) as FAIL
+            # so the sampler doesn't avoid those parameter regions unnecessarily.
+            for trial in study.trials:
+                if trial.state == optuna.trial.TrialState.RUNNING:
+                    try:
+                        study.tell(trial, state=optuna.trial.TrialState.FAIL)
+                        logger.warning("Marked zombie trial %d as FAIL.", trial.number)
+                    except Exception:
+                        pass
 
         completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if not completed:
@@ -341,24 +361,38 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_bayesian_worker(worker_payload, study_name: str, n_trials: int, seed: int) -> None:
-    executor = AndOrBayesianOptimizer(
-        config_path=worker_payload["config_path"],
-        start_date=worker_payload["start_date"],
-        end_date=worker_payload["end_date"],
-        objective_name=ObjectiveName(worker_payload.get("objective_name", ObjectiveName.ANNUAL_RETURN.value)),
-        n_trials=n_trials,
-        workers=1,
-        seed=seed,
-        study_dir=worker_payload["study_dir"],
-        fee_ratio=worker_payload["fee_ratio"],
-        tax_ratio=worker_payload["tax_ratio"],
-        market_data=None,
-        market_data_pickle_path=worker_payload["market_data_pickle_path"],
-        allow_market_data_fetch=False,
-    )
-    executor._load_market_data_once()
-    executor._optimize_study(study_name, n_trials, seed)
+def _run_bayesian_worker(
+    worker_payload, study_name: str, n_trials: int, seed: int, error_queue=None
+) -> None:
+    import traceback as _tb
+
+    try:
+        executor = AndOrBayesianOptimizer(
+            config_path=worker_payload["config_path"],
+            start_date=worker_payload["start_date"],
+            end_date=worker_payload["end_date"],
+            objective_name=ObjectiveName(worker_payload.get("objective_name", ObjectiveName.ANNUAL_RETURN.value)),
+            n_trials=n_trials,
+            workers=1,
+            seed=seed,
+            study_dir=worker_payload["study_dir"],
+            fee_ratio=worker_payload["fee_ratio"],
+            tax_ratio=worker_payload["tax_ratio"],
+            market_data=None,
+            market_data_pickle_path=worker_payload["market_data_pickle_path"],
+            allow_market_data_fetch=False,
+        )
+        executor._load_market_data_once()
+        executor._optimize_study(study_name, n_trials, seed)
+    except Exception as exc:
+        msg = f"Worker seed={seed}: {type(exc).__name__}: {exc}\n{_tb.format_exc()}"
+        logger.error(msg)
+        if error_queue is not None:
+            try:
+                error_queue.put_nowait(msg)
+            except Exception:
+                pass
+        raise
 
 
 def main() -> None:

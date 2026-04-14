@@ -76,6 +76,35 @@ def compute_annual_return_from_creturn(
     return (1.0 + total_return) ** (365.25 / elapsed_days) - 1.0
 
 
+def compute_total_return_annualized(
+    creturn: pd.Series,
+    start_date: str | pd.Timestamp | None = None,
+    end_date: str | pd.Timestamp | None = None,
+) -> float | None:
+    """Annualized return using the actual first/last creturn values within [start_date, end_date]."""
+    if creturn is None or len(creturn) == 0:
+        return None
+
+    creturn = creturn.dropna()
+    if len(creturn) == 0:
+        return None
+
+    sl = creturn
+    if start_date is not None:
+        start_ts = _align_timestamp(pd.Timestamp(start_date), creturn.index.tz)
+        sl = sl[sl.index >= start_ts]
+    if end_date is not None:
+        end_ts = _align_timestamp(pd.Timestamp(end_date), creturn.index.tz)
+        sl = sl[sl.index <= end_ts]
+
+    if len(sl) < 2:
+        return None
+
+    total_return = float(sl.iloc[-1]) / float(sl.iloc[0]) - 1.0
+    elapsed_days = max((sl.index[-1] - sl.index[0]).days, 1)
+    return (1.0 + total_return) ** (365.25 / elapsed_days) - 1.0
+
+
 def get_metrics_with_fixed_annual_return(
     report,
     start_date: str | pd.Timestamp | None = None,
