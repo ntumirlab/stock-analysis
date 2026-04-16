@@ -142,3 +142,20 @@ oscar:
     macd_event_distance_scale: 1.4
     macd_history_lookback: 7
     macd_history_decay_alpha: 1.55
+
+# 2560 策略專用參數
+_2560:
+  andor:
+    ma25_slope_lookback: 3
+    pullback_tolerance: 0.02
+    small_candle_threshold: 0.02
+    deviation_threshold: 0.15
+    surge_lookback: 5
+    surge_pct: 0.08
+    high_lookback: 20
+    stop_loss_pct: 0.07
+    take_profit_pct: 0.125
+    max_positions: 15
+    market_ma_period: 60
+    pullback_no_new_low_days: 2
+    pullback_away_pct: 0.08

@@ -68,6 +68,8 @@ class BacktestExecutor:
             from strategy_class.oscar.oscar_strategy_andor import OscarAndOrStrategy as strategy_class
         elif self.strategy_class_name == 'OscarCompositeStrategy':
             from strategy_class import OscarCompositeStrategy as strategy_class
+        elif self.strategy_class_name == '2560AndOrTWStrategy':
+            from strategy_class import _2560AndOrTWStrategy as strategy_class
         else:
             raise ValueError(f"Unknown strategy class: {self.strategy_class_name}")
         return strategy_class()
