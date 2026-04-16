@@ -26,6 +26,7 @@ class RogerTWStrategyBase:
         self.use_db_tp = override_params.get('use_db_tp', roger_config.get('use_db_tp', True))
         self.global_tp = override_params.get('global_tp', roger_config.get('global_tp', None))
         self.trade_at_price = override_params.get('trade_at_price', roger_config.get('trade_at_price', 'open'))
+        self.lookback_months = override_params.get('lookback_months', roger_config.get('lookback_months', None))
 
         print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
 
@@ -127,6 +128,13 @@ class RogerTWStrategyBase:
         tp_df    = tp_df.reindex(columns=universe.columns, fill_value=0)
 
         return position.astype(bool), sl_df, tp_df
+
+    def _apply_cutoff(self, final_position):
+        if self.lookback_months is None:
+            return final_position
+        from dateutil.relativedelta import relativedelta
+        cutoff = pd.Timestamp.today().normalize() - relativedelta(months=self.lookback_months)
+        return final_position[final_position.index >= cutoff]
 
     def _build_sl_tp_exits(self, entries, position, sl_df, tp_df,
                            raw_low=None, raw_high=None):
@@ -256,6 +264,7 @@ class RogerTWStrategyBase:
         # hold_until → shift(-1) → sim
         final_position = FinlabDataFrame(entries).hold_until(exits)
         final_position = final_position.shift(-1).fillna(False).astype(bool)
+        final_position = self._apply_cutoff(final_position)
 
         if use_touched_exit:
             self.report = sim(
