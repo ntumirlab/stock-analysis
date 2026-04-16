@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 from finlab import data
 from finlab.backtest import sim
+from finlab.dataframe import FinlabDataFrame
 from utils.config_loader import ConfigLoader
-
 
 class _2560AndOrTWStrategy:
     """
@@ -35,7 +35,6 @@ class _2560AndOrTWStrategy:
         if override_params is None:
             override_params = {}
 
-        self.config_loader = ConfigLoader(config_path)
         self.ma25_slope_lookback      = override_params.get('ma25_slope_lookback', config_andor.get('ma25_slope_lookback', 3))
         self.pullback_tolerance       = override_params.get('pullback_tolerance', config_andor.get('pullback_tolerance', 0.02))
         self.small_candle_threshold   = override_params.get('small_candle_threshold', config_andor.get('small_candle_threshold', 0.02))
@@ -92,13 +91,16 @@ class _2560AndOrTWStrategy:
 
     def _build_buy_signal(self) -> pd.DataFrame:
         close  = self.market_data["close"]
-        open_  = self.market_data["open"]
         volume = self.market_data["volume"]
 
         # ── 大盤過濾：加權指數站上 MA60 才允許進場 ───────────────────────────
-        # market_filter 是 Series，用 reindex 對齊後直接廣播
+        # market_filter 是 Series，用 reindex 對齊後一次性向量化廣播到所有股票欄位
         market_series = self.market_filter.reindex(close.index).ffill().fillna(False)
-        market_ok = close.apply(lambda _: market_series)
+        market_ok = FinlabDataFrame(
+            np.broadcast_to(market_series.to_numpy()[:, None], close.shape),
+            index=close.index,
+            columns=close.columns,
+        )
 
         # ── 前提條件（兩者必須同時成立）──────────────────────────────────────
         # 1. 趨勢確認：MA25 向上傾斜
@@ -119,7 +121,7 @@ class _2560AndOrTWStrategy:
 
         # B. 回踩式進場：
         #    - 近 5 天內曾在 MA25 之上（從上方回踩，不含今天）
-        #    - 價格回踩至 MA25 ±2%
+        #    - 價格回踩至 MA25 +2%
         #    - 成交量縮量（< Vol_MA60）
         #    - 小星線止跌確認：當日漲跌幅 < small_candle_threshold
         #    - 不創新低：連續 N 天低點未創新低
@@ -254,7 +256,7 @@ class _2560AndOrTWStrategy:
 
 
 if __name__ == "__main__":
-    strategy = _2560TWStrategy(
+    strategy = _2560AndOrTWStrategy(
         config_path="config.yaml",
     )
 
