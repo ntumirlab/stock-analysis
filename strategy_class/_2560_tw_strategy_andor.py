@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from finlab import data
 from finlab.backtest import sim
+from utils.config_loader import ConfigLoader
 
 
 class _2560AndOrTWStrategy:
@@ -24,37 +25,30 @@ class _2560AndOrTWStrategy:
         sell_signal: 賣出訊號 (DataFrame[bool])
     """
 
-    def __init__(
-        self,
-        ma25_slope_lookback: int = 3,          # MA25 向上判斷回溯天數
-        pullback_tolerance: float = 0.02,      # 回踩容差 ±2%
-        small_candle_threshold: float = 0.02,  # 小星線：當日漲跌幅 < 2%
-        deviation_threshold: float = 0.15,     # 退出觸發一：乖離門檻 15%
-        surge_lookback: int = 5,               # 退出觸發三：漲幅計算天數
-        surge_pct: float = 0.08,               # 退出觸發三：漲幅門檻 8%
-        high_lookback: int = 20,               # 退出觸發三：前高回溯天數
-        stop_loss_pct: float = 0.07,           # 百分比停損 7%
-        take_profit_pct: float = 0.125,        # 停利 12.5%
-        max_positions: int = 15,               # 最大持股數
-        market_ma_period: int = 60,            # 大盤過濾：加權指數均線天數
-        pullback_no_new_low_days: int = 2,     # 回踩確認：連續不創新低天數 N
-        pullback_away_pct: float = 0.08,       # 回踩確認：遠離 MA25 乖離門檻 M
-    ):
-        self.ma25_slope_lookback      = ma25_slope_lookback
-        self.pullback_tolerance       = pullback_tolerance
-        self.small_candle_threshold   = small_candle_threshold
-        self.deviation_threshold      = deviation_threshold
-        self.surge_lookback           = surge_lookback
-        self.surge_pct                = surge_pct
-        self.high_lookback            = high_lookback
-        self.stop_loss_pct            = stop_loss_pct
-        self.take_profit_pct          = take_profit_pct
-        self.max_positions            = max_positions
-        self.market_ma_period         = market_ma_period
-        self.pullback_no_new_low_days = pullback_no_new_low_days
-        self.pullback_away_pct        = pullback_away_pct
-
+    def __init__(self, config_path="config.yaml", override_params=None):
         self.report = None
+        self.config_loader = ConfigLoader(config_path)
+        config_base = self.config_loader.config.get('_2560', {})
+        config_andor = config_base.get('andor', {})
+
+        # 如果有傳入實驗參數，就用實驗的；否則就讀 config.yaml 中的
+        if override_params is None:
+            override_params = {}
+
+        self.config_loader = ConfigLoader(config_path)
+        self.ma25_slope_lookback      = override_params.get('ma25_slope_lookback', config_andor.get('ma25_slope_lookback', 3))
+        self.pullback_tolerance       = override_params.get('pullback_tolerance', config_andor.get('pullback_tolerance', 0.02))
+        self.small_candle_threshold   = override_params.get('small_candle_threshold', config_andor.get('small_candle_threshold', 0.02))
+        self.deviation_threshold      = override_params.get('deviation_threshold', config_andor.get('deviation_threshold', 0.15))
+        self.surge_lookback           = override_params.get('surge_lookback', config_andor.get('surge_lookback', 5))
+        self.surge_pct                = override_params.get('surge_pct', config_andor.get('surge_pct', 0.08))
+        self.high_lookback            = override_params.get('high_lookback', config_andor.get('high_lookback', 20))
+        self.stop_loss_pct            = override_params.get('stop_loss_pct', config_andor.get('stop_loss_pct', 0.07))
+        self.take_profit_pct          = override_params.get('take_profit_pct', config_andor.get('take_profit_pct', 0.125))
+        self.max_positions            = override_params.get('max_positions', config_andor.get('max_positions', 15))
+        self.market_ma_period         = override_params.get('market_ma_period', config_andor.get('market_ma_period', 60))
+        self.pullback_no_new_low_days = override_params.get('pullback_no_new_low_days', config_andor.get('pullback_no_new_low_days', 2))
+        self.pullback_away_pct        = override_params.get('pullback_away_pct', config_andor.get('pullback_away_pct', 0.08))
 
         market_data = self._load_data()
         self._compute_indicators(market_data)
@@ -261,19 +255,7 @@ class _2560AndOrTWStrategy:
 
 if __name__ == "__main__":
     strategy = _2560TWStrategy(
-        ma25_slope_lookback=3,
-        pullback_tolerance=0.02,
-        small_candle_threshold=0.02,
-        deviation_threshold=0.15,
-        surge_lookback=5,
-        surge_pct=0.08,
-        high_lookback=20,
-        stop_loss_pct=0.07,
-        take_profit_pct=0.125,
-        max_positions=15,
-        market_ma_period=60,
-        pullback_no_new_low_days=2,
-        pullback_away_pct=0.08,
+        config_path="config.yaml",
     )
 
     report = strategy.run_strategy(start_date="2020-01-01")
