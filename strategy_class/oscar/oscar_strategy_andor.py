@@ -24,6 +24,7 @@ from finlab.backtest import sim
 import pandas as pd
 import numpy as np
 
+from markets.custom_price_tw_market import CustomPriceTWMarket
 from utils.config_loader import ConfigLoader
 
 
@@ -126,6 +127,7 @@ class OscarAndOrStrategy:
                 "high": data.get("price:最高價"),
                 "low": data.get("price:最低價"),
                 "volume": data.get("price:成交股數"),
+                "adj_open": data.get("etl:adj_open"),
                 "adj_close": data.get("etl:adj_close"),
                 "adj_high": data.get("etl:adj_high"),
                 "adj_low": data.get("etl:adj_low"),
@@ -253,6 +255,10 @@ class OscarAndOrStrategy:
         selected_count = selected_mask.sum(axis=1)
         return selected_mask.div(selected_count.replace(0, np.nan), axis=0).fillna(0.0)
 
+    @staticmethod
+    def _build_market_position(position: pd.DataFrame) -> pd.DataFrame:
+        return position.fillna(0).clip(lower=0, upper=1).gt(0).astype(float)
+
     def run_strategy(
         self,
         start_date: str = "2020-01-01",
@@ -265,12 +271,19 @@ class OscarAndOrStrategy:
             raise ValueError("No trading days available after start_date.")
 
         final_position = self._build_equal_weight_position(base_position.astype(bool))
+        market_position = self._build_market_position(final_position)
+        market = CustomPriceTWMarket(
+            position=market_position,
+            buy_price=self.market_data["adj_open"].loc[start_date:],
+            sell_price=self.market_data["adj_close"].loc[start_date:],
+        )
 
         self.report = sim(
             position=final_position,
             resample=sim_resample,
             upload=False,
-            trade_at_price="open",
+            market=market,
+            trade_at_price="custom",
             fee_ratio=fee_ratio,
             tax_ratio=tax_ratio,
             position_limit=1.0,
