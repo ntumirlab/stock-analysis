@@ -82,6 +82,7 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
             # hold_until → shift(-1) → sim
             final_position = FinlabDataFrame(entries).hold_until(exits)
             final_position = final_position.shift(-1).fillna(False).astype(bool)
+            final_position = self._apply_cutoff(final_position)
 
             print(f"-> 正在回測 Week {offset + 1}...")
             if use_touched_exit:
