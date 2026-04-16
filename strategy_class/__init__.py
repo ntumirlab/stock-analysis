@@ -5,4 +5,4 @@ from .alan_tw_strategy_EFG import AlanTWStrategyEFG
 from .alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve
 from .oscar.oscar_strategy_andor import OscarAndOrStrategy
 from .oscar.oscar_strategy_composite import OscarCompositeStrategy
-from . _2560_tw_strategy import _2560TWStrategy
+from . _2560_tw_strategy_andor import _2560AndOrTWStrategy

@@ -14,7 +14,7 @@ from finlab import data
 from finlab.backtest import sim
 
 
-class _2560TWStrategy:
+class _2560AndOrTWStrategy:
     """
     2560 均線波段策略
 
