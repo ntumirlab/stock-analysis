@@ -11,7 +11,8 @@ class CustomPriceTWMarket(TWMarket):
     Parameters
     ----------
     position : pd.DataFrame
-        Precomputed position signals (date × stock), values in {0, 1} or float.
+        Precomputed position signals (date × stock), treated as a hold mask.
+        Any positive value is clipped to 1.0 before entry/exit detection.
     buy_price : pd.DataFrame
         Price to use when a stock is entered (position[n] > position[n-1]).
     sell_price : pd.DataFrame
@@ -20,7 +21,7 @@ class CustomPriceTWMarket(TWMarket):
     Supported trade_at_price strings
     ---------------------------------
     'custom' : blended DataFrame — buy_price on entry days, sell_price on exit days,
-                 NaN (falls back to close) on hold/flat days.
+                 and sell_price on hold/flat days.
     Any standard string ('open', 'close', 'high', 'low', etc.) raises ValueError since those are not supported by this custom market.
     """
 
@@ -31,7 +32,7 @@ class CustomPriceTWMarket(TWMarket):
         sell_price: pd.DataFrame,
     ):
         super().__init__()
-        self._position = position.astype(float).fillna(0)
+        self._position = position.astype(float).fillna(0).clip(lower=0, upper=1)
         self._buy_price = buy_price
         self._sell_price = sell_price
 
@@ -45,7 +46,7 @@ class CustomPriceTWMarket(TWMarket):
     def get_trading_price(self, name: str, adj: bool = True) -> pd.DataFrame:
         if name == 'custom':
             return self._get_or_build('custom', self._build_custom)
-        raise ValueError(f"Unsupported trade_at_price name in CustomPriceTWMarket: {name}")
+        return super().get_trading_price(name, adj=adj)
 
     # ------------------------------------------------------------------
     # Internal builders
@@ -62,21 +63,18 @@ class CustomPriceTWMarket(TWMarket):
         ref_cols = self._buy_price.columns
 
         pos = self._position.reindex(index=ref_index, columns=ref_cols, fill_value=0)
-        diff = pos.diff()  # +value = entering, -value = exiting
+        pos = pos.gt(0).astype(float)
+        diff = pos.diff().fillna(pos)  # +value = entering, -value = exiting
 
         entering = diff > 0
         exiting = diff < 0
         return entering, exiting
 
     def _build_custom(self) -> pd.DataFrame:
-        """buy_price on entry, sell_price on exit, NaN elsewhere (hold/flat days)."""
+        """buy_price on entry, sell_price on exit, sell_price elsewhere."""
         entering, exiting = self._entry_exit_masks()
 
-        blended = pd.DataFrame(
-            float("nan"),
-            index=self._buy_price.index,
-            columns=self._buy_price.columns,
-        )
+        blended = self._sell_price.copy()
         blended[entering] = self._buy_price[entering]
         blended[exiting] = self._sell_price[exiting]
         return blended
