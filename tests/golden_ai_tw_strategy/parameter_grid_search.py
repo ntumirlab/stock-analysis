@@ -1,7 +1,7 @@
 """
 strategy_grid_backtest.py
 
-Roger TW 策略網格參數回測實驗腳本。
+Golden AI TW 策略網格參數回測實驗腳本。
 逐一枚舉所有參數組合，執行回測，並將績效指標彙整輸出為 CSV。
 
 參數說明：
@@ -23,8 +23,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from strategy_class.roger_tw_strategy_weekly import RogerTWStrategyWeekly
-from strategy_class.roger_tw_strategy_monthly import RogerTWStrategyMonthly
+from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
+from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly
 
 PARAM_GRID = {
     'frequency'       : ['weekly', 'monthly'],
@@ -38,7 +38,7 @@ PARAM_GRID = {
     'sell_weekday'    : [5, 1],
 }
 
-OUTPUT_DIR = 'assets/tests/roger_tw_strategy/'
+OUTPUT_DIR = 'assets/tests/golden_ai_tw_strategy/'
 
 def _build_combinations(grid: dict) -> list[dict]:
     """將 param_grid 展開為所有參數組合的 list。"""
@@ -98,9 +98,9 @@ def _run_one(params: dict) -> list[dict]:
 
     try:
         if freq == 'weekly':
-            strategy = RogerTWStrategyWeekly(override_params=override_params)
+            strategy = GoldenAITWStrategyWeekly(override_params=override_params)
         else:
-            strategy = RogerTWStrategyMonthly(override_params=override_params)
+            strategy = GoldenAITWStrategyMonthly(override_params=override_params)
 
         report_obj = strategy.run_strategy()
 
@@ -149,7 +149,7 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_path = os.path.join(OUTPUT_DIR, f'roger_tw_strategy_grid_backtest_{timestamp}.csv')
+    output_path = os.path.join(OUTPUT_DIR, f'golden_ai_tw_strategy_grid_backtest_{timestamp}.csv')
     df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
     print(f"\n實驗完成！共產生 {len(df)} 筆紀錄，結果已儲存至 {output_path}")

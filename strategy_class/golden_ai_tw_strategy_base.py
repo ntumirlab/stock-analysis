@@ -7,26 +7,26 @@ from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
-class RogerTWStrategyBase:
+class GoldenAITWStrategyBase:
     def __init__(self, task_name, config_path="config.yaml", override_params=None):
         self.task_name = task_name  # 'weekly' or 'monthly'
         self.report = None
         self.config_loader = ConfigLoader(config_path)
-        roger_config = self.config_loader.config.get('roger', {}).get(task_name, {})
+        golden_ai_config = self.config_loader.config.get('golden_ai', {}).get(task_name, {})
 
         # 如果有傳入實驗參數，就用實驗的；否則就讀 config.yaml 中的
         if override_params is None:
             override_params = {}
 
-        self.buy_weekday = override_params.get('buy_weekday', roger_config.get('buy_weekday', 1)) - 1
-        self.sell_weekday = override_params.get('sell_weekday', roger_config.get('sell_weekday', 5)) - 1
-        self.max_stocks = override_params.get('max_stocks', roger_config.get('max_stocks', 5))
-        self.use_db_sl = override_params.get('use_db_sl', roger_config.get('use_db_sl', True))
-        self.global_sl = override_params.get('global_sl', roger_config.get('global_sl', None))
-        self.use_db_tp = override_params.get('use_db_tp', roger_config.get('use_db_tp', True))
-        self.global_tp = override_params.get('global_tp', roger_config.get('global_tp', None))
-        self.trade_at_price = override_params.get('trade_at_price', roger_config.get('trade_at_price', 'open'))
-        self.lookback_months = override_params.get('lookback_months', roger_config.get('lookback_months', None))
+        self.buy_weekday = override_params.get('buy_weekday', golden_ai_config.get('buy_weekday', 1)) - 1
+        self.sell_weekday = override_params.get('sell_weekday', golden_ai_config.get('sell_weekday', 5)) - 1
+        self.max_stocks = override_params.get('max_stocks', golden_ai_config.get('max_stocks', 5))
+        self.use_db_sl = override_params.get('use_db_sl', golden_ai_config.get('use_db_sl', True))
+        self.global_sl = override_params.get('global_sl', golden_ai_config.get('global_sl', None))
+        self.use_db_tp = override_params.get('use_db_tp', golden_ai_config.get('use_db_tp', True))
+        self.global_tp = override_params.get('global_tp', golden_ai_config.get('global_tp', None))
+        self.trade_at_price = override_params.get('trade_at_price', golden_ai_config.get('trade_at_price', 'open'))
+        self.lookback_months = override_params.get('lookback_months', golden_ai_config.get('lookback_months', None))
 
         print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
 
