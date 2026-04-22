@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 from finlab import data
@@ -7,6 +8,20 @@ from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
+
+class MultiReportWrapper:
+    def __init__(self, reports_dict):
+        self.reports_dict = reports_dict
+
+    def display(self, save_report_path=None, **kwargs):
+        base_dir, file_name = os.path.split(save_report_path)
+        file_base, ext = os.path.splitext(file_name)
+        for name, report in self.reports_dict.items():
+            new_path = os.path.join(base_dir, f"{file_base}_{name}{ext}")
+            print(f"[{name}] 儲存報告至: {new_path}")
+            report.display(save_report_path=new_path, **kwargs)
+
+
 class GoldenAITWStrategyBase:
     def __init__(self, task_name, config_path="config.yaml", override_params=None):
         self.task_name = task_name  # 'weekly' or 'monthly'
@@ -14,7 +29,6 @@ class GoldenAITWStrategyBase:
         self.config_loader = ConfigLoader(config_path)
         golden_ai_config = self.config_loader.config.get('golden_ai', {}).get(task_name, {})
 
-        # 如果有傳入實驗參數，就用實驗的；否則就讀 config.yaml 中的
         if override_params is None:
             override_params = {}
 
@@ -28,9 +42,9 @@ class GoldenAITWStrategyBase:
         self.trade_at_price = override_params.get('trade_at_price', golden_ai_config.get('trade_at_price', 'open'))
         self.lookback_months = override_params.get('lookback_months', golden_ai_config.get('lookback_months', None))
 
-        print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, 上限 {self.max_stocks} 檔")
+        print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Top 1~{self.max_stocks}")
 
-    def _create_df(self, universe):
+    def _create_df(self, universe, max_stocks=None):
         """
         讀取推薦 DAO 並轉換為 Finlab 可用的 Position DataFrame
         支援 stocks 為物件列表，從 stock.id 取代號
@@ -39,6 +53,8 @@ class GoldenAITWStrategyBase:
         - 周中（週一～週六）產出的清單 → 對齊到「下一個週日」（代表下週的推薦）
         - 週日當天產出的清單 → 留在當天（代表本週的推薦）
         """
+        effective_max = max_stocks if max_stocks is not None else self.max_stocks
+
         dao = RecommendationDAO(frequency=self.task_name)
         recommendation_records = dao.load()
 
@@ -71,8 +87,8 @@ class GoldenAITWStrategyBase:
 
         for aligned_date, (_, stock_list) in weekly_batches.items():
             stock_list = sorted(stock_list, key=lambda x: getattr(x, 'priority', float('inf')))
-            if self.max_stocks is not None:
-                stock_list = stock_list[:self.max_stocks]
+            if effective_max is not None:
+                stock_list = stock_list[:effective_max]
 
             for stock in stock_list:
                 stock_id = getattr(stock, 'id', None)
@@ -93,9 +109,6 @@ class GoldenAITWStrategyBase:
                         tp_records.append({'date': aligned_date, 'stock_id': sid, 'tp_price': tp_price})
 
         def _pivot(recs, value_col, fallback_index):
-            """
-            將 records 轉為 (date × stock_id) 的 pivot DataFrame
-            """
             df = pd.DataFrame(recs)
             if df.empty:
                 return pd.DataFrame(index=fallback_index, dtype=float)
@@ -108,12 +121,10 @@ class GoldenAITWStrategyBase:
         sl_df = _pivot(sl_records, 'sl_price', position.index)
         tp_df = _pivot(tp_records, 'tp_price', position.index)
 
-        # 轉為每日資料並 Forward Fill
         position = position.resample('D').ffill()
         sl_df    = sl_df.resample('D').ffill()
         tp_df    = tp_df.resample('D').ffill()
 
-        # 對齊日期範圍至最新市場日
         latest_market_date = universe.index.max()
         if latest_market_date > position.index.max():
             extended_index = pd.date_range(start=position.index.min(),
@@ -122,7 +133,6 @@ class GoldenAITWStrategyBase:
             sl_df    = sl_df.reindex(extended_index, method='ffill')
             tp_df    = tp_df.reindex(extended_index, method='ffill')
 
-        # 對齊全市場股票代號
         position = position.reindex(columns=universe.columns, fill_value=0)
         sl_df    = sl_df.reindex(columns=universe.columns, fill_value=0)
         tp_df    = tp_df.reindex(columns=universe.columns, fill_value=0)
@@ -166,7 +176,6 @@ class GoldenAITWStrategyBase:
         sl_exit = pd.DataFrame(False, index=position.index, columns=position.columns)
         tp_exit = pd.DataFrame(False, index=position.index, columns=position.columns)
 
-        # DB 絕對價：使用非還原價
         if self.use_db_sl or self.use_db_tp:
             if raw_low is None:
                 raw_low = data.get('price:最低價').reindex(index=position.index, columns=position.columns)
@@ -183,13 +192,11 @@ class GoldenAITWStrategyBase:
                 if db_tp.notna().any(axis=None):
                     tp_exit = tp_exit | (raw_high > db_tp).fillna(False)
 
-        # global 比例：使用還原價
         if self.global_sl is not None or self.global_tp is not None:
             adj_open = data.get('etl:adj_open').reindex(index=position.index, columns=position.columns)
             adj_entry_price = adj_open.where(entries).ffill()
 
             if self.global_sl is not None:
-                # DB 已有值的欄位不補 global（DB 優先）
                 db_sl_mask = (
                     sl_df.replace(0, float('nan')).notna()
                     if self.use_db_sl
@@ -211,23 +218,12 @@ class GoldenAITWStrategyBase:
                 global_tp_exit = (adj_high > global_tp_price).fillna(False) & ~db_tp_mask
                 tp_exit = tp_exit | global_tp_exit
 
-        # 買入當天不觸發 SL/TP
         return FinlabDataFrame((sl_exit | tp_exit) & ~entries)
 
-    def run_strategy(self):
-        """
-        流程：
-        1. _create_df：建立推薦持倉、SL、TP 矩陣
-        2. entries：推薦清單內 AND 買入日 → 進場訊號
-        3. exits ：賣出日 OR SL/TP  → 出場訊號
-        4. hold_until：進場後持倉直到 exits 觸發
-        5. shift(-1)：今日訊號 → 明日執行（FinLab sim 慣例）
-
-        touched_exit 模式（use_db_sl=False, use_db_tp=False, global_sl/tp 有值）：
-        SL/TP 完全交給 sim() 處理，hold_until 不介入，避免雙重計算
-        """
+    def _run_core(self, max_stocks):
+        """週策略核心邏輯，供 run_strategy() Top 1~8 迴圈呼叫"""
         universe = data.get('price:收盤價')
-        position, sl_df, tp_df = self._create_df(universe)
+        position, sl_df, tp_df = self._create_df(universe, max_stocks=max_stocks)
 
         use_db_sl_tp = self.use_db_sl or self.use_db_tp
         use_touched_exit = (
@@ -236,18 +232,14 @@ class GoldenAITWStrategyBase:
         )
 
         dow = pd.Series(position.index.dayofweek, index=position.index)
-
-        # entries：推薦清單內 AND 買入日 → 進場訊號
         buy_mask = (dow == self.buy_weekday).to_numpy()
         entries = position & buy_mask[:, np.newaxis]
 
-        # SL/TP 出場：touched_exit 模式下交給 sim()，hold_until 不處理
         if use_touched_exit:
             sl_tp_exits = pd.DataFrame(False, index=position.index, columns=position.columns)
         else:
             sl_tp_exits = self._build_sl_tp_exits(entries, position, sl_df, tp_df)
 
-        # 正常出場：賣出日
         sell_mask = (dow == self.sell_weekday).to_numpy()
         normal_exits = pd.DataFrame(
             np.broadcast_to(sell_mask[:, np.newaxis], position.shape).copy(),
@@ -255,19 +247,16 @@ class GoldenAITWStrategyBase:
             columns=position.columns
         )
 
-        # buy == sell 時，進場日不觸發正常出場（避免當天進出）
         if self.buy_weekday == self.sell_weekday:
             normal_exits = normal_exits & ~entries
 
         exits = FinlabDataFrame(normal_exits | sl_tp_exits)
-
-        # hold_until → shift(-1) → sim
         final_position = FinlabDataFrame(entries).hold_until(exits)
         final_position = final_position.shift(-1).fillna(False).astype(bool)
         final_position = self._apply_cutoff(final_position)
 
         if use_touched_exit:
-            self.report = sim(
+            return sim(
                 position=final_position,
                 stop_loss=self.global_sl,
                 take_profit=self.global_tp,
@@ -281,7 +270,7 @@ class GoldenAITWStrategyBase:
                 notification_enable=False
             )
         else:
-            self.report = sim(
+            return sim(
                 position=final_position,
                 fee_ratio=1.425/1000,
                 tax_ratio=3/1000,
@@ -291,6 +280,18 @@ class GoldenAITWStrategyBase:
                 upload=False,
                 notification_enable=False
             )
+
+    def run_strategy(self):
+        """
+        流程：
+        對 Top 1~8 各跑一次 _run_core()，回傳 MultiReportWrapper
+        """
+        reports = {}
+        print(f"開始執行 Top 1~{self.max_stocks} 回測...")
+        for n in range(1, self.max_stocks + 1):
+            print(f"-> 正在回測 Top{n}...")
+            reports[f"Top{n}"] = self._run_core(max_stocks=n)
+        self.report = MultiReportWrapper(reports)
         return self.report
 
     def get_report(self):

@@ -84,11 +84,12 @@ def _run_one(params: dict) -> list[dict]:
     失敗時回傳空 list 並印出錯誤。
     """
     freq = params['frequency']
+    max_stocks = params['max_stocks']
 
     override_params = {
         'buy_weekday'   : params['buy_weekday'],
         'sell_weekday'  : params['sell_weekday'],
-        'max_stocks'    : params['max_stocks'],
+        'max_stocks'    : max_stocks,
         'use_db_sl'     : params['use_db_sl'],
         'use_db_tp'     : params['use_db_tp'],
         'global_sl'     : params['global_sl'],
@@ -99,21 +100,17 @@ def _run_one(params: dict) -> list[dict]:
     try:
         if freq == 'weekly':
             strategy = GoldenAITWStrategyWeekly(override_params=override_params)
+            report = strategy._run_core(max_stocks=max_stocks)
+            label = f"Weekly (Top{max_stocks})"
+            return [_extract_metrics(report, label, params)]
         else:
             strategy = GoldenAITWStrategyMonthly(override_params=override_params)
-
-        report_obj = strategy.run_strategy()
-
-        rows = []
-        if hasattr(report_obj, 'reports_dict'):
-            for week_name, r in report_obj.reports_dict.items():
-                label = f"Monthly ({week_name})"
-                rows.append(_extract_metrics(r, label, params))
-        else:
-            label = freq.capitalize()
-            rows.append(_extract_metrics(report_obj, label, params))
-
-        return rows
+            week_reports = strategy._run_core(max_stocks=max_stocks)
+            rows = []
+            for week_name, report in week_reports.items():
+                label = f"Monthly ({week_name}_Top{max_stocks})"
+                rows.append(_extract_metrics(report, label, params))
+            return rows
 
     except Exception as e:
         print(f"    [ERROR] {e}")
