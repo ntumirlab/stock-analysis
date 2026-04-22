@@ -25,6 +25,19 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
     def __init__(self, config_path="config.yaml", override_params=None):
         super().__init__(task_name="monthly", config_path=config_path, override_params=override_params)
 
+    def _get_nth_sundays(self, date_range, n):
+        """每個月第 n 個週日（n 從 1 開始）；若該月不足 n 個週日則跳過"""
+        results = []
+        months = pd.period_range(start=date_range.min(), end=date_range.max(), freq='M')
+        for month in months:
+            first_day = month.to_timestamp()
+            days_to_sunday = (6 - first_day.weekday()) % 7
+            first_sunday = first_day + pd.Timedelta(days=days_to_sunday)
+            nth_sunday = first_sunday + pd.Timedelta(weeks=n - 1)
+            if nth_sunday.month == first_day.month:
+                results.append(nth_sunday)
+        return pd.DatetimeIndex(results)
+
     def run_strategy(self):
         universe = data.get('price:收盤價')
         base_position, sl_df, tp_df = self._create_df(universe)
@@ -35,9 +48,6 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             and (self.global_sl is not None or self.global_tp is not None)
         )
 
-        # selected_weeks 為每週日（resample('W') 預設以週日為週末錨點）
-        weekly_dates = base_position.resample('W').last().index
-
         pre_raw_low, pre_raw_high = None, None
         if not use_touched_exit and (self.use_db_sl or self.use_db_tp):
             pre_raw_low  = data.get('price:最低價').reindex(index=base_position.index, columns=base_position.columns)
@@ -47,7 +57,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         print("開始執行 4 種不同起始週的回測...")
 
         for offset in range(4):
-            selected_weeks = weekly_dates[offset::4]
+            selected_weeks = self._get_nth_sundays(base_position.index, offset + 1)
 
             entry_dates = selected_weeks + pd.Timedelta(days=1 + self.buy_weekday)
             exit_dates = selected_weeks + pd.Timedelta(days=22 + self.sell_weekday)
