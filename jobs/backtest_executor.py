@@ -60,10 +60,10 @@ class BacktestExecutor:
             from strategy_class.alan_tw_strategy_not_start_B import AlanTWStrategyNotStartB as strategy_class
         elif self.strategy_class_name == 'RAndDManagementStrategy':
             from strategy_class.r_and_d_management_strategy import RAndDManagementStrategy as strategy_class
-        elif self.strategy_class_name == 'RogerTWStrategyWeekly':
-            from strategy_class.roger_tw_strategy_weekly import RogerTWStrategyWeekly as strategy_class
-        elif self.strategy_class_name == 'RogerTWStrategyMonthly':
-            from strategy_class.roger_tw_strategy_monthly import RogerTWStrategyMonthly as strategy_class
+        elif self.strategy_class_name == 'GoldenAITWStrategyWeekly':
+            from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly as strategy_class
+        elif self.strategy_class_name == 'GoldenAITWStrategyMonthly':
+            from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly as strategy_class
         elif self.strategy_class_name == 'OscarAndOrStrategy':
             from strategy_class.oscar.oscar_strategy_andor import OscarAndOrStrategy as strategy_class
         elif self.strategy_class_name == 'OscarCompositeStrategy':

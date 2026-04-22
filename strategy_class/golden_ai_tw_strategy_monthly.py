@@ -4,7 +4,7 @@ import pandas as pd
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
-from strategy_class.roger_tw_strategy_base import RogerTWStrategyBase
+from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
 class MultiReportWrapper:
@@ -21,7 +21,7 @@ class MultiReportWrapper:
             print(f"[{name}] 儲存報告至: {new_path}")
             report.display(save_report_path=new_path, **kwargs)
 
-class RogerTWStrategyMonthly(RogerTWStrategyBase):
+class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
     def __init__(self, config_path="config.yaml", override_params=None):
         super().__init__(task_name="monthly", config_path=config_path, override_params=override_params)
 
@@ -116,6 +116,6 @@ class RogerTWStrategyMonthly(RogerTWStrategyBase):
         return self.report
 
 if __name__ == '__main__':
-    strategy = RogerTWStrategyMonthly()
+    strategy = GoldenAITWStrategyMonthly()
     strategy.run_strategy()
     report = strategy.get_report()
