@@ -91,13 +91,12 @@ def _kpi_card(title: str, value, is_pct: bool, positive_is_good: bool, delta=Non
         display, color = '—', '#9ca3af'
     else:
         display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
-        good = value > 0 if positive_is_good else value > -0.2
-        color = '#dc2626' if good else '#059669'  # 台股：紅漲綠跌
+        color = '#1e293b'
 
     arrow = None
     if delta is not None and not pd.isna(delta):
         if abs(delta) < 1e-6:
-            arrow = html.Span('—', style={'color': '#9ca3af', 'fontSize': '16px', 'marginLeft': '6px'})
+            arrow = html.Span('－', style={'color': '#9ca3af', 'fontSize': '16px', 'marginLeft': '6px', 'fontWeight': '700'})
         elif delta > 0:
             arrow = html.Span('▲', style={'color': '#dc2626', 'fontSize': '16px', 'marginLeft': '6px'})
         else:
@@ -134,6 +133,8 @@ def _load_all(strategy: str) -> dict:
     for top_n in sorted(df_all['top_n'].unique()):
         df = df_all[df_all['top_n'] == top_n].copy()
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
+        cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=3)
+        df = df[df['timestamp'] >= cutoff]
 
         if strategy == 'monthly':
             df = (
