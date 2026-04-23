@@ -50,6 +50,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./.env:/app/.env:ro
       - ./data_prod.db:/app/data_prod.db
+      - ./assets:/app/assets:ro
     environment:
       - TZ=Asia/Taipei
     ports:
