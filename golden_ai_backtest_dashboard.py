@@ -1,10 +1,36 @@
+import os
 import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
+from flask import Flask
+from flask_autoindex import AutoIndex
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
+
+flask_server = Flask(__name__)
+
+_assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+_ai = AutoIndex(flask_server, browse_root=_assets, add_url_rules=False)
+
+
+_ALLOWED_DIRS = {'GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly'}
+
+
+@flask_server.route('/reports/')
+def reports_root():
+    return '''<ul>
+        <li><a href="/reports/GoldenAITWStrategyWeekly/">Weekly 報告</a></li>
+        <li><a href="/reports/GoldenAITWStrategyMonthly/">Monthly 報告</a></li>
+    </ul>'''
+
+
+@flask_server.route('/reports/<path:path>')
+def autoindex(path):
+    if path.split('/')[0] not in _ALLOWED_DIRS:
+        return 'Forbidden', 403
+    return _ai.render_autoindex(path)
 
 METRICS = [
     ('annual_return', '年化報酬 (%)',    True),
@@ -93,13 +119,22 @@ def _top_n_options(strategy: str) -> list:
 
 app = dash.Dash(
     __name__,
+    server=flask_server,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     suppress_callback_exceptions=True,
 )
 app.title = 'GoldenAI Backtest Dashboard'
 
 app.layout = dbc.Container([
-    html.H2('GoldenAI 回測績效', className='mt-3 mb-3'),
+    dbc.Row([
+        dbc.Col(html.H2('GoldenAI 回測績效', className='mt-3 mb-3'), width='auto'),
+        dbc.Col([
+            html.A('Weekly 報告', href='/reports/GoldenAITWStrategyWeekly/', target='_blank',
+                   className='btn btn-outline-secondary btn-sm me-2 mt-3'),
+            html.A('Monthly 報告', href='/reports/GoldenAITWStrategyMonthly/', target='_blank',
+                   className='btn btn-outline-secondary btn-sm mt-3'),
+        ], className='d-flex align-items-start'),
+    ], className='mb-1'),
 
     dbc.Row([
         dbc.Col([
@@ -150,7 +185,8 @@ def update_graph(strategy, top_n):
     return _build_figure(df, strategy, int(top_n))
 
 
-server = app.server
+server = flask_server
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=8051)
