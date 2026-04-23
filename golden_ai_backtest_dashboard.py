@@ -39,28 +39,37 @@ METRICS = [
     ('win_ratio',     '勝率 (%)',        True),
 ]
 
+_COLORS = [
+    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
+    '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
+]
+
 dao = GoldenAIBacktestMetricsDAO()
 
 
-def _load(strategy: str, top_n: int) -> pd.DataFrame:
-    df = dao.load(strategy=strategy, top_n=top_n)
-    if df.empty:
-        return df
+def _load_all(strategy: str) -> dict:
+    df_all = dao.load(strategy=strategy)
+    if df_all.empty:
+        return {}
 
-    df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
+    result = {}
+    for top_n in sorted(df_all['top_n'].unique()):
+        df = df_all[df_all['top_n'] == top_n].copy()
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
 
-    if strategy == 'monthly':
-        # Average Week1~4 per execution timestamp
-        df = (
-            df.groupby('timestamp')[['annual_return', 'sharpe', 'sortino', 'max_drawdown', 'win_ratio']]
-            .mean()
-            .reset_index()
-        )
+        if strategy == 'monthly':
+            df = (
+                df.groupby('timestamp')[['annual_return', 'sharpe', 'sortino', 'max_drawdown', 'win_ratio']]
+                .mean()
+                .reset_index()
+            )
 
-    return df.sort_values('timestamp')
+        result[int(top_n)] = df.sort_values('timestamp')
+
+    return result
 
 
-def _build_figure(df: pd.DataFrame, strategy: str, top_n: int) -> go.Figure:
+def _build_figure(data: dict, strategy: str) -> go.Figure:
     titles = [m[1] for m in METRICS]
     fig = make_subplots(
         rows=len(METRICS), cols=1,
@@ -69,52 +78,52 @@ def _build_figure(df: pd.DataFrame, strategy: str, top_n: int) -> go.Figure:
         vertical_spacing=0.08,
     )
 
-    if df.empty:
+    if not data:
         fig.update_layout(
             height=700,
-            title=f"尚無資料（{strategy} / Top{top_n}）",
+            title=f"尚無資料（{strategy}）",
             plot_bgcolor='white',
         )
         return fig
 
-    colors = ['#1f77b4', '#2ca02c', '#d62728', '#ff7f0e']
-
     for i, (col, label, is_pct) in enumerate(METRICS, 1):
-        y = df[col] * 100 if is_pct else df[col]
-        fig.add_trace(
-            go.Scatter(
-                x=df['timestamp'],
-                y=y,
-                mode='lines+markers',
-                name=label,
-                line=dict(color=colors[i - 1], width=2),
-                marker=dict(size=6),
-                showlegend=False,
-                hovertemplate=f'%{{x|%Y-%m-%d}}<br>{label}: %{{y:.2f}}<extra></extra>',
-            ),
-            row=i, col=1,
-        )
+        for top_n, df in sorted(data.items()):
+            color = _COLORS[(top_n - 1) % len(_COLORS)]
+            y = df[col] * 100 if is_pct else df[col]
+            fig.add_trace(
+                go.Scatter(
+                    x=df['timestamp'],
+                    y=y,
+                    mode='lines+markers',
+                    name=f'Top{top_n}',
+                    legendgroup=f'Top{top_n}',
+                    showlegend=(i == 1),
+                    line=dict(color=color, width=2),
+                    marker=dict(size=5),
+                    hovertemplate=f'%{{x|%Y-%m-%d}}<br>Top{top_n} {label}: %{{y:.2f}}<extra></extra>',
+                ),
+                row=i, col=1,
+            )
         if is_pct:
             fig.update_yaxes(ticksuffix='%', row=i, col=1)
 
     fig.update_layout(
-        height=760,
-        margin=dict(l=70, r=20, t=60, b=40),
+        height=820,
+        margin=dict(l=70, r=20, t=80, b=40),
         plot_bgcolor='white',
         paper_bgcolor='white',
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='left',
+            x=0,
+        ),
     )
     fig.update_xaxes(showgrid=True, gridcolor='#eeeeee', tickformat='%Y-%m-%d')
     fig.update_yaxes(showgrid=True, gridcolor='#eeeeee', zeroline=True, zerolinecolor='#cccccc')
 
     return fig
-
-
-def _top_n_options(strategy: str) -> list:
-    df = dao.load(strategy=strategy)
-    if df.empty:
-        return [{'label': f'Top{n}', 'value': n} for n in range(1, 9)]
-    max_n = int(df['top_n'].max())
-    return [{'label': f'Top{n}', 'value': n} for n in range(1, max_n + 1)]
 
 
 app = dash.Dash(
@@ -149,14 +158,6 @@ app.layout = dbc.Container([
                 clearable=False,
             ),
         ], width=4),
-        dbc.Col([
-            html.Label('持股數'),
-            dcc.Dropdown(
-                id='topn-dropdown',
-                value=1,
-                clearable=False,
-            ),
-        ], width=3),
     ], className='mb-4'),
 
     dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
@@ -164,25 +165,12 @@ app.layout = dbc.Container([
 
 
 @app.callback(
-    Output('topn-dropdown', 'options'),
-    Output('topn-dropdown', 'value'),
-    Input('strategy-dropdown', 'value'),
-)
-def update_topn_options(strategy):
-    options = _top_n_options(strategy)
-    return options, options[0]['value'] if options else 1
-
-
-@app.callback(
     Output('metrics-graph', 'figure'),
     Input('strategy-dropdown', 'value'),
-    Input('topn-dropdown', 'value'),
 )
-def update_graph(strategy, top_n):
-    if top_n is None:
-        top_n = 1
-    df = _load(strategy, int(top_n))
-    return _build_figure(df, strategy, int(top_n))
+def update_graph(strategy):
+    data = _load_all(strategy)
+    return _build_figure(data, strategy)
 
 
 server = flask_server
