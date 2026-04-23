@@ -51,6 +51,13 @@ class OrderExecutor:
         strategy = self.load_strategy(strategy_class_name)
         report = strategy.run_strategy()
 
+        # 排除指定成分股
+        excluded_stocks = self.config_loader.config.get('excluded_stocks', [])
+        stocks_to_exclude = [s for s in excluded_stocks if s in report.position.columns]
+        if stocks_to_exclude:
+            logger.info(f"排除成分股: {stocks_to_exclude}")
+            report.position = report.position.drop(columns=stocks_to_exclude)
+
         port = Portfolio({
             'strategy': (report, 1.0),
         })

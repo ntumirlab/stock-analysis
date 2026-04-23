@@ -18,6 +18,13 @@ notification:
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "${TELEGRAM_CHAT_ID}"
 
+# 下單時排除的成分股（股票代號列表）
+excluded_stocks:
+  - "3430"  # 奇鈦科
+  - "5498"  # 凱崴
+  - "3709"  # 鑫聯大投控
+  - "4989"  # 榮科
+
 users:
   junting:
     shioaji:
