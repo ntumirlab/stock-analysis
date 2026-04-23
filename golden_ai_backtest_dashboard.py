@@ -72,19 +72,36 @@ def _latest_kpi(strategy: str) -> dict:
             .reset_index()
         )
 
-    latest_ts = df_all['timestamp'].max()
+    sorted_ts = sorted(df_all['timestamp'].unique())
+    latest_ts = sorted_ts[-1]
     avg = df_all[df_all['timestamp'] == latest_ts][_KPI_COLS].mean()
+    top_ns = sorted(df_all['top_n'].unique())
+    result = {'timestamp': latest_ts, 'top_n_min': int(top_ns[0]), 'top_n_max': int(top_ns[-1]), **avg.to_dict()}
 
-    return {'timestamp': latest_ts, **avg.to_dict()}
+    if len(sorted_ts) >= 2:
+        prev_ts = sorted_ts[-2]
+        prev_avg = df_all[df_all['timestamp'] == prev_ts][_KPI_COLS].mean()
+        result['prev'] = prev_avg.to_dict()
+
+    return result
 
 
-def _kpi_card(title: str, value, is_pct: bool, positive_is_good: bool) -> dbc.Col:
+def _kpi_card(title: str, value, is_pct: bool, positive_is_good: bool, delta=None) -> dbc.Col:
     if value is None or pd.isna(value):
         display, color = '—', '#9ca3af'
     else:
-        display = f"{value * 100:.1f}%" if is_pct else f"{value:.2f}"
+        display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
         good = value > 0 if positive_is_good else value > -0.2
-        color = '#059669' if good else '#dc2626'
+        color = '#dc2626' if good else '#059669'  # 台股：紅漲綠跌
+
+    arrow = None
+    if delta is not None and not pd.isna(delta):
+        if abs(delta) < 1e-6:
+            arrow = html.Span('—', style={'color': '#9ca3af', 'fontSize': '16px', 'marginLeft': '6px'})
+        elif delta > 0:
+            arrow = html.Span('▲', style={'color': '#dc2626', 'fontSize': '16px', 'marginLeft': '6px'})
+        else:
+            arrow = html.Span('▼', style={'color': '#059669', 'fontSize': '16px', 'marginLeft': '6px'})
 
     return dbc.Col(
         dbc.Card(
@@ -94,9 +111,13 @@ def _kpi_card(title: str, value, is_pct: bool, positive_is_good: bool) -> dbc.Co
                     'fontWeight': '500', 'marginBottom': '6px',
                     'textTransform': 'uppercase', 'letterSpacing': '0.05em',
                 }),
-                html.H3(display, style={
-                    'color': color, 'fontWeight': '700', 'marginBottom': '0',
-                }),
+                html.Div([
+                    html.H3(display, style={
+                        'color': color, 'fontWeight': '700',
+                        'marginBottom': '0', 'display': 'inline',
+                    }),
+                    arrow,
+                ], style={'display': 'flex', 'alignItems': 'center'}),
             ], style={'padding': '20px 24px'}),
             style=_CARD_STYLE,
         ),
@@ -151,6 +172,23 @@ def _build_figure(data: dict, strategy: str, metric: str) -> go.Figure:
             hovertemplate=f'%{{x|%Y-%m-%d}}<br>持 {top_n} 檔: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         ))
 
+    avg_df = (
+        pd.concat([df.set_index('timestamp')[[metric]] for df in data.values()], axis=1)
+        .mean(axis=1)
+        .reset_index()
+    )
+    avg_df.columns = ['timestamp', metric]
+    avg_y = avg_df[metric] * 100 if is_pct else avg_df[metric]
+    fig.add_trace(go.Scatter(
+        x=avg_df['timestamp'],
+        y=avg_y,
+        mode='lines+markers',
+        name='平均',
+        line=dict(color='#94a3b8', width=3),
+        marker=dict(size=6),
+        hovertemplate=f'%{{x|%Y-%m-%d}}<br>平均: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
+    ))
+
     fig.update_layout(
         height=500,
         margin=dict(l=60, r=20, t=30, b=40),
@@ -168,9 +206,28 @@ def _build_figure(data: dict, strategy: str, metric: str) -> go.Figure:
         font=dict(family='system-ui, -apple-system, sans-serif', color='#374151', size=16),
         yaxis=dict(title_font=dict(size=16)),
     )
+    all_dates = pd.concat([df['timestamp'] for df in data.values()])
+    x_min, x_max = all_dates.min(), all_dates.max()
+    delta_days = (x_max - x_min).days
+    if delta_days <= 14:
+        freq = 'D'
+    elif delta_days <= 60:
+        freq = 'W-MON'
+    elif delta_days <= 180:
+        freq = 'MS'
+    else:
+        freq = 'QS'
+    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
+    tickvals = sorted(set([x_min] + interior + [x_max]))
+    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
-    fig.update_xaxes(showgrid=True, gridcolor='#e5e7eb', tickformat='%Y-%m-%d', tickfont=dict(size=16))
+    fig.update_xaxes(
+        showgrid=True, gridcolor='#e5e7eb',
+        tickmode='array', tickvals=tickvals, ticktext=ticktext,
+        tickfont=dict(size=16), tickangle=-30,
+    )
     fig.update_yaxes(showgrid=True, gridcolor='#e5e7eb', zeroline=True, zerolinecolor='#d1d5db', tickfont=dict(size=16))
 
     return fig
@@ -302,15 +359,19 @@ def update_kpi(strategy):
     ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
     return [
         html.P(
-            f'最新回測績效（持 1~8 檔平均）　·　{ts_str}',
+            f'最新回測績效（持 {kpi["top_n_min"]}~{kpi["top_n_max"]} 檔平均）　·　{ts_str}',
             style={'fontSize': '18px', 'color': '#6b7280', 'fontWeight': '600',
                    'marginBottom': '10px', 'letterSpacing': '0.02em'},
         ),
         dbc.Row([
-            _kpi_card('年化報酬', kpi['annual_return'], is_pct=True,  positive_is_good=True),
-            _kpi_card('Sharpe Ratio', kpi['sharpe'],   is_pct=False, positive_is_good=True),
-            _kpi_card('Max Drawdown', kpi['max_drawdown'], is_pct=True, positive_is_good=False),
-            _kpi_card('勝率', kpi['win_ratio'],         is_pct=True,  positive_is_good=True),
+            _kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,  positive_is_good=True,
+                      delta=kpi['annual_return'] - kpi['prev']['annual_return'] if 'prev' in kpi else None),
+            _kpi_card('Sharpe Ratio', kpi['sharpe'],     is_pct=False, positive_is_good=True,
+                      delta=kpi['sharpe'] - kpi['prev']['sharpe'] if 'prev' in kpi else None),
+            _kpi_card('Max Drawdown', kpi['max_drawdown'], is_pct=True, positive_is_good=False,
+                      delta=kpi['max_drawdown'] - kpi['prev']['max_drawdown'] if 'prev' in kpi else None),
+            _kpi_card('勝率',       kpi['win_ratio'],    is_pct=True,  positive_is_good=True,
+                      delta=kpi['win_ratio'] - kpi['prev']['win_ratio'] if 'prev' in kpi else None),
         ], className='g-3'),
     ]
 
