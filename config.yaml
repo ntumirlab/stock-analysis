@@ -36,7 +36,7 @@ users:
         SHIOAJI_CERT_PASSWORD: "${SHIOAJI_CERT_PASSWORD}"
       constant:
         rebalance_safety_weight: 0.3
-        strategy_class_name: "AlanTWStrategyACE"
+        strategy_class_name: "AlanTWStrategyEFGObserve"
     fugle:
       env:
         FUGLE_CONFIG_PATH: "${FUGLE_CONFIG_PATH}"
