@@ -5,7 +5,6 @@ import dash_bootstrap_components as dbc
 from flask import Flask
 from flask_autoindex import AutoIndex
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 
@@ -32,19 +31,77 @@ def autoindex(path):
         return 'Forbidden', 403
     return _ai.render_autoindex(path)
 
-METRICS = [
-    ('annual_return', '年化報酬 (%)',    True),
-    ('sharpe',        'Sharpe Ratio',   False),
-    ('max_drawdown',  'Max Drawdown (%)', True),
-    ('win_ratio',     '勝率 (%)',        True),
+
+# col -> (label, is_pct, positive_is_good)
+_METRIC_META = {
+    'annual_return': ('年化報酬', True,  True),
+    'sharpe':        ('Sharpe Ratio', False, True),
+    'max_drawdown':  ('Max Drawdown', True,  False),
+    'win_ratio':     ('勝率', True,  True),
+}
+
+# Tableau 10
+_COLORS = [
+    '#4E79A7', '#F28E2B', '#E15759', '#76B7B2',
+    '#59A14F', '#EDC948', '#B07AA1', '#FF9DA7',
 ]
 
-_COLORS = [
-    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
-    '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
-]
+_PAGE_BG = '#f0f2f5'
+_CARD_STYLE = {
+    'boxShadow': '0 1px 4px rgba(0,0,0,0.08)',
+    'borderRadius': '8px',
+    'border': 'none',
+}
 
 dao = GoldenAIBacktestMetricsDAO()
+
+_KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
+
+
+def _latest_kpi(strategy: str) -> dict:
+    df_all = dao.load(strategy=strategy)
+    if df_all.empty:
+        return {}
+
+    df_all['timestamp'] = pd.to_datetime(df_all['timestamp']).dt.normalize()
+
+    if strategy == 'monthly':
+        df_all = (
+            df_all.groupby(['timestamp', 'top_n'])[_KPI_COLS]
+            .mean()
+            .reset_index()
+        )
+
+    latest_ts = df_all['timestamp'].max()
+    avg = df_all[df_all['timestamp'] == latest_ts][_KPI_COLS].mean()
+
+    return {'timestamp': latest_ts, **avg.to_dict()}
+
+
+def _kpi_card(title: str, value, is_pct: bool, positive_is_good: bool) -> dbc.Col:
+    if value is None or pd.isna(value):
+        display, color = '—', '#9ca3af'
+    else:
+        display = f"{value * 100:.1f}%" if is_pct else f"{value:.2f}"
+        good = value > 0 if positive_is_good else value > -0.2
+        color = '#059669' if good else '#dc2626'
+
+    return dbc.Col(
+        dbc.Card(
+            dbc.CardBody([
+                html.P(title, style={
+                    'fontSize': '16px', 'color': '#6b7280',
+                    'fontWeight': '500', 'marginBottom': '6px',
+                    'textTransform': 'uppercase', 'letterSpacing': '0.05em',
+                }),
+                html.H3(display, style={
+                    'color': color, 'fontWeight': '700', 'marginBottom': '0',
+                }),
+            ], style={'padding': '20px 24px'}),
+            style=_CARD_STYLE,
+        ),
+        xs=6, lg=3,
+    )
 
 
 def _load_all(strategy: str) -> dict:
@@ -69,59 +126,52 @@ def _load_all(strategy: str) -> dict:
     return result
 
 
-def _build_figure(data: dict, strategy: str) -> go.Figure:
-    titles = [m[1] for m in METRICS]
-    fig = make_subplots(
-        rows=len(METRICS), cols=1,
-        shared_xaxes=True,
-        subplot_titles=titles,
-        vertical_spacing=0.08,
-    )
+def _build_figure(data: dict, strategy: str, metric: str) -> go.Figure:
+    label, is_pct, _ = _METRIC_META[metric]
+    fig = go.Figure()
 
     if not data:
         fig.update_layout(
-            height=700,
+            height=500,
             title=f"尚無資料（{strategy}）",
             plot_bgcolor='white',
         )
         return fig
 
-    for i, (col, label, is_pct) in enumerate(METRICS, 1):
-        for top_n, df in sorted(data.items()):
-            color = _COLORS[(top_n - 1) % len(_COLORS)]
-            y = df[col] * 100 if is_pct else df[col]
-            fig.add_trace(
-                go.Scatter(
-                    x=df['timestamp'],
-                    y=y,
-                    mode='lines+markers',
-                    name=f'Top{top_n}',
-                    legendgroup=f'Top{top_n}',
-                    showlegend=(i == 1),
-                    line=dict(color=color, width=2),
-                    marker=dict(size=5),
-                    hovertemplate=f'%{{x|%Y-%m-%d}}<br>Top{top_n} {label}: %{{y:.2f}}<extra></extra>',
-                ),
-                row=i, col=1,
-            )
-        if is_pct:
-            fig.update_yaxes(ticksuffix='%', row=i, col=1)
+    for top_n, df in sorted(data.items()):
+        color = _COLORS[(top_n - 1) % len(_COLORS)]
+        y = df[metric] * 100 if is_pct else df[metric]
+        fig.add_trace(go.Scatter(
+            x=df['timestamp'],
+            y=y,
+            mode='lines+markers',
+            name=f'持 {top_n} 檔',
+            line=dict(color=color, width=2),
+            marker=dict(size=5),
+            hovertemplate=f'%{{x|%Y-%m-%d}}<br>持 {top_n} 檔: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
+        ))
 
     fig.update_layout(
-        height=820,
-        margin=dict(l=70, r=20, t=80, b=40),
+        height=500,
+        margin=dict(l=60, r=20, t=30, b=40),
         plot_bgcolor='white',
-        paper_bgcolor='white',
+        paper_bgcolor='rgba(0,0,0,0)',
+        yaxis_title=f'{label} (%)' if is_pct else label,
         legend=dict(
             orientation='h',
             yanchor='bottom',
             y=1.02,
             xanchor='left',
             x=0,
+            font=dict(size=16),
         ),
+        font=dict(family='system-ui, -apple-system, sans-serif', color='#374151', size=16),
+        yaxis=dict(title_font=dict(size=16)),
     )
-    fig.update_xaxes(showgrid=True, gridcolor='#eeeeee', tickformat='%Y-%m-%d')
-    fig.update_yaxes(showgrid=True, gridcolor='#eeeeee', zeroline=True, zerolinecolor='#cccccc')
+    if is_pct:
+        fig.update_yaxes(ticksuffix='%')
+    fig.update_xaxes(showgrid=True, gridcolor='#e5e7eb', tickformat='%Y-%m-%d', tickfont=dict(size=16))
+    fig.update_yaxes(showgrid=True, gridcolor='#e5e7eb', zeroline=True, zerolinecolor='#d1d5db', tickfont=dict(size=16))
 
     return fig
 
@@ -129,48 +179,150 @@ def _build_figure(data: dict, strategy: str) -> go.Figure:
 app = dash.Dash(
     __name__,
     server=flask_server,
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[dbc.themes.FLATLY],
     suppress_callback_exceptions=True,
 )
 app.title = 'GoldenAI Backtest Dashboard'
 
-app.layout = dbc.Container([
-    dbc.Row([
-        dbc.Col(html.H2('GoldenAI 回測績效', className='mt-3 mb-3'), width='auto'),
-        dbc.Col([
-            html.A('Weekly 報告', href='/reports/GoldenAITWStrategyWeekly/', target='_blank',
-                   className='btn btn-outline-secondary btn-sm me-2 mt-3'),
-            html.A('Monthly 報告', href='/reports/GoldenAITWStrategyMonthly/', target='_blank',
-                   className='btn btn-outline-secondary btn-sm mt-3'),
-        ], className='d-flex align-items-start'),
-    ], className='mb-1'),
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            #metric-selector .form-check { padding-left: 0; }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
 
-    dbc.Row([
-        dbc.Col([
-            html.Label('策略'),
-            dcc.Dropdown(
-                id='strategy-dropdown',
-                options=[
-                    {'label': 'Weekly（週策略）', 'value': 'weekly'},
-                    {'label': 'Monthly（月策略 Week1~4 平均）', 'value': 'monthly'},
-                ],
-                value='weekly',
-                clearable=False,
-            ),
-        ], width=4),
-    ], className='mb-4'),
+app.layout = html.Div(
+    style={'backgroundColor': _PAGE_BG, 'minHeight': '100vh'},
+    children=[
+        # Navbar
+        html.Div(
+            style={
+                'backgroundColor': 'white',
+                'borderBottom': '1px solid #e5e7eb',
+                'padding': '0 24px',
+            },
+            children=dbc.Container([
+                dbc.Row([
+                    dbc.Col(
+                        html.H5(
+                            'GoldenAI 回測績效',
+                            className='mb-0 py-3',
+                            style={'fontWeight': '600', 'color': '#1a202c', 'fontSize': '24px'},
+                        ),
+                        width='auto',
+                    ),
+                    dbc.Col(
+                        html.Div([
+                            html.A('Weekly 報告',
+                                   href='/reports/GoldenAITWStrategyWeekly/',
+                                   target='_blank',
+                                   className='btn btn-outline-secondary me-2'),
+                            html.A('Monthly 報告',
+                                   href='/reports/GoldenAITWStrategyMonthly/',
+                                   target='_blank',
+                                   className='btn btn-outline-secondary'),
+                        ], className='d-flex align-items-center h-100'),
+                    ),
+                ], align='center'),
+            ], fluid=True),
+        ),
 
-    dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
-], fluid=True)
+        # Content
+        dbc.Container([
+            dbc.Row([
+                dbc.Col([
+                    html.Label(
+                        '策略',
+                        style={'fontWeight': '500', 'color': '#374151', 'marginBottom': '6px', 'fontSize': '18px'},
+                    ),
+                    dcc.Dropdown(
+                        id='strategy-dropdown',
+                        options=[
+                            {'label': 'Weekly（週策略）', 'value': 'weekly'},
+                            {'label': 'Monthly（月策略 Week 1~4 平均）', 'value': 'monthly'},
+                        ],
+                        value='weekly',
+                        clearable=False,
+                    ),
+                ], xs=12, md=5, lg=4),
+            ], className='mt-4 mb-3'),
+
+            html.Div(id='kpi-row', className='mb-3'),
+
+            dbc.Card([
+                dbc.CardBody([
+                    dbc.RadioItems(
+                        id='metric-selector',
+                        options=[
+                            {'label': '年化報酬', 'value': 'annual_return'},
+                            {'label': 'Sharpe Ratio', 'value': 'sharpe'},
+                            {'label': 'Max Drawdown', 'value': 'max_drawdown'},
+                            {'label': '勝率', 'value': 'win_ratio'},
+                        ],
+                        value='annual_return',
+                        inputClassName='btn-check',
+                        labelClassName='btn btn-outline-secondary',
+                        labelCheckedClassName='active',
+                        inline=True,
+                        className='mb-3',
+                    ),
+                    dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
+                ], style={'padding': '20px 24px'}),
+            ], style=_CARD_STYLE, className='mb-4'),
+        ], fluid=True),
+    ],
+)
+
+
+@app.callback(
+    Output('kpi-row', 'children'),
+    Input('strategy-dropdown', 'value'),
+)
+def update_kpi(strategy):
+    kpi = _latest_kpi(strategy)
+    if not kpi:
+        return []
+
+    ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
+    return [
+        html.P(
+            f'最新回測績效（持 1~8 檔平均）　·　{ts_str}',
+            style={'fontSize': '18px', 'color': '#6b7280', 'fontWeight': '600',
+                   'marginBottom': '10px', 'letterSpacing': '0.02em'},
+        ),
+        dbc.Row([
+            _kpi_card('年化報酬', kpi['annual_return'], is_pct=True,  positive_is_good=True),
+            _kpi_card('Sharpe Ratio', kpi['sharpe'],   is_pct=False, positive_is_good=True),
+            _kpi_card('Max Drawdown', kpi['max_drawdown'], is_pct=True, positive_is_good=False),
+            _kpi_card('勝率', kpi['win_ratio'],         is_pct=True,  positive_is_good=True),
+        ], className='g-3'),
+    ]
 
 
 @app.callback(
     Output('metrics-graph', 'figure'),
     Input('strategy-dropdown', 'value'),
+    Input('metric-selector', 'value'),
 )
-def update_graph(strategy):
+def update_graph(strategy, metric):
     data = _load_all(strategy)
-    return _build_figure(data, strategy)
+    return _build_figure(data, strategy, metric)
 
 
 server = flask_server
