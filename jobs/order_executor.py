@@ -53,10 +53,8 @@ class OrderExecutor:
 
         # 排除指定成分股
         excluded_stocks = self.config_loader.config.get('excluded_stocks', [])
-        stocks_to_exclude = [s for s in excluded_stocks if s in report.position.columns]
-        if stocks_to_exclude:
-            logger.info(f"排除成分股: {stocks_to_exclude}")
-            report.position = report.position.drop(columns=stocks_to_exclude)
+        if excluded_stocks:
+            logger.info(f"排除成分股: {excluded_stocks}")
 
         port = Portfolio({
             'strategy': (report, 1.0),
@@ -73,7 +71,7 @@ class OrderExecutor:
             raise ValueError(f"{self.user_name}'s total balance is not positive. Please check your {self.broker_name} account balance.")
 
         safety_weight = self.config_loader.get_user_constant("rebalance_safety_weight")
-        pm.update(port, total_balance=total_balance, rebalance_safety_weight=safety_weight, odd_lot=True, force_override_difference=True, smooth_transition=False)
+        pm.update(port, total_balance=total_balance, rebalance_safety_weight=safety_weight, odd_lot=True, force_override_difference=True, smooth_transition=False, excluded_stock_ids=excluded_stocks)
         pm.to_local(name=pm_name)
 
         # 創建 order_executor（不實際下單，只用來顯示警示股）
@@ -121,6 +119,8 @@ class OrderExecutor:
             from strategy_class.peterwu_tw_strategy import PeterWuStrategy as strategy_class
         elif strategy_class_name == 'AlanTWStrategyACE':
             from strategy_class.alan_tw_strategy_ACE import AlanTWStrategyACE as strategy_class
+        elif strategy_class_name == 'AlanTWStrategyEFGObserve':
+            from strategy_class.alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve as strategy_class
         elif strategy_class_name == 'RAndDManagementStrategy':
             from strategy_class.r_and_d_management_strategy import RAndDManagementStrategy as strategy_class
         else:
