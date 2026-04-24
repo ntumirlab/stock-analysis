@@ -18,13 +18,6 @@ notification:
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "${TELEGRAM_CHAT_ID}"
 
-# 下單時排除的成分股（股票代號列表）
-excluded_stocks:
-  - "3430"  # 奇鈦科
-  - "5498"  # 凱崴
-  - "3709"  # 鑫聯大投控
-  - "4989"  # 榮科
-
 users:
   junting:
     shioaji:
@@ -37,6 +30,11 @@ users:
       constant:
         rebalance_safety_weight: 0.3
         strategy_class_name: "AlanTWStrategyEFGObserve"
+        excluded_stocks:  # 切換策略過渡期排除既有持倉，避免在高點買入
+          # - "3430"  # 奇鈦科
+          # - "5498"  # 凱崴
+          # - "3709"  # 鑫聯大投控
+          # - "4989"  # 榮科
     fugle:
       env:
         FUGLE_CONFIG_PATH: "${FUGLE_CONFIG_PATH}"

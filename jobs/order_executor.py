@@ -52,7 +52,7 @@ class OrderExecutor:
         report = strategy.run_strategy()
 
         # 排除指定成分股
-        excluded_stocks = self.config_loader.config.get('excluded_stocks', [])
+        excluded_stocks = self.config_loader.get_user_constant("excluded_stocks") or []
         if excluded_stocks:
             logger.info(f"排除成分股: {excluded_stocks}")
 

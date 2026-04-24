@@ -16,8 +16,8 @@
 35 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyWeekly >> /app/logs/backtest.log 2>&1
 55 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyMonthly >> /app/logs/backtest.log 2>&1
 
-# 每天 23:00 - 下單
-0 23 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=junting --broker_name=shioaji >> /app/logs/order.log 2>&1
+# 每天 00:01 - 下單
+1 0 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=junting --broker_name=shioaji >> /app/logs/order.log 2>&1
 
 # 每週日 23:45 - 抓取新推薦名單.md
 45 23 * * 7 cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.drive_fetcher >> /app/logs/drive_fetcher.log 2>&1
