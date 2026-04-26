@@ -1,11 +1,14 @@
 import os
 import numpy as np
 import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
+from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
 
@@ -284,13 +287,18 @@ class GoldenAITWStrategyBase:
     def run_strategy(self):
         """
         流程：
-        對 Top 1~8 各跑一次 _run_core()，回傳 MultiReportWrapper
+        對 Top 1~N 各跑一次 _run_core()，回傳 MultiReportWrapper，並將績效指標存入 DB
         """
+        dao = GoldenAIBacktestMetricsDAO()
+        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+
         reports = {}
         print(f"開始執行 Top 1~{self.max_stocks} 回測...")
         for n in range(1, self.max_stocks + 1):
             print(f"-> 正在回測 Top{n}...")
-            reports[f"Top{n}"] = self._run_core(max_stocks=n)
+            report = self._run_core(max_stocks=n)
+            reports[f"Top{n}"] = report
+            dao.save(timestamp=timestamp, strategy=self.task_name, week=None, top_n=n, report=report)
         self.report = MultiReportWrapper(reports)
         return self.report
 
