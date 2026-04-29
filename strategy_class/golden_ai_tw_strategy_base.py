@@ -37,7 +37,8 @@ class GoldenAITWStrategyBase:
 
         self.buy_weekday = override_params.get('buy_weekday', golden_ai_config.get('buy_weekday', 1)) - 1
         self.sell_weekday = override_params.get('sell_weekday', golden_ai_config.get('sell_weekday', 5)) - 1
-        self.max_stocks = override_params.get('max_stocks', golden_ai_config.get('max_stocks', 5))
+        self.rank_start = override_params.get('rank_start', golden_ai_config.get('rank_start', 1))
+        self.rank_end = override_params.get('rank_end', golden_ai_config.get('rank_end', 5))
         self.use_db_sl = override_params.get('use_db_sl', golden_ai_config.get('use_db_sl', True))
         self.global_sl = override_params.get('global_sl', golden_ai_config.get('global_sl', None))
         self.use_db_tp = override_params.get('use_db_tp', golden_ai_config.get('use_db_tp', True))
@@ -48,9 +49,9 @@ class GoldenAITWStrategyBase:
         backtest_date_raw = override_params.get('backtest_date', None)
         self.backtest_date = pd.Timestamp(backtest_date_raw).normalize() if backtest_date_raw else None
 
-        print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Top 1~{self.max_stocks}")
+        print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Rank {self.rank_start}~{self.rank_end}")
 
-    def _create_df(self, universe, max_stocks=None):
+    def _create_df(self, universe, ranks):
         """
         讀取推薦 DAO 並轉換為 Finlab 可用的 Position DataFrame
         支援 stocks 為物件列表，從 stock.id 取代號
@@ -59,7 +60,6 @@ class GoldenAITWStrategyBase:
         - 周中（週一～週六）產出的清單 → 對齊到「下一個週日」（代表下週的推薦）
         - 週日當天產出的清單 → 留在當天（代表本週的推薦）
         """
-        effective_max = max_stocks if max_stocks is not None else self.max_stocks
 
         dao = RecommendationDAO(frequency=self.task_name)
         recommendation_records = dao.load()
@@ -89,18 +89,27 @@ class GoldenAITWStrategyBase:
             else:
                 weekly_batches[aligned_date] = (dt, stocks)
 
+        # 先收集所有週出現過的 stock_id，用來對缺席的股票補 0
+        all_stock_ids = set()
+        for _, (_, stock_list) in weekly_batches.items():
+            for stock in stock_list:
+                sid = str(getattr(stock, 'id', ''))
+                if sid:
+                    all_stock_ids.add(sid)
+
         records, sl_records, tp_records = [], [], []
 
         for aligned_date, (_, stock_list) in weekly_batches.items():
             stock_list = sorted(stock_list, key=lambda x: getattr(x, 'priority', float('inf')))
-            if effective_max is not None:
-                stock_list = stock_list[:effective_max]
+            selected = [stock_list[r - 1] for r in ranks if r <= len(stock_list)]
+            selected_ids = set()
 
-            for stock in stock_list:
+            for stock in selected:
                 stock_id = getattr(stock, 'id', None)
                 if not stock_id:
                     continue
                 sid = str(stock_id)
+                selected_ids.add(sid)
 
                 records.append({'date': aligned_date, 'stock_id': sid, 'signal': 1})
 
@@ -113,6 +122,10 @@ class GoldenAITWStrategyBase:
                     tp_price = getattr(stock, 'TP', None)
                     if tp_price is not None:
                         tp_records.append({'date': aligned_date, 'stock_id': sid, 'tp_price': tp_price})
+
+            # 本週未選到的股票明確補 0，防止 ffill 跨週帶入上週持倉
+            for sid in all_stock_ids - selected_ids:
+                records.append({'date': aligned_date, 'stock_id': sid, 'signal': 0})
 
         def _pivot(recs, value_col, fallback_index):
             df = pd.DataFrame(recs)
@@ -227,10 +240,12 @@ class GoldenAITWStrategyBase:
 
         return FinlabDataFrame((sl_exit | tp_exit) & ~entries)
 
-    def _run_core(self, max_stocks):
-        """週策略核心邏輯，供 run_strategy() Top 1~8 迴圈呼叫"""
+    def _run_core(self, ranks):
+        """週策略核心邏輯，供 run_strategy() ranks 迴圈呼叫"""
         universe = data.get('price:收盤價')
-        position, sl_df, tp_df = self._create_df(universe, max_stocks=max_stocks)
+        if self.backtest_date is not None:
+            universe = universe[universe.index <= self.backtest_date]
+        position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
 
         use_db_sl_tp = self.use_db_sl or self.use_db_tp
         use_touched_exit = (
@@ -288,24 +303,41 @@ class GoldenAITWStrategyBase:
                 notification_enable=False
             )
 
-    def run_strategy(self):
-        """
-        流程：
-        對 Top 1~N 各跑一次 _run_core()，回傳 MultiReportWrapper，並將績效指標存入 DB
-        """
+    def run_strategy(self, report_dir=None):
+        from itertools import combinations as _combinations
+
         dao = GoldenAIBacktestMetricsDAO()
         if self.backtest_date is not None:
             timestamp = self.backtest_date.strftime("%Y-%m-%d %H:%M:%S")
         else:
             timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
 
+        date_str = timestamp[:10]
+        time_str = timestamp[11:].replace(':', '-')
+
+        if report_dir is not None:
+            os.makedirs(report_dir, exist_ok=True)
+
+        ranks_pool = list(range(self.rank_start, self.rank_end + 1))
+        all_subsets = [list(c) for r in range(1, len(ranks_pool) + 1) for c in _combinations(ranks_pool, r)]
+        total = len(all_subsets)
+        print(f"開始執行 {total} 組 Ranks 回測（Rank {self.rank_start}~{self.rank_end}）...")
+
         reports = {}
-        print(f"開始執行 Top 1~{self.max_stocks} 回測...")
-        for n in range(1, self.max_stocks + 1):
-            print(f"-> 正在回測 Top{n}...")
-            report = self._run_core(max_stocks=n)
-            reports[f"Top{n}"] = report
-            dao.save(timestamp=timestamp, strategy=self.task_name, week=None, top_n=n, report=report)
+        for i, ranks in enumerate(all_subsets, 1):
+            ranks_str = ','.join(map(str, ranks))
+            if dao.exists_for_date(date_str, self.task_name, ranks_str):
+                print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
+                continue
+            print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
+            report = self._run_core(ranks=ranks)
+            reports[f"Ranks[{ranks_str}]"] = report
+            dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
+            if report_dir is not None:
+                save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
+                report.display(save_report_path=save_path)
+
+        print("全部完成。")
         self.report = MultiReportWrapper(reports)
         return self.report
 

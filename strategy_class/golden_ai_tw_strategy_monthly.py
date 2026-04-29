@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -27,10 +28,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 results.append(nth_sunday)
         return pd.DatetimeIndex(results)
 
-    def _run_core(self, max_stocks):
-        """月策略核心：對給定 max_stocks 跑 Week1~4，回傳 {'Week1': report, ...}"""
+    def _run_core(self, ranks):
+        """月策略核心：對給定 ranks 跑 Week1~4，回傳 {'Week1': report, ...}"""
         universe = data.get('price:收盤價')
-        base_position, sl_df, tp_df = self._create_df(universe, max_stocks=max_stocks)
+        if self.backtest_date is not None:
+            universe = universe[universe.index <= self.backtest_date]
+        base_position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
 
         use_db_sl_tp = self.use_db_sl or self.use_db_tp
         use_touched_exit = (
@@ -104,23 +107,43 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
 
         return reports
 
-    def run_strategy(self):
-        """
-        流程：
-        對 Top 1~N 各跑一次 _run_core()（內含 Week1~4），
-        展開為 N×4 組回測，回傳 MultiReportWrapper，並將績效指標存入 DB
-        """
+    def run_strategy(self, report_dir=None):
+        from itertools import combinations as _combinations
+
         dao = GoldenAIBacktestMetricsDAO()
-        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+        if self.backtest_date is not None:
+            timestamp = self.backtest_date.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+
+        date_str = timestamp[:10]
+        time_str = timestamp[11:].replace(':', '-')
+
+        if report_dir is not None:
+            os.makedirs(report_dir, exist_ok=True)
+
+        ranks_pool = list(range(self.rank_start, self.rank_end + 1))
+        all_subsets = [list(c) for r in range(1, len(ranks_pool) + 1) for c in _combinations(ranks_pool, r)]
+        total = len(all_subsets)
+        print(f"開始執行 {total} 組 Ranks × Week1~4 回測（Rank {self.rank_start}~{self.rank_end}）...")
 
         all_reports = {}
-        print(f"開始執行 Top 1~{self.max_stocks} × Week1~4 回測...")
-        for n in range(1, self.max_stocks + 1):
-            print(f"-> 正在回測 Top{n}...")
-            week_reports = self._run_core(max_stocks=n)
+        for i, ranks in enumerate(all_subsets, 1):
+            ranks_str = ','.join(map(str, ranks))
+            if dao.exists_for_date(date_str, 'monthly', ranks_str):
+                print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
+                continue
+            print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
+            week_reports = self._run_core(ranks=ranks)
             for week_name, report in week_reports.items():
-                all_reports[f"{week_name}_Top{n}"] = report
-                dao.save(timestamp=timestamp, strategy='monthly', week=week_name, top_n=n, report=report)
+                all_reports[f"Ranks[{ranks_str}]_{week_name}"] = report
+                dao.save(timestamp=timestamp, strategy='monthly', week=week_name, ranks=ranks_str, report=report)
+            if report_dir is not None:
+                wrapper = MultiReportWrapper(week_reports)
+                save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
+                wrapper.display(save_report_path=save_path)
+
+        print("全部完成。")
         self.report = MultiReportWrapper(all_reports)
         return self.report
 

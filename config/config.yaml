@@ -55,7 +55,8 @@ golden_ai:
   weekly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
     sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
-    max_stocks: 8          # 最大持股數
+    rank_start: 1          # 回測起始的 Top N
+    rank_end: 8            # 回測結束的 Top N
     use_db_sl: false       # 是否使用資料庫中的停損價格，若為 false 則不使用停損
     global_sl: null        # 全域停損比例，若不用則設為 null
     use_db_tp: false       # 是否使用資料庫中的停利價格，若為 false 則不使用停利
@@ -66,7 +67,8 @@ golden_ai:
   monthly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
     sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
-    max_stocks: 8          # 最大持股數
+    rank_start: 1          # 回測起始的 Top N
+    rank_end: 8            # 回測結束的 Top N
     use_db_sl: false       # 是否使用資料庫中的停損價格，若為 false 則不使用停損
     global_sl: null        # 全域停損比例，若不用則設為 null
     use_db_tp: false       # 是否使用資料庫中的停利價格，若為 false 則不使用停利

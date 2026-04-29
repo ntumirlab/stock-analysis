@@ -21,7 +21,7 @@ class GoldenAIBacktestMetricsDAO:
                 timestamp     TEXT NOT NULL,
                 strategy      TEXT NOT NULL,
                 week          TEXT,
-                top_n         INTEGER NOT NULL,
+                ranks         TEXT NOT NULL DEFAULT '',
                 annual_return REAL,
                 sharpe        REAL,
                 sortino       REAL,
@@ -30,9 +30,42 @@ class GoldenAIBacktestMetricsDAO:
             )
         """)
 
+        # Migration: if top_n column exists, recreate table without it
+        cursor.execute("PRAGMA table_info(golden_ai_backtest_metrics)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if 'top_n' in columns:
+            cursor.execute("ALTER TABLE golden_ai_backtest_metrics RENAME TO golden_ai_backtest_metrics_old")
+            cursor.execute("""
+                CREATE TABLE golden_ai_backtest_metrics (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp     TEXT NOT NULL,
+                    strategy      TEXT NOT NULL,
+                    week          TEXT,
+                    ranks         TEXT NOT NULL DEFAULT '',
+                    annual_return REAL,
+                    sharpe        REAL,
+                    sortino       REAL,
+                    max_drawdown  REAL,
+                    win_ratio     REAL
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO golden_ai_backtest_metrics
+                    (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+                SELECT timestamp, strategy, week,
+                    COALESCE(NULLIF(ranks, ''), CAST(top_n AS TEXT), ''),
+                    annual_return, sharpe, sortino, max_drawdown, win_ratio
+                FROM golden_ai_backtest_metrics_old
+            """)
+            cursor.execute("DROP TABLE golden_ai_backtest_metrics_old")
+            conn.commit()
+        elif 'ranks' not in columns:
+            cursor.execute("ALTER TABLE golden_ai_backtest_metrics ADD COLUMN ranks TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_golden_ai_metrics_strategy_week_topn
-            ON golden_ai_backtest_metrics(strategy, week, top_n)
+            CREATE INDEX IF NOT EXISTS idx_golden_ai_metrics_strategy_ranks
+            ON golden_ai_backtest_metrics(strategy, ranks)
         """)
 
         cursor.execute("""
@@ -43,7 +76,7 @@ class GoldenAIBacktestMetricsDAO:
         conn.commit()
         conn.close()
 
-    def save(self, timestamp: str, strategy: str, week: Optional[str], top_n: int, report) -> None:
+    def save(self, timestamp: str, strategy: str, week: Optional[str], ranks: str, report) -> None:
         try:
             metrics = report.get_metrics()
             annual_return = metrics.get('profitability', {}).get('annualReturn')
@@ -52,34 +85,34 @@ class GoldenAIBacktestMetricsDAO:
             max_drawdown  = metrics.get('risk', {}).get('maxDrawdown')
             win_ratio     = metrics.get('winrate', {}).get('winRate')
         except Exception as e:
-            logger.warning(f"get_metrics() failed for {strategy} {week} Top{top_n}: {e}. Saving NULLs.")
+            logger.warning(f"get_metrics() failed for {strategy} {week} Ranks[{ranks}]: {e}. Saving NULLs.")
             annual_return = sharpe = sortino = max_drawdown = win_ratio = None
 
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
             INSERT INTO golden_ai_backtest_metrics
-                (timestamp, strategy, week, top_n, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+                (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (timestamp, strategy, week, top_n, annual_return, sharpe, sortino, max_drawdown, win_ratio))
+        """, (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio))
         conn.commit()
         conn.close()
 
-        logger.info(f"Saved metrics: {strategy} {week} Top{top_n} @ {timestamp}")
+        logger.info(f"Saved metrics: {strategy} {week} Ranks[{ranks}] @ {timestamp}")
 
-    def exists_for_date(self, date_str: str, strategy: str) -> bool:
-        """檢查指定日期（YYYY-MM-DD）與策略是否已有紀錄"""
+    def exists_for_date(self, date_str: str, strategy: str, ranks: str) -> bool:
+        """檢查指定日期、策略、ranks 是否已有紀錄"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT 1 FROM golden_ai_backtest_metrics WHERE strategy = ? AND timestamp LIKE ? LIMIT 1",
-            (strategy, f"{date_str}%")
+            "SELECT 1 FROM golden_ai_backtest_metrics WHERE strategy = ? AND timestamp LIKE ? AND ranks = ? LIMIT 1",
+            (strategy, f"{date_str}%", ranks)
         )
         found = cursor.fetchone() is not None
         conn.close()
         return found
 
     def load(self, strategy: Optional[str] = None, week: Optional[str] = None,
-             top_n: Optional[int] = None) -> pd.DataFrame:
+             ranks: Optional[str] = None) -> pd.DataFrame:
         conditions = []
         params = []
 
@@ -89,9 +122,9 @@ class GoldenAIBacktestMetricsDAO:
         if week is not None:
             conditions.append("week = ?")
             params.append(week)
-        if top_n is not None:
-            conditions.append("top_n = ?")
-            params.append(top_n)
+        if ranks is not None:
+            conditions.append("ranks = ?")
+            params.append(ranks)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

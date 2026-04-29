@@ -67,20 +67,24 @@ def _latest_kpi(strategy: str) -> dict:
 
     if strategy == 'monthly':
         df_all = (
-            df_all.groupby(['timestamp', 'top_n'])[_KPI_COLS]
+            df_all.groupby(['timestamp', 'ranks'])[_KPI_COLS]
             .mean()
             .reset_index()
         )
 
-    sorted_ts = sorted(df_all['timestamp'].unique())
+    full_ranks = max(df_all['ranks'].unique(), key=lambda r: len(r.split(',')))
+    df_full = df_all[df_all['ranks'] == full_ranks]
+
+    sorted_ts = sorted(df_full['timestamp'].unique())
+    if not sorted_ts:
+        return {}
     latest_ts = sorted_ts[-1]
-    avg = df_all[df_all['timestamp'] == latest_ts][_KPI_COLS].mean()
-    top_ns = sorted(df_all['top_n'].unique())
-    result = {'timestamp': latest_ts, 'top_n_min': int(top_ns[0]), 'top_n_max': int(top_ns[-1]), **avg.to_dict()}
+    avg = df_full[df_full['timestamp'] == latest_ts][_KPI_COLS].mean()
+    result = {'timestamp': latest_ts, 'full_ranks': full_ranks, **avg.to_dict()}
 
     if len(sorted_ts) >= 2:
         prev_ts = sorted_ts[-2]
-        prev_avg = df_all[df_all['timestamp'] == prev_ts][_KPI_COLS].mean()
+        prev_avg = df_full[df_full['timestamp'] == prev_ts][_KPI_COLS].mean()
         result['prev'] = prev_avg.to_dict()
 
     return result
@@ -130,8 +134,8 @@ def _load_all(strategy: str) -> dict:
         return {}
 
     result = {}
-    for top_n in sorted(df_all['top_n'].unique()):
-        df = df_all[df_all['top_n'] == top_n].copy()
+    for ranks in sorted(df_all['ranks'].unique()):
+        df = df_all[df_all['ranks'] == ranks].copy()
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
         cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=3)
         df = df[df['timestamp'] >= cutoff]
@@ -143,7 +147,7 @@ def _load_all(strategy: str) -> dict:
                 .reset_index()
             )
 
-        result[int(top_n)] = df.sort_values('timestamp')
+        result[ranks] = df.sort_values('timestamp')
 
     return result
 
@@ -160,17 +164,17 @@ def _build_figure(data: dict, strategy: str, metric: str) -> go.Figure:
         )
         return fig
 
-    for top_n, df in sorted(data.items()):
-        color = _COLORS[(top_n - 1) % len(_COLORS)]
+    for i, (ranks, df) in enumerate(sorted(data.items())):
+        color = _COLORS[i % len(_COLORS)]
         y = df[metric] * 100 if is_pct else df[metric]
         fig.add_trace(go.Scatter(
             x=df['timestamp'],
             y=y,
             mode='lines+markers',
-            name=f'持 {top_n} 檔',
+            name=f'Ranks[{ranks}]',
             line=dict(color=color, width=2),
             marker=dict(size=5),
-            hovertemplate=f'%{{x|%Y-%m-%d}}<br>持 {top_n} 檔: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
+            hovertemplate=f'%{{x|%Y-%m-%d}}<br>Ranks[{ranks}]: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         ))
 
     avg_df = (
@@ -360,7 +364,7 @@ def update_kpi(strategy):
     ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
     return [
         html.P(
-            f'最新回測績效（持 {kpi["top_n_min"]}~{kpi["top_n_max"]} 檔平均）　·　{ts_str}',
+            f'最新回測績效　Ranks[{kpi["full_ranks"]}]　·　{ts_str}',
             style={'fontSize': '18px', 'color': '#6b7280', 'fontWeight': '600',
                    'marginBottom': '10px', 'letterSpacing': '0.02em'},
         ),
