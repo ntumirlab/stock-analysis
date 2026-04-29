@@ -41,6 +41,24 @@ services:
       retries: 3
       start_period: 40s
 
+  golden-ai-backtest-dashboard:
+    platform: linux/amd64
+    build: .
+    container_name: golden-ai-backtest-dashboard
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+      - ./data_prod.db:/app/data_prod.db
+      - ./assets:/app/assets:ro
+    environment:
+      - TZ=Asia/Taipei
+    ports:
+      - "8051:8051"
+    networks:
+      - stock-network
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8051", "golden_ai_backtest_dashboard:server"]
+
   stock-scheduler:
     platform: linux/amd64
     build: .
