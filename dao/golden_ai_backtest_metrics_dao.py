@@ -66,6 +66,18 @@ class GoldenAIBacktestMetricsDAO:
 
         logger.info(f"Saved metrics: {strategy} {week} Top{top_n} @ {timestamp}")
 
+    def exists_for_date(self, date_str: str, strategy: str) -> bool:
+        """檢查指定日期（YYYY-MM-DD）與策略是否已有紀錄"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM golden_ai_backtest_metrics WHERE strategy = ? AND timestamp LIKE ? LIMIT 1",
+            (strategy, f"{date_str}%")
+        )
+        found = cursor.fetchone() is not None
+        conn.close()
+        return found
+
     def load(self, strategy: Optional[str] = None, week: Optional[str] = None,
              top_n: Optional[int] = None) -> pd.DataFrame:
         conditions = []

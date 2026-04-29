@@ -45,6 +45,9 @@ class GoldenAITWStrategyBase:
         self.trade_at_price = override_params.get('trade_at_price', golden_ai_config.get('trade_at_price', 'open'))
         self.lookback_months = override_params.get('lookback_months', golden_ai_config.get('lookback_months', None))
 
+        backtest_date_raw = override_params.get('backtest_date', None)
+        self.backtest_date = pd.Timestamp(backtest_date_raw).normalize() if backtest_date_raw else None
+
         print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Top 1~{self.max_stocks}")
 
     def _create_df(self, universe, max_stocks=None):
@@ -146,7 +149,8 @@ class GoldenAITWStrategyBase:
         if self.lookback_months is None:
             return final_position
         from dateutil.relativedelta import relativedelta
-        cutoff = pd.Timestamp.today().normalize() - relativedelta(months=self.lookback_months)
+        ref = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
+        cutoff = ref - relativedelta(months=self.lookback_months)
         return final_position[final_position.index >= cutoff]
 
     def _build_sl_tp_exits(self, entries, position, sl_df, tp_df,
@@ -290,7 +294,10 @@ class GoldenAITWStrategyBase:
         對 Top 1~N 各跑一次 _run_core()，回傳 MultiReportWrapper，並將績效指標存入 DB
         """
         dao = GoldenAIBacktestMetricsDAO()
-        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+        if self.backtest_date is not None:
+            timestamp = self.backtest_date.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
 
         reports = {}
         print(f"開始執行 Top 1~{self.max_stocks} 回測...")
