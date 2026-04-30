@@ -327,7 +327,6 @@ class GoldenAITWStrategyBase:
         total = len(all_subsets)
         print(f"開始執行 {total} 組 Ranks 回測（Rank {self.rank_start}~{self.rank_end}）...")
 
-        reports = {}
         for i, ranks in enumerate(all_subsets, 1):
             ranks_str = ','.join(map(str, ranks))
             if dao.exists_for_date(date_str, self.task_name, ranks_str):
@@ -335,15 +334,12 @@ class GoldenAITWStrategyBase:
                 continue
             print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
             report = self._run_core(ranks=ranks)
-            reports[f"Ranks[{ranks_str}]"] = report
             dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
             if report_dir is not None:
                 save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
                 report.display(save_report_path=save_path)
 
         print("全部完成。")
-        self.report = MultiReportWrapper(reports)
-        return self.report
 
     def get_report(self):
-        return self.report if self.report else "report物件為空，請先運行策略"
+        return "GoldenAI 策略報告已存至 assets/ 及 DB"

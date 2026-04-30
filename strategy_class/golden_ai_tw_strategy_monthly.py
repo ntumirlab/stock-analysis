@@ -127,7 +127,6 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         total = len(all_subsets)
         print(f"開始執行 {total} 組 Ranks × Week1~4 回測（Rank {self.rank_start}~{self.rank_end}）...")
 
-        all_reports = {}
         for i, ranks in enumerate(all_subsets, 1):
             ranks_str = ','.join(map(str, ranks))
             if dao.exists_for_date(date_str, 'monthly', ranks_str):
@@ -136,7 +135,6 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
             week_reports = self._run_core(ranks=ranks)
             for week_name, report in week_reports.items():
-                all_reports[f"Ranks[{ranks_str}]_{week_name}"] = report
                 dao.save(timestamp=timestamp, strategy='monthly', week=week_name, ranks=ranks_str, report=report)
             if report_dir is not None:
                 wrapper = MultiReportWrapper(week_reports)
@@ -144,8 +142,6 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 wrapper.display(save_report_path=save_path)
 
         print("全部完成。")
-        self.report = MultiReportWrapper(all_reports)
-        return self.report
 
 
 if __name__ == '__main__':
