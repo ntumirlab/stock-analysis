@@ -151,6 +151,10 @@ class GoldenAITWStrategyBase:
             position = position.reindex(extended_index, method='ffill')
             sl_df    = sl_df.reindex(extended_index, method='ffill')
             tp_df    = tp_df.reindex(extended_index, method='ffill')
+        elif latest_market_date < position.index.max():
+            position = position[position.index <= latest_market_date]
+            sl_df    = sl_df[sl_df.index <= latest_market_date]
+            tp_df    = tp_df[tp_df.index <= latest_market_date]
 
         position = position.reindex(columns=universe.columns, fill_value=0)
         sl_df    = sl_df.reindex(columns=universe.columns, fill_value=0)
