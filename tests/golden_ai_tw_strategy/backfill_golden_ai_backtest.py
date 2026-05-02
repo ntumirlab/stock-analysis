@@ -32,6 +32,8 @@ def parse_args():
     group.add_argument('--days', type=int, metavar='N', help='補跑今天往前 N 天（不含今天）')
     group.add_argument('--date-range', nargs=2, metavar=('START', 'END'), help='補跑 START~END 每天（含兩端）')
 
+    parser.add_argument('--workers', type=int, default=1, metavar='N', help='平行 worker 數（預設 1，sequential）')
+
     return parser.parse_args()
 
 
@@ -51,13 +53,13 @@ def resolve_dates(args):
         return dates
 
 
-def run_one(strategy_name, backtest_date):
+def run_one(strategy_name, backtest_date, num_workers=1):
     report_dir = os.path.join(PROJECT_ROOT, 'assets', ASSETS_DIR_MAP[strategy_name])
     strategy = STRATEGY_CLASS_MAP[strategy_name](
         config_path=CONFIG_PATH,
         override_params={'backtest_date': backtest_date},
     )
-    strategy.run_strategy(report_dir=report_dir)
+    strategy.run_strategy(report_dir=report_dir, num_workers=num_workers)
 
 
 def main():
@@ -71,7 +73,7 @@ def main():
         print(f"\n{'='*60}")
         print(f"[{d}] 開始補跑")
         try:
-            run_one(args.strategy, d)
+            run_one(args.strategy, d, num_workers=args.workers)
             success += 1
             print(f"[{d}] 完成")
         except Exception:

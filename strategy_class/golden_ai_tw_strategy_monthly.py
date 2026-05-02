@@ -1,13 +1,10 @@
 import os
 import numpy as np
 import pandas as pd
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase, MultiReportWrapper
-from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
 
@@ -42,7 +39,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         )
 
         pre_raw_low, pre_raw_high = None, None
-        if not use_touched_exit and (self.use_db_sl or self.use_db_tp):
+        if use_db_sl_tp:
             pre_raw_low  = data.get('price:最低價').reindex(index=base_position.index, columns=base_position.columns)
             pre_raw_high = data.get('price:最高價').reindex(index=base_position.index, columns=base_position.columns)
 
@@ -107,41 +104,19 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
 
         return reports
 
-    def run_strategy(self, report_dir=None):
-        from itertools import combinations as _combinations
-
-        dao = GoldenAIBacktestMetricsDAO()
-        if self.backtest_date is not None:
-            timestamp = self.backtest_date.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
-
-        date_str = timestamp[:10]
-        time_str = timestamp[11:].replace(':', '-')
-
+    def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
+        ranks_str = ','.join(map(str, ranks))
+        if dao.exists_for_date(date_str, 'monthly', ranks_str):
+            print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
+            return
+        print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
+        week_reports = self._run_core(ranks=ranks)
+        for week_name, report in week_reports.items():
+            dao.save(timestamp=timestamp, strategy='monthly', week=week_name, ranks=ranks_str, report=report)
         if report_dir is not None:
-            os.makedirs(report_dir, exist_ok=True)
-
-        ranks_pool = list(range(self.rank_start, self.rank_end + 1))
-        all_subsets = [list(c) for r in range(1, len(ranks_pool) + 1) for c in _combinations(ranks_pool, r)]
-        total = len(all_subsets)
-        print(f"開始執行 {total} 組 Ranks × Week1~4 回測（Rank {self.rank_start}~{self.rank_end}）...")
-
-        for i, ranks in enumerate(all_subsets, 1):
-            ranks_str = ','.join(map(str, ranks))
-            if dao.exists_for_date(date_str, 'monthly', ranks_str):
-                print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
-                continue
-            print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
-            week_reports = self._run_core(ranks=ranks)
-            for week_name, report in week_reports.items():
-                dao.save(timestamp=timestamp, strategy='monthly', week=week_name, ranks=ranks_str, report=report)
-            if report_dir is not None:
-                wrapper = MultiReportWrapper(week_reports)
-                save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
-                wrapper.display(save_report_path=save_path)
-
-        print("全部完成。")
+            wrapper = MultiReportWrapper(week_reports)
+            save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
+            wrapper.display(save_report_path=save_path)
 
 
 if __name__ == '__main__':

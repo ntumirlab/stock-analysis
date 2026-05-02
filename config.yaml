@@ -68,6 +68,7 @@ golden_ai:
     global_tp: null        # 全域停利比例，若不用則設為 null
     trade_at_price: 'open_close_mix'  # 成交價
     lookback_months: 3     # 回測期間：幾個月
+    num_workers: 8         # 平行 worker 數 (1 = sequential)
 
   monthly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
@@ -80,6 +81,7 @@ golden_ai:
     global_tp: null        # 全域停利比例，若不用則設為 null
     trade_at_price: 'open_close_mix'  # 成交價
     lookback_months: 3     # 回測期間：幾個月
+    num_workers: 8         # 平行 worker 數 (1 = sequential)
 
 # Oscar 策略專用參數
 oscar:
