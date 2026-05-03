@@ -1,8 +1,13 @@
 import os
+import time
+import traceback
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from itertools import combinations
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dateutil.relativedelta import relativedelta
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
@@ -25,10 +30,27 @@ class MultiReportWrapper:
             report.display(save_report_path=new_path, **kwargs)
 
 
+def _golden_ai_process_worker(args):
+    """ProcessPoolExecutor 用的 module-level worker，在 subprocess 裡重建 strategy 跑單組 ranks"""
+    (strategy_class_name, config_path, override_params,
+     ranks, db_path, timestamp, date_str, time_str, report_dir, i, total) = args
+
+    if strategy_class_name == 'weekly':
+        from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
+        strategy = GoldenAITWStrategyWeekly(config_path=config_path, override_params=override_params)
+    else:
+        from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly
+        strategy = GoldenAITWStrategyMonthly(config_path=config_path, override_params=override_params)
+
+    dao = GoldenAIBacktestMetricsDAO(db_path=db_path)
+    strategy._run_one_ranks(ranks, dao, timestamp, date_str, time_str, report_dir, i, total)
+
+
 class GoldenAITWStrategyBase:
     def __init__(self, task_name, config_path="config.yaml", override_params=None):
         self.task_name = task_name  # 'weekly' or 'monthly'
         self.report = None
+        self._config_path = os.path.abspath(config_path)
         self.config_loader = ConfigLoader(config_path)
         golden_ai_config = self.config_loader.config.get('golden_ai', {}).get(task_name, {})
 
@@ -37,7 +59,8 @@ class GoldenAITWStrategyBase:
 
         self.buy_weekday = override_params.get('buy_weekday', golden_ai_config.get('buy_weekday', 1)) - 1
         self.sell_weekday = override_params.get('sell_weekday', golden_ai_config.get('sell_weekday', 5)) - 1
-        self.max_stocks = override_params.get('max_stocks', golden_ai_config.get('max_stocks', 5))
+        self.rank_start = override_params.get('rank_start', golden_ai_config.get('rank_start', 1))
+        self.rank_end = override_params.get('rank_end', golden_ai_config.get('rank_end', 5))
         self.use_db_sl = override_params.get('use_db_sl', golden_ai_config.get('use_db_sl', True))
         self.global_sl = override_params.get('global_sl', golden_ai_config.get('global_sl', None))
         self.use_db_tp = override_params.get('use_db_tp', golden_ai_config.get('use_db_tp', True))
@@ -45,9 +68,11 @@ class GoldenAITWStrategyBase:
         self.trade_at_price = override_params.get('trade_at_price', golden_ai_config.get('trade_at_price', 'open'))
         self.lookback_months = override_params.get('lookback_months', golden_ai_config.get('lookback_months', None))
 
-        print(f"[{task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Top 1~{self.max_stocks}")
+        backtest_date_raw = override_params.get('backtest_date', None)
+        self.backtest_date = pd.Timestamp(backtest_date_raw).normalize() if backtest_date_raw else None
+        self.num_workers = override_params.get('num_workers', golden_ai_config.get('num_workers', 1))
 
-    def _create_df(self, universe, max_stocks=None):
+    def _create_df(self, universe, ranks):
         """
         讀取推薦 DAO 並轉換為 Finlab 可用的 Position DataFrame
         支援 stocks 為物件列表，從 stock.id 取代號
@@ -56,7 +81,6 @@ class GoldenAITWStrategyBase:
         - 周中（週一～週六）產出的清單 → 對齊到「下一個週日」（代表下週的推薦）
         - 週日當天產出的清單 → 留在當天（代表本週的推薦）
         """
-        effective_max = max_stocks if max_stocks is not None else self.max_stocks
 
         dao = RecommendationDAO(frequency=self.task_name)
         recommendation_records = dao.load()
@@ -73,31 +97,35 @@ class GoldenAITWStrategyBase:
 
             days_to_sunday = 6 - dt.weekday()
             aligned_date = dt + pd.Timedelta(days=days_to_sunday)
-            if days_to_sunday > 0:
-                print(f"原始日期: {dt.date()} (週{'一二三四五六日'[dt.weekday()]})，"
-                      f"對齊後日期: {aligned_date.date()} (週{'一二三四五六日'[aligned_date.weekday()]})")
 
             if aligned_date in weekly_batches:
                 existing_original_date, _ = weekly_batches[aligned_date]
                 if dt > existing_original_date:
                     weekly_batches[aligned_date] = (dt, stocks)
-                    print(f"更新對齊日期 {aligned_date.date()} 的推薦，"
-                          f"使用較新的原始日期 {dt.date()}")
             else:
                 weekly_batches[aligned_date] = (dt, stocks)
+
+        # 先收集所有週出現過的 stock_id，用來對缺席的股票補 0
+        all_stock_ids = set()
+        for _, (_, stock_list) in weekly_batches.items():
+            for stock in stock_list:
+                sid = str(getattr(stock, 'id', ''))
+                if sid:
+                    all_stock_ids.add(sid)
 
         records, sl_records, tp_records = [], [], []
 
         for aligned_date, (_, stock_list) in weekly_batches.items():
             stock_list = sorted(stock_list, key=lambda x: getattr(x, 'priority', float('inf')))
-            if effective_max is not None:
-                stock_list = stock_list[:effective_max]
+            selected = [stock_list[r - 1] for r in ranks if r <= len(stock_list)]
+            selected_ids = set()
 
-            for stock in stock_list:
+            for stock in selected:
                 stock_id = getattr(stock, 'id', None)
                 if not stock_id:
                     continue
                 sid = str(stock_id)
+                selected_ids.add(sid)
 
                 records.append({'date': aligned_date, 'stock_id': sid, 'signal': 1})
 
@@ -110,6 +138,10 @@ class GoldenAITWStrategyBase:
                     tp_price = getattr(stock, 'TP', None)
                     if tp_price is not None:
                         tp_records.append({'date': aligned_date, 'stock_id': sid, 'tp_price': tp_price})
+
+            # 本週未選到的股票明確補 0，防止 ffill 跨週帶入上週持倉
+            for sid in all_stock_ids - selected_ids:
+                records.append({'date': aligned_date, 'stock_id': sid, 'signal': 0})
 
         def _pivot(recs, value_col, fallback_index):
             df = pd.DataFrame(recs)
@@ -135,6 +167,10 @@ class GoldenAITWStrategyBase:
             position = position.reindex(extended_index, method='ffill')
             sl_df    = sl_df.reindex(extended_index, method='ffill')
             tp_df    = tp_df.reindex(extended_index, method='ffill')
+        elif latest_market_date < position.index.max():
+            position = position[position.index <= latest_market_date]
+            sl_df    = sl_df[sl_df.index <= latest_market_date]
+            tp_df    = tp_df[tp_df.index <= latest_market_date]
 
         position = position.reindex(columns=universe.columns, fill_value=0)
         sl_df    = sl_df.reindex(columns=universe.columns, fill_value=0)
@@ -145,8 +181,8 @@ class GoldenAITWStrategyBase:
     def _apply_cutoff(self, final_position):
         if self.lookback_months is None:
             return final_position
-        from dateutil.relativedelta import relativedelta
-        cutoff = pd.Timestamp.today().normalize() - relativedelta(months=self.lookback_months)
+        ref = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
+        cutoff = ref - relativedelta(months=self.lookback_months)
         return final_position[final_position.index >= cutoff]
 
     def _build_sl_tp_exits(self, entries, position, sl_df, tp_df,
@@ -223,10 +259,12 @@ class GoldenAITWStrategyBase:
 
         return FinlabDataFrame((sl_exit | tp_exit) & ~entries)
 
-    def _run_core(self, max_stocks):
-        """週策略核心邏輯，供 run_strategy() Top 1~8 迴圈呼叫"""
+    def _run_core(self, ranks):
+        """週策略核心邏輯，供 run_strategy() ranks 迴圈呼叫"""
         universe = data.get('price:收盤價')
-        position, sl_df, tp_df = self._create_df(universe, max_stocks=max_stocks)
+        if self.backtest_date is not None:
+            universe = universe[universe.index <= self.backtest_date]
+        position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
 
         use_db_sl_tp = self.use_db_sl or self.use_db_tp
         use_touched_exit = (
@@ -284,23 +322,76 @@ class GoldenAITWStrategyBase:
                 notification_enable=False
             )
 
-    def run_strategy(self):
-        """
-        流程：
-        對 Top 1~N 各跑一次 _run_core()，回傳 MultiReportWrapper，並將績效指標存入 DB
-        """
-        dao = GoldenAIBacktestMetricsDAO()
-        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+    def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
+        ranks_str = ','.join(map(str, ranks))
+        if dao.exists_for_date(date_str, self.task_name, ranks_str):
+            print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
+            return
+        print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
+        report = self._run_core(ranks=ranks)
+        dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
+        if report_dir is not None:
+            save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
+            report.display(save_report_path=save_path)
 
-        reports = {}
-        print(f"開始執行 Top 1~{self.max_stocks} 回測...")
-        for n in range(1, self.max_stocks + 1):
-            print(f"-> 正在回測 Top{n}...")
-            report = self._run_core(max_stocks=n)
-            reports[f"Top{n}"] = report
-            dao.save(timestamp=timestamp, strategy=self.task_name, week=None, top_n=n, report=report)
-        self.report = MultiReportWrapper(reports)
-        return self.report
+    def run_strategy(self, report_dir=None, num_workers=None):
+        if num_workers is None:
+            num_workers = self.num_workers
+
+        dao = GoldenAIBacktestMetricsDAO()
+        if self.backtest_date is not None:
+            timestamp = self.backtest_date.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+
+        date_str = timestamp[:10]
+        time_str = timestamp[11:].replace(':', '-')
+
+        if report_dir is not None:
+            os.makedirs(report_dir, exist_ok=True)
+
+        ranks_pool = list(range(self.rank_start, self.rank_end + 1))
+        all_subsets = [list(c) for r in range(1, len(ranks_pool) + 1) for c in combinations(ranks_pool, r)]
+        total = len(all_subsets)
+        print(f"[{self.task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Rank {self.rank_start}~{self.rank_end}")
+        print(f"開始執行 {total} 組 Ranks 回測（workers={num_workers}）...")
+
+        t_start = time.monotonic()
+
+        if num_workers == 1:
+            for i, ranks in enumerate(all_subsets, 1):
+                self._run_one_ranks(ranks, dao, timestamp, date_str, time_str, report_dir, i, total)
+        else:
+            override_params = {
+                'backtest_date': self.backtest_date.strftime('%Y-%m-%d') if self.backtest_date else None,
+                'buy_weekday': self.buy_weekday + 1,
+                'sell_weekday': self.sell_weekday + 1,
+                'rank_start': self.rank_start,
+                'rank_end': self.rank_end,
+                'use_db_sl': self.use_db_sl,
+                'global_sl': self.global_sl,
+                'use_db_tp': self.use_db_tp,
+                'global_tp': self.global_tp,
+                'trade_at_price': self.trade_at_price,
+                'lookback_months': self.lookback_months,
+            }
+            abs_db_path = os.path.abspath(dao.db_path)
+            worker_args = [
+                (self.task_name, self._config_path, override_params,
+                 ranks, abs_db_path, timestamp, date_str, time_str, report_dir, i, total)
+                for i, ranks in enumerate(all_subsets, 1)
+            ]
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(_golden_ai_process_worker, args) for args in worker_args]
+                for f in as_completed(futures):
+                    try:
+                        f.result()
+                    except Exception as e:
+                        print(f"[ERROR] worker 失敗:\n{traceback.format_exc()}")
+
+        elapsed = time.monotonic() - t_start
+        mins, secs = divmod(int(elapsed), 60)
+        print(f"全部完成。共耗時 {mins} 分 {secs} 秒（{total} 組 Ranks）")
 
     def get_report(self):
-        return self.report if self.report else "report物件為空，請先運行策略"
+        return "GoldenAI 策略報告已存至 assets/ 及 DB"

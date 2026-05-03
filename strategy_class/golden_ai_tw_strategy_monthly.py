@@ -1,12 +1,10 @@
+import os
 import numpy as np
 import pandas as pd
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase, MultiReportWrapper
-from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
 
@@ -27,10 +25,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 results.append(nth_sunday)
         return pd.DatetimeIndex(results)
 
-    def _run_core(self, max_stocks):
-        """月策略核心：對給定 max_stocks 跑 Week1~4，回傳 {'Week1': report, ...}"""
+    def _run_core(self, ranks):
+        """月策略核心：對給定 ranks 跑 Week1~4，回傳 {'Week1': report, ...}"""
         universe = data.get('price:收盤價')
-        base_position, sl_df, tp_df = self._create_df(universe, max_stocks=max_stocks)
+        if self.backtest_date is not None:
+            universe = universe[universe.index <= self.backtest_date]
+        base_position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
 
         use_db_sl_tp = self.use_db_sl or self.use_db_tp
         use_touched_exit = (
@@ -39,7 +39,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         )
 
         pre_raw_low, pre_raw_high = None, None
-        if not use_touched_exit and (self.use_db_sl or self.use_db_tp):
+        if use_db_sl_tp:
             pre_raw_low  = data.get('price:最低價').reindex(index=base_position.index, columns=base_position.columns)
             pre_raw_high = data.get('price:最高價').reindex(index=base_position.index, columns=base_position.columns)
 
@@ -104,25 +104,19 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
 
         return reports
 
-    def run_strategy(self):
-        """
-        流程：
-        對 Top 1~N 各跑一次 _run_core()（內含 Week1~4），
-        展開為 N×4 組回測，回傳 MultiReportWrapper，並將績效指標存入 DB
-        """
-        dao = GoldenAIBacktestMetricsDAO()
-        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
-
-        all_reports = {}
-        print(f"開始執行 Top 1~{self.max_stocks} × Week1~4 回測...")
-        for n in range(1, self.max_stocks + 1):
-            print(f"-> 正在回測 Top{n}...")
-            week_reports = self._run_core(max_stocks=n)
-            for week_name, report in week_reports.items():
-                all_reports[f"{week_name}_Top{n}"] = report
-                dao.save(timestamp=timestamp, strategy='monthly', week=week_name, top_n=n, report=report)
-        self.report = MultiReportWrapper(all_reports)
-        return self.report
+    def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
+        ranks_str = ','.join(map(str, ranks))
+        if dao.exists_for_date(date_str, 'monthly', ranks_str):
+            print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
+            return
+        print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
+        week_reports = self._run_core(ranks=ranks)
+        for week_name, report in week_reports.items():
+            dao.save(timestamp=timestamp, strategy='monthly', week=week_name, ranks=ranks_str, report=report)
+        if report_dir is not None:
+            wrapper = MultiReportWrapper(week_reports)
+            save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
+            wrapper.display(save_report_path=save_path)
 
 
 if __name__ == '__main__':
