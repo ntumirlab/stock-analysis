@@ -1,6 +1,7 @@
 import os
+import re
 import dash
-from dash import dcc, html, Input, Output, State, ALL, ctx
+from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
 import dash_bootstrap_components as dbc
 from flask import Flask
 from flask_autoindex import AutoIndex
@@ -13,16 +14,7 @@ flask_server = Flask(__name__)
 _assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 _ai = AutoIndex(flask_server, browse_root=_assets, add_url_rules=False)
 
-
 _ALLOWED_DIRS = {'GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly'}
-
-
-@flask_server.route('/reports/')
-def reports_root():
-    return '''<ul>
-        <li><a href="/reports/GoldenAITWStrategyWeekly/">Weekly 報告</a></li>
-        <li><a href="/reports/GoldenAITWStrategyMonthly/">Monthly 報告</a></li>
-    </ul>'''
 
 
 @flask_server.route('/reports/<path:path>')
@@ -32,12 +24,11 @@ def autoindex(path):
     return _ai.render_autoindex(path)
 
 
-# col -> (label, is_pct, positive_is_good)
 _METRIC_META = {
-    'annual_return': ('年化報酬', True,  True),
-    'sharpe':        ('Sharpe Ratio', False, True),
-    'max_drawdown':  ('Max Drawdown', True,  False),
-    'win_ratio':     ('勝率', True,  True),
+    'annual_return': ('年化報酬',    True),
+    'sharpe':        ('Sharpe Ratio', False),
+    'max_drawdown':  ('Max Drawdown', True),
+    'win_ratio':     ('勝率',        True),
 }
 
 # Tableau 10
@@ -54,7 +45,6 @@ _CARD_STYLE = {
 }
 
 dao = GoldenAIBacktestMetricsDAO()
-
 _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
 
 
@@ -90,8 +80,8 @@ def _latest_kpi(strategy: str) -> dict:
     return result
 
 
-def _kpi_card(title: str, value, is_pct: bool, positive_is_good: bool, delta=None) -> dbc.Col:
-    if value is None or pd.isna(value):
+def _kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
+    if pd.isna(value):
         display, color = '—', '#9ca3af'
     else:
         display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
@@ -135,7 +125,7 @@ def _load_all(strategy: str) -> dict:
 
     cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=3)
     result = {}
-    for ranks in sorted(df_all['ranks'].unique()):
+    for ranks in df_all['ranks'].unique():
         df = df_all[df_all['ranks'] == ranks].copy()
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
         df = df[df['timestamp'] >= cutoff]
@@ -162,6 +152,28 @@ def _rank_label(ranks_str: str) -> str:
     return '第 ' + ', '.join(map(str, nums)) + ' 支'
 
 
+def _build_tags(ranks_list: list) -> list:
+    tags = []
+    for ranks in (ranks_list or []):
+        tags.append(html.Div([
+            html.Span(_rank_label(ranks), style={'fontSize': '13px', 'marginRight': '4px'}),
+            html.Span(
+                '×',
+                id={'type': 'remove-rank', 'index': ranks},
+                n_clicks=0,
+                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': '14px', 'lineHeight': '1'},
+            ),
+        ], style={
+            'backgroundColor': '#dbeafe',
+            'color': '#1d4ed8',
+            'borderRadius': '12px',
+            'padding': '4px 10px',
+            'display': 'inline-flex',
+            'alignItems': 'center',
+        }))
+    return tags
+
+
 def _modal_sort_key(r: str):
     nums = list(map(int, r.split(',')))
     is_consec_from_1 = nums == list(range(1, len(nums) + 1))
@@ -169,7 +181,7 @@ def _modal_sort_key(r: str):
 
 
 def _build_figure(data: dict, metric: str) -> go.Figure:
-    label, is_pct, _ = _METRIC_META[metric]
+    label, is_pct = _METRIC_META[metric]
     fig = go.Figure()
 
     if not data:
@@ -234,49 +246,49 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
     return fig
 
 
-app = dash.Dash(
-    __name__,
-    server=flask_server,
-    external_stylesheets=[dbc.themes.FLATLY],
-    suppress_callback_exceptions=True,
+_REPORT_FILE_PATTERN = re.compile(
+    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+)\]\.html$'
 )
-app.title = 'GoldenAI Backtest Dashboard'
 
-app.index_string = '''
-<!DOCTYPE html>
-<html>
-    <head>
-        {%metas%}
-        <title>{%title%}</title>
-        {%favicon%}
-        {%css%}
-        <style>
-            #metric-selector .form-check { padding-left: 0; }
-        </style>
-    </head>
-    <body>
-        {%app_entry%}
-        <footer>
-            {%config%}
-            {%scripts%}
-            {%renderer%}
-        </footer>
-    </body>
-</html>
-'''
 
-app.layout = html.Div(
-    style={'backgroundColor': _PAGE_BG, 'minHeight': '100vh'},
-    children=[
-        dcc.Store(id='displayed-ranks', data=None),
+def _parse_report_files(strategy: str) -> pd.DataFrame:
+    dir_name = 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
+    report_dir = os.path.join(_assets, dir_name)
+    if not os.path.isdir(report_dir):
+        return pd.DataFrame(columns=['date', 'ranks', 'fname'])
 
+    rows = []
+    for fname in os.listdir(report_dir):
+        m = _REPORT_FILE_PATTERN.match(fname)
+        if not m:
+            continue
+        date_str, time_str, ranks_str = m.groups()
+        rows.append({
+            'date': date_str,
+            'datetime_key': f'{date_str}_{time_str}',
+            'ranks': ranks_str,
+            'fname': fname,
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=['date', 'ranks', 'fname'])
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values('datetime_key', ascending=False)
+    df = df.drop_duplicates(subset=['date', 'ranks'], keep='first')
+    df = df.sort_values(['date', 'ranks'], ascending=[False, True]).reset_index(drop=True)
+    return df[['date', 'ranks', 'fname']]
+
+
+def _main_layout():
+    return html.Div([
         dbc.Modal([
             dbc.ModalHeader(dbc.ModalTitle('選擇 Rank 組合')),
             dbc.ModalBody(
                 dcc.Dropdown(
                     id='rank-picker',
                     multi=True,
-                    placeholder='搜尋或選擇 rank 組合...',
+                    placeholder='搜尋或選擇 Rank 組合...',
                     optionHeight=35,
                 )
             ),
@@ -285,41 +297,6 @@ app.layout = html.Div(
                 dbc.Button('確認', id='confirm-rank-modal', color='primary'),
             ]),
         ], id='rank-modal', is_open=False, size='lg'),
-
-        # Navbar
-        html.Div(
-            style={
-                'backgroundColor': 'white',
-                'borderBottom': '1px solid #e5e7eb',
-                'padding': '0 24px',
-            },
-            children=dbc.Container([
-                dbc.Row([
-                    dbc.Col(
-                        html.H5(
-                            'GoldenAI 回測績效',
-                            className='mb-0 py-3',
-                            style={'fontWeight': '600', 'color': '#1a202c', 'fontSize': '24px'},
-                        ),
-                        width='auto',
-                    ),
-                    dbc.Col(
-                        html.Div([
-                            html.A('Weekly 報告',
-                                   href='/reports/GoldenAITWStrategyWeekly/',
-                                   target='_blank',
-                                   className='btn btn-outline-secondary me-2'),
-                            html.A('Monthly 報告',
-                                   href='/reports/GoldenAITWStrategyMonthly/',
-                                   target='_blank',
-                                   className='btn btn-outline-secondary'),
-                        ], className='d-flex align-items-center h-100'),
-                    ),
-                ], align='center'),
-            ], fluid=True),
-        ),
-
-        # Content
         dbc.Container([
             dbc.Row([
                 dbc.Col([
@@ -369,14 +346,238 @@ app.layout = html.Div(
                             style={'borderRadius': '20px', 'padding': '2px 14px', 'fontWeight': '600'},
                         ),
                     ], className='mb-3 d-flex align-items-center gap-2 flex-wrap'),
-
                     dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
                 ], style={'padding': '20px 24px'}),
             ], style=_CARD_STYLE, className='mb-4'),
         ], fluid=True),
+    ])
+
+
+def _report_browser_layout(strategy: str):
+    title = 'Weekly 回測報告' if strategy == 'weekly' else 'Monthly 回測報告'
+    df = _parse_report_files(strategy)
+    latest_date = df['date'].iloc[0] if not df.empty else str(pd.Timestamp.today().date())
+    return dbc.Container([
+        dbc.Row(
+            dbc.Col(
+                dcc.Link('← 返回', href='/', className='btn btn-outline-secondary btn-sm'),
+            ),
+            className='mt-4 mb-3',
+        ),
+        html.H5(
+            title,
+            style={'fontWeight': '600', 'color': '#1a202c', 'fontSize': '20px', 'marginBottom': '20px'},
+        ),
+        dbc.Row([
+            dbc.Col([
+                html.Label('日期範圍', style={
+                    'fontWeight': '500', 'color': '#374151',
+                    'marginBottom': '6px', 'display': 'block',
+                }),
+                dcc.DatePickerRange(
+                    id='report-date-range',
+                    start_date=latest_date,
+                    end_date=latest_date,
+                    display_format='YYYY-MM-DD',
+                    clearable=True,
+                ),
+            ], xs=12, md='auto', className='mb-3'),
+            dbc.Col([
+                html.Label('Rank 組合', style={
+                    'fontWeight': '500', 'color': '#374151',
+                    'marginBottom': '6px', 'display': 'block',
+                }),
+                dcc.Dropdown(
+                    id='report-rank-filter',
+                    placeholder='所有 Rank 組合',
+                    multi=True,
+                    style={'minWidth': '200px'},
+                ),
+            ], xs=12, md='auto', className='mb-3'),
+        ], className='mb-2 align-items-end'),
+        dbc.Card([
+            dbc.CardBody(
+                dash_table.DataTable(
+                    id='report-table',
+                    columns=[
+                        {'name': '日期',     'id': 'date'},
+                        {'name': 'Rank 組合', 'id': 'rank_label'},
+                        {'name': '報告',     'id': 'link', 'presentation': 'markdown'},
+                    ],
+                    data=[],
+                    page_size=20,
+                    page_action='native',
+                    sort_action='native',
+                    sort_by=[{'column_id': 'date', 'direction': 'desc'}],
+                    markdown_options={'link_target': '_blank'},
+                    style_table={'overflowX': 'auto'},
+                    style_cell={
+                        'fontFamily': 'system-ui, -apple-system, sans-serif',
+                        'fontSize': '14px',
+                        'padding': '10px 16px',
+                        'textAlign': 'left',
+                        'color': '#374151',
+                        'border': '1px solid #e5e7eb',
+                    },
+                    style_header={
+                        'backgroundColor': '#f8fafc',
+                        'fontWeight': '600',
+                        'border': '1px solid #e5e7eb',
+                        'color': '#374151',
+                    },
+                    style_data_conditional=[
+                        {'if': {'row_index': 'odd'}, 'backgroundColor': '#f9fafb'},
+                    ],
+                    style_cell_conditional=[
+                        {'if': {'column_id': 'date'},       'width': '130px'},
+                        {'if': {'column_id': 'link'},       'width': '80px', 'textAlign': 'center'},
+                    ],
+                ),
+                style={'padding': '20px 24px'},
+            ),
+        ], style=_CARD_STYLE, className='mb-4'),
+    ], fluid=True)
+
+
+app = dash.Dash(
+    __name__,
+    server=flask_server,
+    external_stylesheets=[dbc.themes.FLATLY],
+    suppress_callback_exceptions=True,
+)
+app.title = 'GoldenAI Backtest Dashboard'
+
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            #metric-selector .form-check { padding-left: 0; }
+            #report-rank-filter .Select-control { min-height: 44px !important; }
+            #report-rank-filter .Select-arrow-zone,
+            #report-rank-filter .Select-clear-zone { vertical-align: middle !important; }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
+app.layout = html.Div(
+    style={'backgroundColor': _PAGE_BG, 'minHeight': '100vh'},
+    children=[
+        dcc.Location(id='url', refresh=False),
+        dcc.Store(id='displayed-ranks', data=None),
+
+        # Navbar
+        html.Div(
+            style={
+                'backgroundColor': 'white',
+                'borderBottom': '1px solid #e5e7eb',
+                'padding': '0 24px',
+            },
+            children=dbc.Container([
+                dbc.Row([
+                    dbc.Col(
+                        dcc.Link(
+                            'GoldenAI 回測績效',
+                            href='/',
+                            style={
+                                'fontWeight': '600', 'color': '#1a202c',
+                                'fontSize': '24px', 'textDecoration': 'none',
+                            },
+                            className='mb-0 py-3 d-block',
+                        ),
+                        width='auto',
+                    ),
+                    dbc.Col(
+                        html.Div([
+                            dcc.Link('Weekly 報告',
+                                     href='/reports/weekly/',
+                                     className='btn btn-outline-secondary me-2'),
+                            dcc.Link('Monthly 報告',
+                                     href='/reports/monthly/',
+                                     className='btn btn-outline-secondary'),
+                        ], className='d-flex align-items-center h-100'),
+                    ),
+                ], align='center'),
+            ], fluid=True),
+        ),
+
+        # Page content
+        html.Div(id='page-content'),
     ],
 )
 
+
+# Flask SPA routes
+@flask_server.route('/reports/weekly/')
+@flask_server.route('/reports/monthly/')
+def reports_spa():
+    return app.index()
+
+
+# ── Routing ──────────────────────────────────────────────────────────────────
+
+@app.callback(
+    Output('page-content', 'children'),
+    Input('url', 'pathname'),
+)
+def render_page(pathname):
+    if pathname == '/reports/weekly/':
+        return _report_browser_layout('weekly')
+    if pathname == '/reports/monthly/':
+        return _report_browser_layout('monthly')
+    return _main_layout()
+
+
+# ── Report browser ────────────────────────────────────────────────────────────
+
+@app.callback(
+    Output('report-table', 'data'),
+    Output('report-rank-filter', 'options'),
+    Input('report-date-range', 'start_date'),
+    Input('report-date-range', 'end_date'),
+    Input('report-rank-filter', 'value'),
+    State('url', 'pathname'),
+)
+def update_report_table(start_date, end_date, rank_filter, pathname):
+    strategy = 'weekly' if pathname == '/reports/weekly/' else 'monthly'
+    dir_name = 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
+    df = _parse_report_files(strategy)
+
+    all_ranks = sorted(df['ranks'].unique(), key=_modal_sort_key) if not df.empty else []
+    options = [{'label': _rank_label(r), 'value': r} for r in all_ranks]
+
+    if start_date:
+        df = df[df['date'] >= start_date]
+    if end_date:
+        df = df[df['date'] <= end_date]
+    if rank_filter:
+        df = df[df['ranks'].isin(rank_filter)]
+
+    table_data = [
+        {
+            'date':       row['date'],
+            'rank_label': _rank_label(row['ranks']),
+            'link':       f'[開啟](/reports/{dir_name}/{row["fname"]})',
+        }
+        for _, row in df.iterrows()
+    ]
+    return table_data, options
+
+
+# ── Main dashboard ────────────────────────────────────────────────────────────
 
 @app.callback(
     Output('kpi-row', 'children'),
@@ -395,13 +596,13 @@ def update_kpi(strategy):
                    'marginBottom': '10px', 'letterSpacing': '0.02em'},
         ),
         dbc.Row([
-            _kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,  positive_is_good=True,
+            _kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,
                       delta=kpi['annual_return'] - kpi['prev']['annual_return'] if 'prev' in kpi else None),
-            _kpi_card('Sharpe Ratio', kpi['sharpe'],     is_pct=False, positive_is_good=True,
+            _kpi_card('Sharpe Ratio', kpi['sharpe'],     is_pct=False,
                       delta=kpi['sharpe'] - kpi['prev']['sharpe'] if 'prev' in kpi else None),
-            _kpi_card('Max Drawdown', kpi['max_drawdown'], is_pct=True, positive_is_good=False,
+            _kpi_card('Max Drawdown', kpi['max_drawdown'], is_pct=True,
                       delta=kpi['max_drawdown'] - kpi['prev']['max_drawdown'] if 'prev' in kpi else None),
-            _kpi_card('勝率',       kpi['win_ratio'],    is_pct=True,  positive_is_good=True,
+            _kpi_card('勝率',       kpi['win_ratio'],    is_pct=True,
                       delta=kpi['win_ratio'] - kpi['prev']['win_ratio'] if 'prev' in kpi else None),
         ], className='g-3'),
     ]
@@ -409,58 +610,47 @@ def update_kpi(strategy):
 
 @app.callback(
     Output('displayed-ranks', 'data'),
+    Output('rank-tags', 'children'),
+    Output('metrics-graph', 'figure'),
     Input('strategy-dropdown', 'value'),
+    Input('metric-selector', 'value'),
     Input('confirm-rank-modal', 'n_clicks'),
     Input({'type': 'remove-rank', 'index': ALL}, 'n_clicks'),
     State('rank-picker', 'value'),
     State('displayed-ranks', 'data'),
 )
-def update_displayed_ranks(strategy, confirm_n, _remove_n_list, picker_value, current_ranks):
+def update_main(strategy, metric, confirm_n, _remove_n_list, picker_value, current_ranks):
     triggered = ctx.triggered_id
+    strategy = strategy or 'weekly'
+    metric = metric or 'annual_return'
+
+    def _fig(ranks_list):
+        d = _load_all(strategy)
+        filtered = {r: df for r, df in d.items() if r in (ranks_list or [])}
+        return _build_figure(filtered, metric)
 
     if current_ranks is None:
-        data = _load_all(strategy)
-        full = max(data.keys(), key=lambda r: len(r.split(','))) if data else None
-        return [full] if full else []
+        d = _load_all(strategy)
+        full = max(d.keys(), key=lambda r: len(r.split(','))) if d else None
+        new_ranks = [full] if full else []
+        filtered = {r: df for r, df in d.items() if r in new_ranks}
+        return new_ranks, _build_tags(new_ranks), _build_figure(filtered, metric)
 
-    if triggered == 'confirm-rank-modal':
+    if triggered == 'confirm-rank-modal' and confirm_n:
         if picker_value:
-            return picker_value
-        return dash.no_update
+            return picker_value, _build_tags(picker_value), _fig(picker_value)
+        return dash.no_update, dash.no_update, dash.no_update
 
     if isinstance(triggered, dict) and triggered.get('type') == 'remove-rank':
+        if not any(_remove_n_list):
+            # remove-rank components just appeared in layout (n_clicks=0), not actually clicked
+            return dash.no_update, dash.no_update, dash.no_update
         rank_to_remove = triggered['index']
-        return [r for r in current_ranks if r != rank_to_remove]
+        new_ranks = [r for r in current_ranks if r != rank_to_remove]
+        return new_ranks, _build_tags(new_ranks), _fig(new_ranks)
 
-    return dash.no_update
-
-
-@app.callback(
-    Output('rank-tags', 'children'),
-    Input('displayed-ranks', 'data'),
-)
-def update_rank_tags(displayed_ranks):
-    if not displayed_ranks:
-        return []
-    tags = []
-    for ranks in displayed_ranks:
-        tags.append(html.Div([
-            html.Span(_rank_label(ranks), style={'fontSize': '13px', 'marginRight': '4px'}),
-            html.Span(
-                '×',
-                id={'type': 'remove-rank', 'index': ranks},
-                n_clicks=0,
-                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': '14px', 'lineHeight': '1'},
-            ),
-        ], style={
-            'backgroundColor': '#dbeafe',
-            'color': '#1d4ed8',
-            'borderRadius': '12px',
-            'padding': '4px 10px',
-            'display': 'inline-flex',
-            'alignItems': 'center',
-        }))
-    return tags
+    # strategy-dropdown or metric-selector triggered (change or navigation back)
+    return dash.no_update, _build_tags(current_ranks), _fig(current_ranks)
 
 
 @app.callback(
@@ -474,9 +664,9 @@ def update_rank_tags(displayed_ranks):
     State('displayed-ranks', 'data'),
     prevent_initial_call=True,
 )
-def toggle_rank_modal(open_n, cancel_n, confirm_n, strategy, current_ranks):
+def toggle_rank_modal(open_n, _cancel_n, confirm_n, strategy, current_ranks):
     triggered = ctx.triggered_id
-    if triggered == 'open-rank-modal':
+    if triggered == 'open-rank-modal' and open_n:
         data = _load_all(strategy)
         options = [
             {'label': _rank_label(r), 'value': r}
@@ -484,21 +674,6 @@ def toggle_rank_modal(open_n, cancel_n, confirm_n, strategy, current_ranks):
         ]
         return True, options, current_ranks or []
     return False, dash.no_update, dash.no_update
-
-
-@app.callback(
-    Output('metrics-graph', 'figure'),
-    Input('strategy-dropdown', 'value'),
-    Input('metric-selector', 'value'),
-    Input('displayed-ranks', 'data'),
-)
-def update_graph(strategy, metric, displayed_ranks):
-    data = _load_all(strategy)
-    if displayed_ranks is None and data:
-        full = max(data.keys(), key=lambda r: len(r.split(',')))
-        displayed_ranks = [full]
-    filtered = {r: df for r, df in data.items() if r in (displayed_ranks or [])}
-    return _build_figure(filtered, metric)
 
 
 server = flask_server
