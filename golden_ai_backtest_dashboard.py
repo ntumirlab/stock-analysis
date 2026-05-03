@@ -1,6 +1,6 @@
 import os
 import dash
-from dash import dcc, html, Input, Output
+from dash import dcc, html, Input, Output, State, ALL, ctx
 import dash_bootstrap_components as dbc
 from flask import Flask
 from flask_autoindex import AutoIndex
@@ -133,11 +133,11 @@ def _load_all(strategy: str) -> dict:
     if df_all.empty:
         return {}
 
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=3)
     result = {}
     for ranks in sorted(df_all['ranks'].unique()):
         df = df_all[df_all['ranks'] == ranks].copy()
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
-        cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=3)
         df = df[df['timestamp'] >= cutoff]
 
         if strategy == 'monthly':
@@ -147,52 +147,48 @@ def _load_all(strategy: str) -> dict:
                 .reset_index()
             )
 
-        result[ranks] = df.sort_values('timestamp')
+        if not df.empty:
+            result[ranks] = df.sort_values('timestamp')
 
     return result
 
 
-def _build_figure(data: dict, strategy: str, metric: str) -> go.Figure:
+def _rank_label(ranks_str: str) -> str:
+    nums = list(map(int, ranks_str.split(',')))
+    if len(nums) == 1:
+        return f'第 {nums[0]} 支'
+    if nums == list(range(1, len(nums) + 1)):
+        return f'第 1~{len(nums)} 支'
+    return '第 ' + ', '.join(map(str, nums)) + ' 支'
+
+
+def _modal_sort_key(r: str):
+    nums = list(map(int, r.split(',')))
+    is_consec_from_1 = nums == list(range(1, len(nums) + 1))
+    return (0 if is_consec_from_1 else 1, len(nums), nums)
+
+
+def _build_figure(data: dict, metric: str) -> go.Figure:
     label, is_pct, _ = _METRIC_META[metric]
     fig = go.Figure()
 
     if not data:
-        fig.update_layout(
-            height=500,
-            title=f"尚無資料（{strategy}）",
-            plot_bgcolor='white',
-        )
+        fig.update_layout(height=500, title='尚無資料', plot_bgcolor='white')
         return fig
 
     for i, (ranks, df) in enumerate(sorted(data.items())):
         color = _COLORS[i % len(_COLORS)]
         y = df[metric] * 100 if is_pct else df[metric]
+        rl = _rank_label(ranks)
         fig.add_trace(go.Scatter(
             x=df['timestamp'],
             y=y,
             mode='lines+markers',
-            name=f'Ranks[{ranks}]',
+            name=rl,
             line=dict(color=color, width=2),
             marker=dict(size=5),
-            hovertemplate=f'%{{x|%Y-%m-%d}}<br>Ranks[{ranks}]: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
+            hovertemplate=f'%{{x|%Y-%m-%d}}<br>{rl}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         ))
-
-    avg_df = (
-        pd.concat([df.set_index('timestamp')[[metric]] for df in data.values()], axis=1)
-        .mean(axis=1)
-        .reset_index()
-    )
-    avg_df.columns = ['timestamp', metric]
-    avg_y = avg_df[metric] * 100 if is_pct else avg_df[metric]
-    fig.add_trace(go.Scatter(
-        x=avg_df['timestamp'],
-        y=avg_y,
-        mode='lines+markers',
-        name='平均',
-        line=dict(color='#94a3b8', width=3),
-        marker=dict(size=6),
-        hovertemplate=f'%{{x|%Y-%m-%d}}<br>平均: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
-    ))
 
     fig.update_layout(
         height=500,
@@ -272,6 +268,24 @@ app.index_string = '''
 app.layout = html.Div(
     style={'backgroundColor': _PAGE_BG, 'minHeight': '100vh'},
     children=[
+        dcc.Store(id='displayed-ranks', data=None),
+
+        dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle('選擇 Rank 組合')),
+            dbc.ModalBody(
+                dcc.Dropdown(
+                    id='rank-picker',
+                    multi=True,
+                    placeholder='搜尋或選擇 rank 組合...',
+                    optionHeight=35,
+                )
+            ),
+            dbc.ModalFooter([
+                dbc.Button('取消', id='cancel-rank-modal', color='secondary', outline=True, className='me-2'),
+                dbc.Button('確認', id='confirm-rank-modal', color='primary'),
+            ]),
+        ], id='rank-modal', is_open=False, size='lg'),
+
         # Navbar
         html.Div(
             style={
@@ -344,6 +358,18 @@ app.layout = html.Div(
                         inline=True,
                         className='mb-3',
                     ),
+                    html.Div([
+                        html.Div(id='rank-tags', style={
+                            'display': 'inline-flex', 'flexWrap': 'wrap',
+                            'gap': '6px', 'alignItems': 'center',
+                        }),
+                        dbc.Button(
+                            '+', id='open-rank-modal',
+                            color='secondary', outline=True, size='sm',
+                            style={'borderRadius': '20px', 'padding': '2px 14px', 'fontWeight': '600'},
+                        ),
+                    ], className='mb-3 d-flex align-items-center gap-2 flex-wrap'),
+
                     dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
                 ], style={'padding': '20px 24px'}),
             ], style=_CARD_STYLE, className='mb-4'),
@@ -364,7 +390,7 @@ def update_kpi(strategy):
     ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
     return [
         html.P(
-            f'最新回測績效　Ranks[{kpi["full_ranks"]}]　·　{ts_str}',
+            f'最新回測績效　{_rank_label(kpi["full_ranks"])}　·　{ts_str}',
             style={'fontSize': '18px', 'color': '#6b7280', 'fontWeight': '600',
                    'marginBottom': '10px', 'letterSpacing': '0.02em'},
         ),
@@ -382,13 +408,97 @@ def update_kpi(strategy):
 
 
 @app.callback(
+    Output('displayed-ranks', 'data'),
+    Input('strategy-dropdown', 'value'),
+    Input('confirm-rank-modal', 'n_clicks'),
+    Input({'type': 'remove-rank', 'index': ALL}, 'n_clicks'),
+    State('rank-picker', 'value'),
+    State('displayed-ranks', 'data'),
+)
+def update_displayed_ranks(strategy, confirm_n, _remove_n_list, picker_value, current_ranks):
+    triggered = ctx.triggered_id
+
+    if current_ranks is None:
+        data = _load_all(strategy)
+        full = max(data.keys(), key=lambda r: len(r.split(','))) if data else None
+        return [full] if full else []
+
+    if triggered == 'confirm-rank-modal':
+        if picker_value:
+            return picker_value
+        return dash.no_update
+
+    if isinstance(triggered, dict) and triggered.get('type') == 'remove-rank':
+        rank_to_remove = triggered['index']
+        return [r for r in current_ranks if r != rank_to_remove]
+
+    return dash.no_update
+
+
+@app.callback(
+    Output('rank-tags', 'children'),
+    Input('displayed-ranks', 'data'),
+)
+def update_rank_tags(displayed_ranks):
+    if not displayed_ranks:
+        return []
+    tags = []
+    for ranks in displayed_ranks:
+        tags.append(html.Div([
+            html.Span(_rank_label(ranks), style={'fontSize': '13px', 'marginRight': '4px'}),
+            html.Span(
+                '×',
+                id={'type': 'remove-rank', 'index': ranks},
+                n_clicks=0,
+                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': '14px', 'lineHeight': '1'},
+            ),
+        ], style={
+            'backgroundColor': '#dbeafe',
+            'color': '#1d4ed8',
+            'borderRadius': '12px',
+            'padding': '4px 10px',
+            'display': 'inline-flex',
+            'alignItems': 'center',
+        }))
+    return tags
+
+
+@app.callback(
+    Output('rank-modal', 'is_open'),
+    Output('rank-picker', 'options'),
+    Output('rank-picker', 'value'),
+    Input('open-rank-modal', 'n_clicks'),
+    Input('cancel-rank-modal', 'n_clicks'),
+    Input('confirm-rank-modal', 'n_clicks'),
+    State('strategy-dropdown', 'value'),
+    State('displayed-ranks', 'data'),
+    prevent_initial_call=True,
+)
+def toggle_rank_modal(open_n, cancel_n, confirm_n, strategy, current_ranks):
+    triggered = ctx.triggered_id
+    if triggered == 'open-rank-modal':
+        data = _load_all(strategy)
+        options = [
+            {'label': _rank_label(r), 'value': r}
+            for r in sorted(data.keys(), key=_modal_sort_key)
+        ]
+        return True, options, current_ranks or []
+    return False, dash.no_update, dash.no_update
+
+
+@app.callback(
     Output('metrics-graph', 'figure'),
     Input('strategy-dropdown', 'value'),
     Input('metric-selector', 'value'),
+    Input('displayed-ranks', 'data'),
 )
-def update_graph(strategy, metric):
+def update_graph(strategy, metric, displayed_ranks):
     data = _load_all(strategy)
-    return _build_figure(data, strategy, metric)
+    if displayed_ranks is None and data:
+        full = max(data.keys(), key=lambda r: len(r.split(',')))
+        displayed_ranks = [full]
+    filtered = {r: df for r, df in data.items() if r in (displayed_ranks or [])}
+    return _build_figure(filtered, metric)
 
 
 server = flask_server
