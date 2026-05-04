@@ -247,7 +247,7 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
 
 
 _REPORT_FILE_PATTERN = re.compile(
-    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+)\]\.html$'
+    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d))?\.html$'
 )
 
 
@@ -255,29 +255,30 @@ def _parse_report_files(strategy: str) -> pd.DataFrame:
     dir_name = 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
     report_dir = os.path.join(_assets, dir_name)
     if not os.path.isdir(report_dir):
-        return pd.DataFrame(columns=['date', 'ranks', 'fname'])
+        return pd.DataFrame(columns=['date', 'ranks', 'week', 'fname'])
 
     rows = []
     for fname in os.listdir(report_dir):
         m = _REPORT_FILE_PATTERN.match(fname)
         if not m:
             continue
-        date_str, time_str, ranks_str = m.groups()
+        date_str, time_str, ranks_str, week_str = m.groups()
         rows.append({
             'date': date_str,
             'datetime_key': f'{date_str}_{time_str}',
             'ranks': ranks_str,
+            'week': week_str or '',
             'fname': fname,
         })
 
     if not rows:
-        return pd.DataFrame(columns=['date', 'ranks', 'fname'])
+        return pd.DataFrame(columns=['date', 'ranks', 'week', 'fname'])
 
     df = pd.DataFrame(rows)
     df = df.sort_values('datetime_key', ascending=False)
-    df = df.drop_duplicates(subset=['date', 'ranks'], keep='first')
-    df = df.sort_values(['date', 'ranks'], ascending=[False, True]).reset_index(drop=True)
-    return df[['date', 'ranks', 'fname']]
+    df = df.drop_duplicates(subset=['date', 'ranks', 'week'], keep='first')
+    df = df.sort_values(['date', 'ranks', 'week'], ascending=[False, True, True]).reset_index(drop=True)
+    return df[['date', 'ranks', 'week', 'fname']]
 
 
 def _main_layout():
@@ -569,7 +570,7 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
     table_data = [
         {
             'date':       row['date'],
-            'rank_label': _rank_label(row['ranks']),
+            'rank_label': _rank_label(row['ranks']) + (f' · {row["week"]}' if row['week'] else ''),
             'link':       f'[開啟](/reports/{dir_name}/{row["fname"]})',
         }
         for _, row in df.iterrows()
