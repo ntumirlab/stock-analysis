@@ -261,66 +261,71 @@ class GoldenAITWStrategyBase:
 
     def _run_core(self, ranks):
         """週策略核心邏輯，供 run_strategy() ranks 迴圈呼叫"""
-        universe = data.get('price:收盤價')
-        if self.backtest_date is not None:
-            universe = universe[universe.index <= self.backtest_date]
-        position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
+        try:
+            if self.backtest_date is not None:
+                data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
+            universe = data.get('price:收盤價')
+            if self.backtest_date is not None:
+                universe = universe[universe.index <= self.backtest_date]
+            position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
 
-        use_db_sl_tp = self.use_db_sl or self.use_db_tp
-        use_touched_exit = (
-            not use_db_sl_tp
-            and (self.global_sl is not None or self.global_tp is not None)
-        )
-
-        dow = pd.Series(position.index.dayofweek, index=position.index)
-        buy_mask = (dow == self.buy_weekday).to_numpy()
-        entries = position & buy_mask[:, np.newaxis]
-
-        if use_touched_exit:
-            sl_tp_exits = pd.DataFrame(False, index=position.index, columns=position.columns)
-        else:
-            sl_tp_exits = self._build_sl_tp_exits(entries, position, sl_df, tp_df)
-
-        sell_mask = (dow == self.sell_weekday).to_numpy()
-        normal_exits = pd.DataFrame(
-            np.broadcast_to(sell_mask[:, np.newaxis], position.shape).copy(),
-            index=position.index,
-            columns=position.columns
-        )
-
-        if self.buy_weekday == self.sell_weekday:
-            normal_exits = normal_exits & ~entries
-
-        exits = FinlabDataFrame(normal_exits | sl_tp_exits)
-        final_position = FinlabDataFrame(entries).hold_until(exits)
-        final_position = final_position.shift(-1).fillna(False).astype(bool)
-        final_position = self._apply_cutoff(final_position)
-
-        if use_touched_exit:
-            return sim(
-                position=final_position,
-                stop_loss=self.global_sl,
-                take_profit=self.global_tp,
-                touched_exit=True,
-                fee_ratio=1.425/1000,
-                tax_ratio=3/1000,
-                market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
-                trade_at_price=self.trade_at_price,
-                resample=None,
-                upload=False,
-                notification_enable=False
+            use_db_sl_tp = self.use_db_sl or self.use_db_tp
+            use_touched_exit = (
+                not use_db_sl_tp
+                and (self.global_sl is not None or self.global_tp is not None)
             )
-        else:
-            return sim(
-                position=final_position,
-                fee_ratio=1.425/1000,
-                tax_ratio=3/1000,
-                market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
-                trade_at_price=self.trade_at_price,
-                resample=None,
-                upload=False,
-                notification_enable=False
+
+            dow = pd.Series(position.index.dayofweek, index=position.index)
+            buy_mask = (dow == self.buy_weekday).to_numpy()
+            entries = position & buy_mask[:, np.newaxis]
+
+            if use_touched_exit:
+                sl_tp_exits = pd.DataFrame(False, index=position.index, columns=position.columns)
+            else:
+                sl_tp_exits = self._build_sl_tp_exits(entries, position, sl_df, tp_df)
+
+            sell_mask = (dow == self.sell_weekday).to_numpy()
+            normal_exits = pd.DataFrame(
+                np.broadcast_to(sell_mask[:, np.newaxis], position.shape).copy(),
+                index=position.index,
+                columns=position.columns
             )
+
+            if self.buy_weekday == self.sell_weekday:
+                normal_exits = normal_exits & ~entries
+
+            exits = FinlabDataFrame(normal_exits | sl_tp_exits)
+            final_position = FinlabDataFrame(entries).hold_until(exits)
+            final_position = final_position.shift(-1).ffill().fillna(False).astype(bool)
+            final_position = self._apply_cutoff(final_position)
+
+            if use_touched_exit:
+                return sim(
+                    position=final_position,
+                    stop_loss=self.global_sl,
+                    take_profit=self.global_tp,
+                    touched_exit=True,
+                    fee_ratio=1.425/1000,
+                    tax_ratio=3/1000,
+                    market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday, backtest_date=self.backtest_date),
+                    trade_at_price=self.trade_at_price,
+                    resample=None,
+                    upload=False,
+                    notification_enable=False
+                )
+            else:
+                return sim(
+                    position=final_position,
+                    fee_ratio=1.425/1000,
+                    tax_ratio=3/1000,
+                    market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday, backtest_date=self.backtest_date),
+                    trade_at_price=self.trade_at_price,
+                    resample=None,
+                    upload=False,
+                    notification_enable=False
+                )
+        finally:
+            data.truncate_end = None
 
     def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
         ranks_str = ','.join(map(str, ranks))
@@ -332,7 +337,12 @@ class GoldenAITWStrategyBase:
         dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
         if report_dir is not None:
             save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
-            report.display(save_report_path=save_path)
+            if self.backtest_date is not None:
+                data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
+            try:
+                report.display(save_report_path=save_path)
+            finally:
+                data.truncate_end = None
 
     def run_strategy(self, report_dir=None, num_workers=None):
         if num_workers is None:

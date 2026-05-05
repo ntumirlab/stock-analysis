@@ -27,82 +27,87 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
 
     def _run_core(self, ranks):
         """月策略核心：對給定 ranks 跑 Week1~4，回傳 {'Week1': report, ...}"""
-        universe = data.get('price:收盤價')
-        if self.backtest_date is not None:
-            universe = universe[universe.index <= self.backtest_date]
-        base_position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
+        try:
+            if self.backtest_date is not None:
+                data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
+            universe = data.get('price:收盤價')
+            if self.backtest_date is not None:
+                universe = universe[universe.index <= self.backtest_date]
+            base_position, sl_df, tp_df = self._create_df(universe, ranks=ranks)
 
-        use_db_sl_tp = self.use_db_sl or self.use_db_tp
-        use_touched_exit = (
-            not use_db_sl_tp
-            and (self.global_sl is not None or self.global_tp is not None)
-        )
-
-        pre_raw_low, pre_raw_high = None, None
-        if use_db_sl_tp:
-            pre_raw_low  = data.get('price:最低價').reindex(index=base_position.index, columns=base_position.columns)
-            pre_raw_high = data.get('price:最高價').reindex(index=base_position.index, columns=base_position.columns)
-
-        reports = {}
-        for offset in range(4):
-            selected_weeks = self._get_nth_sundays(base_position.index, offset + 1)
-            entry_dates = selected_weeks + pd.Timedelta(days=1 + self.buy_weekday)
-            exit_dates  = selected_weeks + pd.Timedelta(days=22 + self.sell_weekday)
-
-            entry_mask = base_position.index.isin(entry_dates)
-            entries = base_position & entry_mask[:, np.newaxis]
-
-            if use_touched_exit:
-                sl_tp_exits = pd.DataFrame(False, index=base_position.index, columns=base_position.columns)
-            else:
-                sl_tp_exits = self._build_sl_tp_exits(
-                    entries, base_position, sl_df, tp_df,
-                    raw_low=pre_raw_low, raw_high=pre_raw_high
-                )
-
-            exit_mask = base_position.index.isin(exit_dates)
-            normal_exits = pd.DataFrame(
-                np.broadcast_to(exit_mask[:, np.newaxis], base_position.shape).copy(),
-                index=base_position.index,
-                columns=base_position.columns
+            use_db_sl_tp = self.use_db_sl or self.use_db_tp
+            use_touched_exit = (
+                not use_db_sl_tp
+                and (self.global_sl is not None or self.global_tp is not None)
             )
 
-            if self.buy_weekday == self.sell_weekday:
-                normal_exits = normal_exits & ~entries
+            pre_raw_low, pre_raw_high = None, None
+            if use_db_sl_tp:
+                pre_raw_low  = data.get('price:最低價').reindex(index=base_position.index, columns=base_position.columns)
+                pre_raw_high = data.get('price:最高價').reindex(index=base_position.index, columns=base_position.columns)
 
-            exits = FinlabDataFrame(normal_exits | sl_tp_exits)
-            final_position = FinlabDataFrame(entries).hold_until(exits)
-            final_position = final_position.shift(-1).fillna(False).astype(bool)
-            final_position = self._apply_cutoff(final_position)
+            reports = {}
+            for offset in range(4):
+                selected_weeks = self._get_nth_sundays(base_position.index, offset + 1)
+                entry_dates = selected_weeks + pd.Timedelta(days=1 + self.buy_weekday)
+                exit_dates  = selected_weeks + pd.Timedelta(days=22 + self.sell_weekday)
 
-            if use_touched_exit:
-                report = sim(
-                    position=final_position,
-                    stop_loss=self.global_sl,
-                    take_profit=self.global_tp,
-                    touched_exit=True,
-                    fee_ratio=1.425/1000,
-                    tax_ratio=3/1000,
-                    market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
-                    trade_at_price=self.trade_at_price,
-                    resample=None,
-                    upload=False,
-                    notification_enable=False
+                entry_mask = base_position.index.isin(entry_dates)
+                entries = base_position & entry_mask[:, np.newaxis]
+
+                if use_touched_exit:
+                    sl_tp_exits = pd.DataFrame(False, index=base_position.index, columns=base_position.columns)
+                else:
+                    sl_tp_exits = self._build_sl_tp_exits(
+                        entries, base_position, sl_df, tp_df,
+                        raw_low=pre_raw_low, raw_high=pre_raw_high
+                    )
+
+                exit_mask = base_position.index.isin(exit_dates)
+                normal_exits = pd.DataFrame(
+                    np.broadcast_to(exit_mask[:, np.newaxis], base_position.shape).copy(),
+                    index=base_position.index,
+                    columns=base_position.columns
                 )
-            else:
-                report = sim(
-                    position=final_position,
-                    fee_ratio=1.425/1000,
-                    tax_ratio=3/1000,
-                    market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday),
-                    trade_at_price=self.trade_at_price,
-                    resample=None,
-                    upload=False,
-                    notification_enable=False
-                )
-            reports[f"Week{offset + 1}"] = report
 
-        return reports
+                if self.buy_weekday == self.sell_weekday:
+                    normal_exits = normal_exits & ~entries
+
+                exits = FinlabDataFrame(normal_exits | sl_tp_exits)
+                final_position = FinlabDataFrame(entries).hold_until(exits)
+                final_position = final_position.shift(-1).ffill().fillna(False).astype(bool)
+                final_position = self._apply_cutoff(final_position)
+
+                if use_touched_exit:
+                    report = sim(
+                        position=final_position,
+                        stop_loss=self.global_sl,
+                        take_profit=self.global_tp,
+                        touched_exit=True,
+                        fee_ratio=1.425/1000,
+                        tax_ratio=3/1000,
+                        market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday, backtest_date=self.backtest_date),
+                        trade_at_price=self.trade_at_price,
+                        resample=None,
+                        upload=False,
+                        notification_enable=False
+                    )
+                else:
+                    report = sim(
+                        position=final_position,
+                        fee_ratio=1.425/1000,
+                        tax_ratio=3/1000,
+                        market=TargetWeekdayTWMarket(buy_weekday=self.buy_weekday, backtest_date=self.backtest_date),
+                        trade_at_price=self.trade_at_price,
+                        resample=None,
+                        upload=False,
+                        notification_enable=False
+                    )
+                reports[f"Week{offset + 1}"] = report
+
+            return reports
+        finally:
+            data.truncate_end = None
 
     def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
         ranks_str = ','.join(map(str, ranks))
@@ -116,7 +121,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         if report_dir is not None:
             wrapper = MultiReportWrapper(week_reports)
             save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
-            wrapper.display(save_report_path=save_path)
+            if self.backtest_date is not None:
+                data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
+            try:
+                wrapper.display(save_report_path=save_path)
+            finally:
+                data.truncate_end = None
 
 
 if __name__ == '__main__':
