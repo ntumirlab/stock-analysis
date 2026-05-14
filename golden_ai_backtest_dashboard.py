@@ -8,6 +8,7 @@ from flask_autoindex import AutoIndex
 import plotly.graph_objects as go
 import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
+from dao.recommendation_dao import RecommendationDAO
 
 flask_server = Flask(__name__)
 
@@ -118,17 +119,58 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
     )
 
 
-def _load_all(strategy: str) -> dict:
+def _simple_kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
+    if pd.isna(value):
+        display, color = '—', '#9ca3af'
+    else:
+        display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
+        color = '#1e293b'
+
+    arrow = None
+    if delta is not None and not pd.isna(delta):
+        if abs(delta) < 1e-6:
+            arrow = html.Span('－', style={'color': '#9ca3af', 'fontSize': '24px', 'marginLeft': '10px', 'fontWeight': '700'})
+        elif delta > 0:
+            arrow = html.Span('▲', style={'color': '#dc2626', 'fontSize': '24px', 'marginLeft': '10px'})
+        else:
+            arrow = html.Span('▼', style={'color': '#059669', 'fontSize': '24px', 'marginLeft': '10px'})
+
+    return dbc.Col(
+        dbc.Card(
+            dbc.CardBody([
+                html.P(title, style={
+                    'fontSize': '15px', 'color': '#6b7280',
+                    'fontWeight': '500', 'marginBottom': '14px',
+                }),
+                html.Div([
+                    html.Span(display, style={
+                        'color': color, 'fontWeight': '700',
+                        'fontSize': '40px', 'lineHeight': '1',
+                    }),
+                    arrow,
+                ], style={'display': 'flex', 'alignItems': 'center'}),
+            ], style={'padding': '24px 28px'}),
+            style=_CARD_STYLE,
+        ),
+        xs=6, lg=3,
+    )
+
+
+def _load_all(strategy: str, months=3) -> dict:
     df_all = dao.load(strategy=strategy)
     if df_all.empty:
         return {}
 
-    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=3)
+    cutoff = (
+        pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
+        if months is not None else None
+    )
     result = {}
     for ranks in df_all['ranks'].unique():
         df = df_all[df_all['ranks'] == ranks].copy()
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
-        df = df[df['timestamp'] >= cutoff]
+        if cutoff is not None:
+            df = df[df['timestamp'] >= cutoff]
 
         if strategy == 'monthly':
             df = (
@@ -246,6 +288,93 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
     return fig
 
 
+_SIMPLE_ACCENT = '#1d4ed8'
+_SIMPLE_FILL = 'rgba(29, 78, 216, 0.12)'
+
+
+def _build_simple_figure(df, metric: str) -> go.Figure:
+    label, is_pct = _METRIC_META[metric]
+    fig = go.Figure()
+
+    if df is None or df.empty:
+        fig.update_layout(height=400, title='尚無資料', plot_bgcolor='white')
+        return fig
+
+    y = df[metric] * 100 if is_pct else df[metric]
+
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'],
+        y=y,
+        mode='lines',
+        line=dict(color=_SIMPLE_ACCENT, width=2.5),
+        fill='tozeroy',
+        fillcolor=_SIMPLE_FILL,
+        hovertemplate=f'%{{x|%Y-%m-%d}}<br>{label}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
+        showlegend=False,
+    ))
+
+    last_x = df['timestamp'].iloc[-1]
+    last_y = y.iloc[-1]
+    last_text = f'{last_y:.2f}%' if is_pct else f'{last_y:.2f}'
+
+    fig.add_trace(go.Scatter(
+        x=[last_x], y=[last_y],
+        mode='markers',
+        marker=dict(size=10, color=_SIMPLE_ACCENT),
+        showlegend=False,
+        hoverinfo='skip',
+    ))
+
+    fig.add_annotation(
+        x=last_x, y=last_y,
+        text=f'<b>{last_text}</b>',
+        xanchor='left', yanchor='middle',
+        xshift=14,
+        showarrow=False,
+        font=dict(size=15, color=_SIMPLE_ACCENT),
+    )
+
+    fig.add_hline(
+        y=0,
+        line=dict(color='#9ca3af', width=1, dash='dash'),
+    )
+
+    fig.update_layout(
+        height=400,
+        margin=dict(l=60, r=90, t=20, b=40),
+        plot_bgcolor='white',
+        paper_bgcolor='rgba(0,0,0,0)',
+        yaxis_title=f'{label} (%)' if is_pct else label,
+        font=dict(family='system-ui, -apple-system, sans-serif', color='#374151', size=14),
+        yaxis=dict(title_font=dict(size=14)),
+    )
+
+    x_min, x_max = df['timestamp'].min(), df['timestamp'].max()
+    delta_days = (x_max - x_min).days
+    if delta_days <= 14:
+        freq = 'D'
+    elif delta_days <= 60:
+        freq = 'W-MON'
+    elif delta_days <= 180:
+        freq = 'MS'
+    else:
+        freq = 'QS'
+    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
+    tickvals = sorted(set([x_min] + interior + [x_max]))
+    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+
+    if is_pct:
+        fig.update_yaxes(ticksuffix='%')
+    fig.update_xaxes(
+        showgrid=True, gridcolor='#e5e7eb',
+        tickmode='array', tickvals=tickvals, ticktext=ticktext,
+        tickfont=dict(size=13), tickangle=-30,
+    )
+    fig.update_yaxes(showgrid=True, gridcolor='#e5e7eb', tickfont=dict(size=13))
+
+    return fig
+
+
 _REPORT_FILE_PATTERN = re.compile(
     r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d))?\.html$'
 )
@@ -279,6 +408,162 @@ def _parse_report_files(strategy: str) -> pd.DataFrame:
     df = df.drop_duplicates(subset=['date', 'ranks', 'week'], keep='first')
     df = df.sort_values(['date', 'ranks', 'week'], ascending=[False, True, True]).reset_index(drop=True)
     return df[['date', 'ranks', 'week', 'fname']]
+
+
+def _recommendation_card(strategy: str, view_id: str):
+    record = RecommendationDAO('data_prod.db', frequency=strategy).get_latest()
+
+    subtitle_text = f'更新於 {record.date}' if record else ''
+
+    header_row = html.Div([
+        html.Div(
+            '本週推薦清單',
+            style={'fontSize': '18px', 'fontWeight': '600', 'color': '#1a202c'},
+        ),
+        html.Div(
+            subtitle_text,
+            style={'fontSize': '13px', 'color': '#6b7280'},
+        ),
+    ], className='d-flex justify-content-between align-items-center flex-wrap gap-2')
+
+    header_children = [header_row]
+    if strategy == 'monthly':
+        header_children.append(
+            html.Div(
+                '月策略每 4 週換倉一次。此處顯示 AI 對月線最新觀點，實際進場時間由策略決定。',
+                style={
+                    'fontSize': '13px', 'color': '#6b7280',
+                    'fontStyle': 'italic', 'marginTop': '4px',
+                },
+            )
+        )
+    header = html.Div(header_children, className='mb-3')
+
+    if record and record.stocks:
+        rows = [
+            {
+                '#': i + 1,
+                '代號': s.id,
+                '名稱': s.name or '',
+                '目標價': f'{s.TP:,.2f}' if s.TP is not None else '—',
+            }
+            for i, s in enumerate(record.stocks)
+        ]
+        body = dash_table.DataTable(
+            columns=[
+                {'name': '#',     'id': '#'},
+                {'name': '代號',  'id': '代號'},
+                {'name': '名稱',  'id': '名稱'},
+                {'name': '目標價', 'id': '目標價'},
+            ],
+            data=rows,
+            style_table={'overflowX': 'auto'},
+            style_cell={
+                'fontFamily': 'system-ui, -apple-system, sans-serif',
+                'fontSize': '14px',
+                'padding': '10px 16px',
+                'textAlign': 'left',
+                'color': '#374151',
+                'border': '1px solid #e5e7eb',
+            },
+            style_header={
+                'backgroundColor': '#f8fafc',
+                'fontWeight': '600',
+                'border': '1px solid #e5e7eb',
+                'color': '#374151',
+            },
+            style_data_conditional=[
+                {'if': {'row_index': 'odd'}, 'backgroundColor': '#f9fafb'},
+            ],
+            style_cell_conditional=[
+                {'if': {'column_id': '#'},      'width': '50px',  'textAlign': 'center'},
+                {'if': {'column_id': '代號'},   'width': '90px',  'textAlign': 'center'},
+                {'if': {'column_id': '目標價'}, 'width': '110px', 'textAlign': 'right'},
+            ],
+        )
+    else:
+        body = html.Div(
+            '目前無推薦資料',
+            className='text-muted text-center py-4',
+            style={'fontSize': '14px'},
+        )
+
+    return dbc.Card(
+        dbc.CardBody([header, body], style={'padding': '20px 24px'}),
+        style=_CARD_STYLE,
+        className='mb-3',
+    )
+
+
+def _simple_layout():
+    strategy_options = [
+        {
+            'label': html.Span([
+                html.Span('週策略', style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
+                html.Span('每週換倉', style={'fontSize': '12px', 'opacity': '0.75'}),
+            ]),
+            'value': 'weekly',
+        },
+        {
+            'label': html.Span([
+                html.Span('月策略', style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
+                html.Span('每月換倉', style={'fontSize': '12px', 'opacity': '0.75'}),
+            ]),
+            'value': 'monthly',
+        },
+    ]
+
+    period_options = [
+        {'label': '1M', 'value': '1M'},
+        {'label': '3M', 'value': '3M'},
+        {'label': '6M', 'value': '6M'},
+        {'label': '1Y', 'value': '1Y'},
+        {'label': 'All', 'value': 'All'},
+    ]
+
+    return dbc.Container([
+        dbc.RadioItems(
+            id='simple-strategy',
+            options=strategy_options,
+            value='weekly',
+            inputClassName='btn-check',
+            labelClassName='btn btn-outline-secondary',
+            labelCheckedClassName='active',
+            inline=True,
+            className='mt-4 mb-2',
+        ),
+
+        html.Div(
+            id='simple-last-update',
+            className='text-end text-muted mb-2',
+            style={'fontSize': '13px'},
+        ),
+
+        html.Div(id='simple-kpi-row', className='mb-3'),
+
+        dbc.Card([
+            dbc.CardBody([
+                html.Div([
+                    html.Div(
+                        '年化報酬走勢',
+                        style={'fontSize': '18px', 'fontWeight': '600', 'color': '#1a202c'},
+                    ),
+                    dbc.RadioItems(
+                        id='simple-period',
+                        options=period_options,
+                        value='3M',
+                        inputClassName='btn-check',
+                        labelClassName='btn btn-outline-secondary btn-sm',
+                        labelCheckedClassName='active',
+                        inline=True,
+                    ),
+                ], className='d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2'),
+                dcc.Graph(id='simple-graph', config={'displayModeBar': False}),
+            ], style={'padding': '20px 24px'}),
+        ], style=_CARD_STYLE, className='mb-3'),
+
+        html.Div(id='simple-recommendations', className='mb-4'),
+    ], fluid=True)
 
 
 def _main_layout():
@@ -350,6 +635,8 @@ def _main_layout():
                     dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
                 ], style={'padding': '20px 24px'}),
             ], style=_CARD_STYLE, className='mb-4'),
+
+            html.Div(id='advanced-recommendations', className='mb-4'),
         ], fluid=True),
     ])
 
@@ -361,7 +648,7 @@ def _report_browser_layout(strategy: str):
     return dbc.Container([
         dbc.Row(
             dbc.Col(
-                dcc.Link('← 返回', href='/', className='btn btn-outline-secondary btn-sm'),
+                dcc.Link('← 返回', href='/advanced', className='btn btn-outline-secondary btn-sm'),
             ),
             className='mt-4 mb-3',
         ),
@@ -457,7 +744,9 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <style>
-            #metric-selector .form-check { padding-left: 0; }
+            #metric-selector .form-check,
+            #simple-strategy .form-check,
+            #simple-period .form-check { padding-left: 0; }
             #report-rank-filter .Select-control { min-height: 44px !important; }
             #report-rank-filter .Select-arrow-zone,
             #report-rank-filter .Select-clear-zone { vertical-align: middle !important; }
@@ -482,37 +771,12 @@ app.layout = html.Div(
 
         # Navbar
         html.Div(
+            id='navbar',
             style={
                 'backgroundColor': 'white',
                 'borderBottom': '1px solid #e5e7eb',
                 'padding': '0 24px',
             },
-            children=dbc.Container([
-                dbc.Row([
-                    dbc.Col(
-                        dcc.Link(
-                            'GoldenAI 回測績效',
-                            href='/',
-                            style={
-                                'fontWeight': '600', 'color': '#1a202c',
-                                'fontSize': '24px', 'textDecoration': 'none',
-                            },
-                            className='mb-0 py-3 d-block',
-                        ),
-                        width='auto',
-                    ),
-                    dbc.Col(
-                        html.Div([
-                            dcc.Link('Weekly 報告',
-                                     href='/reports/weekly/',
-                                     className='btn btn-outline-secondary me-2'),
-                            dcc.Link('Monthly 報告',
-                                     href='/reports/monthly/',
-                                     className='btn btn-outline-secondary'),
-                        ], className='d-flex align-items-center h-100'),
-                    ),
-                ], align='center'),
-            ], fluid=True),
         ),
 
         # Page content
@@ -522,10 +786,76 @@ app.layout = html.Div(
 
 
 # Flask SPA routes
+@flask_server.route('/advanced')
 @flask_server.route('/reports/weekly/')
 @flask_server.route('/reports/monthly/')
-def reports_spa():
+def spa_routes():
     return app.index()
+
+
+# ── Navbar ───────────────────────────────────────────────────────────────────
+
+_TOGGLE_LINK_STYLE = {
+    'color': '#6b7280',
+    'textDecoration': 'none',
+    'fontSize': '14px',
+    'fontWeight': '500',
+}
+
+
+@app.callback(
+    Output('navbar', 'children'),
+    Input('url', 'pathname'),
+)
+def render_navbar(pathname):
+    is_advanced = pathname == '/advanced'
+    is_reports = bool(pathname) and pathname.startswith('/reports/')
+
+    brand_text = 'GoldenAI 回測績效' if (is_advanced or is_reports) else 'GoldenAI 策略表現'
+    brand = dcc.Link(
+        brand_text,
+        href='/',
+        style={
+            'fontWeight': '600', 'color': '#1a202c',
+            'fontSize': '24px', 'textDecoration': 'none',
+        },
+    )
+
+    if is_advanced:
+        center = html.Div([
+            dcc.Link('Weekly 報告', href='/reports/weekly/',
+                     className='btn btn-outline-secondary me-2'),
+            dcc.Link('Monthly 報告', href='/reports/monthly/',
+                     className='btn btn-outline-secondary'),
+        ], className='d-flex align-items-center')
+    else:
+        center = None
+
+    if is_reports:
+        toggle = None
+    elif is_advanced:
+        toggle = dcc.Link('簡易檢視 →', href='/', style=_TOGGLE_LINK_STYLE)
+    else:
+        toggle = dcc.Link('進階檢視 →', href='/advanced', style=_TOGGLE_LINK_STYLE)
+
+    left_children = [brand]
+    if center is not None:
+        left_children.append(center)
+    left_group = html.Div(
+        left_children,
+        style={'display': 'flex', 'alignItems': 'center', 'gap': '32px'},
+    )
+
+    return dbc.Container([
+        html.Div(
+            [left_group, toggle if toggle else html.Div()],
+            style={
+                'display': 'flex', 'alignItems': 'center',
+                'justifyContent': 'space-between',
+                'padding': '16px 0',
+            },
+        ),
+    ], fluid=True)
 
 
 # ── Routing ──────────────────────────────────────────────────────────────────
@@ -539,7 +869,9 @@ def render_page(pathname):
         return _report_browser_layout('weekly')
     if pathname == '/reports/monthly/':
         return _report_browser_layout('monthly')
-    return _main_layout()
+    if pathname == '/advanced':
+        return _main_layout()
+    return _simple_layout()
 
 
 # ── Report browser ────────────────────────────────────────────────────────────
@@ -578,6 +910,57 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
     return table_data, options
 
 
+# ── Simple dashboard ─────────────────────────────────────────────────────────
+
+_PERIOD_MONTHS = {'1M': 1, '3M': 3, '6M': 6, '1Y': 12, 'All': None}
+
+
+@app.callback(
+    Output('simple-kpi-row', 'children'),
+    Output('simple-graph', 'figure'),
+    Output('simple-last-update', 'children'),
+    Input('simple-strategy', 'value'),
+    Input('simple-period', 'value'),
+)
+def update_simple_view(strategy, period):
+    strategy = strategy or 'weekly'
+    period = period or '3M'
+
+    kpi = _latest_kpi(strategy)
+    if not kpi:
+        return [], _build_simple_figure(None, 'annual_return'), ''
+
+    def _delta(k):
+        return kpi[k] - kpi['prev'][k] if 'prev' in kpi else None
+
+    kpi_row = dbc.Row([
+        _simple_kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,  delta=_delta('annual_return')),
+        _simple_kpi_card('夏普值',     kpi['sharpe'],        is_pct=False, delta=_delta('sharpe')),
+        _simple_kpi_card('最大回檔',   kpi['max_drawdown'],  is_pct=True,  delta=_delta('max_drawdown')),
+        _simple_kpi_card('勝率',       kpi['win_ratio'],     is_pct=True,  delta=_delta('win_ratio')),
+    ], className='g-3')
+
+    months = _PERIOD_MONTHS.get(period, 3)
+    data = _load_all(strategy, months=months)
+    chart_df = None
+    if data:
+        full_ranks = max(data.keys(), key=lambda r: len(r.split(',')))
+        chart_df = data[full_ranks]
+
+    fig = _build_simple_figure(chart_df, 'annual_return')
+
+    last_update = f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}'
+    return kpi_row, fig, last_update
+
+
+@app.callback(
+    Output('simple-recommendations', 'children'),
+    Input('simple-strategy', 'value'),
+)
+def update_simple_recommendations(strategy):
+    return _recommendation_card(strategy or 'weekly', view_id='simple')
+
+
 # ── Main dashboard ────────────────────────────────────────────────────────────
 
 @app.callback(
@@ -591,11 +974,17 @@ def update_kpi(strategy):
 
     ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
     return [
-        html.P(
-            f'最新回測績效　{_rank_label(kpi["full_ranks"])}　·　{ts_str}',
-            style={'fontSize': '18px', 'color': '#6b7280', 'fontWeight': '600',
-                   'marginBottom': '10px', 'letterSpacing': '0.02em'},
-        ),
+        html.Div([
+            html.Label(
+                f'{_rank_label(kpi["full_ranks"])}績效',
+                style={'fontSize': '18px', 'fontWeight': '500', 'color': '#374151', 'marginBottom': '0'},
+            ),
+            html.Div(
+                f'最新回測：{ts_str}',
+                className='text-muted',
+                style={'fontSize': '13px'},
+            ),
+        ], className='d-flex justify-content-between align-items-baseline mb-2'),
         dbc.Row([
             _kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,
                       delta=kpi['annual_return'] - kpi['prev']['annual_return'] if 'prev' in kpi else None),
@@ -675,6 +1064,14 @@ def toggle_rank_modal(open_n, _cancel_n, confirm_n, strategy, current_ranks):
         ]
         return True, options, current_ranks or []
     return False, dash.no_update, dash.no_update
+
+
+@app.callback(
+    Output('advanced-recommendations', 'children'),
+    Input('strategy-dropdown', 'value'),
+)
+def update_advanced_recommendations(strategy):
+    return _recommendation_card(strategy or 'weekly', view_id='advanced')
 
 
 server = flask_server
