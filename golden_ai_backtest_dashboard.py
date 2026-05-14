@@ -32,13 +32,33 @@ _METRIC_META = {
     'win_ratio':     ('勝率',        True),
 }
 
-# Tableau 10
+# Tableau 10 (advanced view multi-line chart palette)
 _COLORS = [
     '#4E79A7', '#F28E2B', '#E15759', '#76B7B2',
     '#59A14F', '#EDC948', '#B07AA1', '#FF9DA7',
 ]
 
-_PAGE_BG = '#f0f2f5'
+_COLOR = {
+    'text_heading':   '#1a202c',
+    'text_value':     '#1e293b',
+    'text_secondary': '#374151',
+    'text_muted':     '#6b7280',
+    'text_disabled':  '#9ca3af',
+    'accent':         '#1d4ed8',
+    'accent_bg':      '#dbeafe',
+    'accent_fill':    'rgba(29, 78, 216, 0.12)',
+    'up':             '#dc2626',
+    'down':           '#059669',
+    'border':         '#e5e7eb',
+    'grid_zero':      '#d1d5db',
+    'bg_page':        '#f0f2f5',
+    'bg_table_head':  '#f8fafc',
+    'bg_table_alt':   '#f9fafb',
+    'transparent':    'rgba(0,0,0,0)',
+}
+
+_FONT_FAMILY = 'system-ui, -apple-system, sans-serif'
+
 _CARD_STYLE = {
     'boxShadow': '0 1px 4px rgba(0,0,0,0.08)',
     'borderRadius': '8px',
@@ -47,6 +67,19 @@ _CARD_STYLE = {
 
 dao = GoldenAIBacktestMetricsDAO()
 _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
+
+_REC_DAOS = {
+    'weekly':  RecommendationDAO('data_prod.db', frequency='weekly'),
+    'monthly': RecommendationDAO('data_prod.db', frequency='monthly'),
+}
+
+
+def _strategy_dir(strategy: str) -> str:
+    return 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
+
+
+def _pick_full_ranks(ranks_iter):
+    return max(ranks_iter, key=lambda r: len(r.split(',')))
 
 
 def _latest_kpi(strategy: str) -> dict:
@@ -63,7 +96,7 @@ def _latest_kpi(strategy: str) -> dict:
             .reset_index()
         )
 
-    full_ranks = max(df_all['ranks'].unique(), key=lambda r: len(r.split(',')))
+    full_ranks = _pick_full_ranks(df_all['ranks'].unique())
     df_full = df_all[df_all['ranks'] == full_ranks]
 
     sorted_ts = sorted(df_full['timestamp'].unique())
@@ -83,25 +116,25 @@ def _latest_kpi(strategy: str) -> dict:
 
 def _kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
     if pd.isna(value):
-        display, color = '—', '#9ca3af'
+        display, color = '—', _COLOR['text_disabled']
     else:
         display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
-        color = '#1e293b'
+        color = _COLOR['text_value']
 
     arrow = None
     if delta is not None and not pd.isna(delta):
         if abs(delta) < 1e-6:
-            arrow = html.Span('－', style={'color': '#9ca3af', 'fontSize': '16px', 'marginLeft': '6px', 'fontWeight': '700'})
+            arrow = html.Span('－', style={'color': _COLOR['text_disabled'], 'fontSize': '16px', 'marginLeft': '6px', 'fontWeight': '700'})
         elif delta > 0:
-            arrow = html.Span('▲', style={'color': '#dc2626', 'fontSize': '16px', 'marginLeft': '6px'})
+            arrow = html.Span('▲', style={'color': _COLOR['up'], 'fontSize': '16px', 'marginLeft': '6px'})
         else:
-            arrow = html.Span('▼', style={'color': '#059669', 'fontSize': '16px', 'marginLeft': '6px'})
+            arrow = html.Span('▼', style={'color': _COLOR['down'], 'fontSize': '16px', 'marginLeft': '6px'})
 
     return dbc.Col(
         dbc.Card(
             dbc.CardBody([
                 html.P(title, style={
-                    'fontSize': '16px', 'color': '#6b7280',
+                    'fontSize': '16px', 'color': _COLOR['text_muted'],
                     'fontWeight': '500', 'marginBottom': '6px',
                     'textTransform': 'uppercase', 'letterSpacing': '0.05em',
                 }),
@@ -121,25 +154,25 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
 
 def _simple_kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
     if pd.isna(value):
-        display, color = '—', '#9ca3af'
+        display, color = '—', _COLOR['text_disabled']
     else:
         display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
-        color = '#1e293b'
+        color = _COLOR['text_value']
 
     arrow = None
     if delta is not None and not pd.isna(delta):
         if abs(delta) < 1e-6:
-            arrow = html.Span('－', style={'color': '#9ca3af', 'fontSize': '24px', 'marginLeft': '10px', 'fontWeight': '700'})
+            arrow = html.Span('－', style={'color': _COLOR['text_disabled'], 'fontSize': '24px', 'marginLeft': '10px', 'fontWeight': '700'})
         elif delta > 0:
-            arrow = html.Span('▲', style={'color': '#dc2626', 'fontSize': '24px', 'marginLeft': '10px'})
+            arrow = html.Span('▲', style={'color': _COLOR['up'], 'fontSize': '24px', 'marginLeft': '10px'})
         else:
-            arrow = html.Span('▼', style={'color': '#059669', 'fontSize': '24px', 'marginLeft': '10px'})
+            arrow = html.Span('▼', style={'color': _COLOR['down'], 'fontSize': '24px', 'marginLeft': '10px'})
 
     return dbc.Col(
         dbc.Card(
             dbc.CardBody([
                 html.P(title, style={
-                    'fontSize': '15px', 'color': '#6b7280',
+                    'fontSize': '15px', 'color': _COLOR['text_muted'],
                     'fontWeight': '500', 'marginBottom': '14px',
                 }),
                 html.Div([
@@ -173,11 +206,7 @@ def _load_all(strategy: str, months=3) -> dict:
             df = df[df['timestamp'] >= cutoff]
 
         if strategy == 'monthly':
-            df = (
-                df.groupby('timestamp')[['annual_return', 'sharpe', 'sortino', 'max_drawdown', 'win_ratio']]
-                .mean()
-                .reset_index()
-            )
+            df = df.groupby('timestamp')[_KPI_COLS].mean().reset_index()
 
         if not df.empty:
             result[ranks] = df.sort_values('timestamp')
@@ -206,8 +235,8 @@ def _build_tags(ranks_list: list) -> list:
                 style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': '14px', 'lineHeight': '1'},
             ),
         ], style={
-            'backgroundColor': '#dbeafe',
-            'color': '#1d4ed8',
+            'backgroundColor': _COLOR['accent_bg'],
+            'color': _COLOR['accent'],
             'borderRadius': '12px',
             'padding': '4px 10px',
             'display': 'inline-flex',
@@ -216,7 +245,7 @@ def _build_tags(ranks_list: list) -> list:
     return tags
 
 
-def _modal_sort_key(r: str):
+def _ranks_sort_key(r: str):
     nums = list(map(int, r.split(',')))
     is_consec_from_1 = nums == list(range(1, len(nums) + 1))
     return (0 if is_consec_from_1 else 1, len(nums), nums)
@@ -248,7 +277,7 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
         height=500,
         margin=dict(l=60, r=20, t=30, b=40),
         plot_bgcolor='white',
-        paper_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor=_COLOR['transparent'],
         yaxis_title=f'{label} (%)' if is_pct else label,
         legend=dict(
             orientation='h',
@@ -258,7 +287,7 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
             x=0,
             font=dict(size=16),
         ),
-        font=dict(family='system-ui, -apple-system, sans-serif', color='#374151', size=16),
+        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=16),
         yaxis=dict(title_font=dict(size=16)),
     )
     all_dates = pd.concat([df['timestamp'] for df in data.values()])
@@ -279,17 +308,13 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
     fig.update_xaxes(
-        showgrid=True, gridcolor='#e5e7eb',
+        showgrid=True, gridcolor=_COLOR['border'],
         tickmode='array', tickvals=tickvals, ticktext=ticktext,
         tickfont=dict(size=16), tickangle=-30,
     )
-    fig.update_yaxes(showgrid=True, gridcolor='#e5e7eb', zeroline=True, zerolinecolor='#d1d5db', tickfont=dict(size=16))
+    fig.update_yaxes(showgrid=True, gridcolor=_COLOR['border'], zeroline=True, zerolinecolor=_COLOR['grid_zero'], tickfont=dict(size=16))
 
     return fig
-
-
-_SIMPLE_ACCENT = '#1d4ed8'
-_SIMPLE_FILL = 'rgba(29, 78, 216, 0.12)'
 
 
 def _build_simple_figure(df, metric: str) -> go.Figure:
@@ -306,9 +331,9 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
         x=df['timestamp'],
         y=y,
         mode='lines',
-        line=dict(color=_SIMPLE_ACCENT, width=2.5),
+        line=dict(color=_COLOR['accent'], width=2.5),
         fill='tozeroy',
-        fillcolor=_SIMPLE_FILL,
+        fillcolor=_COLOR['accent_fill'],
         hovertemplate=f'%{{x|%Y-%m-%d}}<br>{label}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         showlegend=False,
     ))
@@ -320,7 +345,7 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=[last_x], y=[last_y],
         mode='markers',
-        marker=dict(size=10, color=_SIMPLE_ACCENT),
+        marker=dict(size=10, color=_COLOR['accent']),
         showlegend=False,
         hoverinfo='skip',
     ))
@@ -331,21 +356,21 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
         xanchor='left', yanchor='middle',
         xshift=14,
         showarrow=False,
-        font=dict(size=15, color=_SIMPLE_ACCENT),
+        font=dict(size=15, color=_COLOR['accent']),
     )
 
     fig.add_hline(
         y=0,
-        line=dict(color='#9ca3af', width=1, dash='dash'),
+        line=dict(color=_COLOR['text_disabled'], width=1, dash='dash'),
     )
 
     fig.update_layout(
         height=400,
         margin=dict(l=60, r=90, t=20, b=40),
         plot_bgcolor='white',
-        paper_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor=_COLOR['transparent'],
         yaxis_title=f'{label} (%)' if is_pct else label,
-        font=dict(family='system-ui, -apple-system, sans-serif', color='#374151', size=14),
+        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=14),
         yaxis=dict(title_font=dict(size=14)),
     )
 
@@ -366,11 +391,11 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
     fig.update_xaxes(
-        showgrid=True, gridcolor='#e5e7eb',
+        showgrid=True, gridcolor=_COLOR['border'],
         tickmode='array', tickvals=tickvals, ticktext=ticktext,
         tickfont=dict(size=13), tickangle=-30,
     )
-    fig.update_yaxes(showgrid=True, gridcolor='#e5e7eb', tickfont=dict(size=13))
+    fig.update_yaxes(showgrid=True, gridcolor=_COLOR['border'], tickfont=dict(size=13))
 
     return fig
 
@@ -381,7 +406,7 @@ _REPORT_FILE_PATTERN = re.compile(
 
 
 def _parse_report_files(strategy: str) -> pd.DataFrame:
-    dir_name = 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
+    dir_name = _strategy_dir(strategy)
     report_dir = os.path.join(_assets, dir_name)
     if not os.path.isdir(report_dir):
         return pd.DataFrame(columns=['date', 'ranks', 'week', 'fname'])
@@ -410,19 +435,19 @@ def _parse_report_files(strategy: str) -> pd.DataFrame:
     return df[['date', 'ranks', 'week', 'fname']]
 
 
-def _recommendation_card(strategy: str, view_id: str):
-    record = RecommendationDAO('data_prod.db', frequency=strategy).get_latest()
+def _recommendation_card(strategy: str):
+    record = _REC_DAOS[strategy].get_latest()
 
     subtitle_text = f'更新於 {record.date}' if record else ''
 
     header_row = html.Div([
         html.Div(
             '本週推薦清單',
-            style={'fontSize': '18px', 'fontWeight': '600', 'color': '#1a202c'},
+            style={'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
         ),
         html.Div(
             subtitle_text,
-            style={'fontSize': '13px', 'color': '#6b7280'},
+            style={'fontSize': '13px', 'color': _COLOR['text_muted']},
         ),
     ], className='d-flex justify-content-between align-items-center flex-wrap gap-2')
 
@@ -432,7 +457,7 @@ def _recommendation_card(strategy: str, view_id: str):
             html.Div(
                 '月策略每 4 週換倉一次。此處顯示 AI 對月線最新觀點，實際進場時間由策略決定。',
                 style={
-                    'fontSize': '13px', 'color': '#6b7280',
+                    'fontSize': '13px', 'color': _COLOR['text_muted'],
                     'fontStyle': 'italic', 'marginTop': '4px',
                 },
             )
@@ -459,21 +484,21 @@ def _recommendation_card(strategy: str, view_id: str):
             data=rows,
             style_table={'overflowX': 'auto'},
             style_cell={
-                'fontFamily': 'system-ui, -apple-system, sans-serif',
+                'fontFamily': _FONT_FAMILY,
                 'fontSize': '14px',
                 'padding': '10px 16px',
                 'textAlign': 'left',
-                'color': '#374151',
+                'color': _COLOR['text_secondary'],
                 'border': '1px solid #e5e7eb',
             },
             style_header={
-                'backgroundColor': '#f8fafc',
+                'backgroundColor': _COLOR['bg_table_head'],
                 'fontWeight': '600',
                 'border': '1px solid #e5e7eb',
-                'color': '#374151',
+                'color': _COLOR['text_secondary'],
             },
             style_data_conditional=[
-                {'if': {'row_index': 'odd'}, 'backgroundColor': '#f9fafb'},
+                {'if': {'row_index': 'odd'}, 'backgroundColor': _COLOR['bg_table_alt']},
             ],
             style_cell_conditional=[
                 {'if': {'column_id': '#'},      'width': '50px',  'textAlign': 'center'},
@@ -546,7 +571,7 @@ def _simple_layout():
                 html.Div([
                     html.Div(
                         '年化報酬走勢',
-                        style={'fontSize': '18px', 'fontWeight': '600', 'color': '#1a202c'},
+                        style={'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
                     ),
                     dbc.RadioItems(
                         id='simple-period',
@@ -588,7 +613,7 @@ def _main_layout():
                 dbc.Col([
                     html.Label(
                         '策略',
-                        style={'fontWeight': '500', 'color': '#374151', 'marginBottom': '6px', 'fontSize': '18px'},
+                        style={'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '6px', 'fontSize': '18px'},
                     ),
                     dcc.Dropdown(
                         id='strategy-dropdown',
@@ -654,12 +679,12 @@ def _report_browser_layout(strategy: str):
         ),
         html.H5(
             title,
-            style={'fontWeight': '600', 'color': '#1a202c', 'fontSize': '20px', 'marginBottom': '20px'},
+            style={'fontWeight': '600', 'color': _COLOR['text_heading'], 'fontSize': '20px', 'marginBottom': '20px'},
         ),
         dbc.Row([
             dbc.Col([
                 html.Label('日期範圍', style={
-                    'fontWeight': '500', 'color': '#374151',
+                    'fontWeight': '500', 'color': _COLOR['text_secondary'],
                     'marginBottom': '6px', 'display': 'block',
                 }),
                 dcc.DatePickerRange(
@@ -672,7 +697,7 @@ def _report_browser_layout(strategy: str):
             ], xs=12, md='auto', className='mb-3'),
             dbc.Col([
                 html.Label('Rank 組合', style={
-                    'fontWeight': '500', 'color': '#374151',
+                    'fontWeight': '500', 'color': _COLOR['text_secondary'],
                     'marginBottom': '6px', 'display': 'block',
                 }),
                 dcc.Dropdown(
@@ -700,21 +725,21 @@ def _report_browser_layout(strategy: str):
                     markdown_options={'link_target': '_blank'},
                     style_table={'overflowX': 'auto'},
                     style_cell={
-                        'fontFamily': 'system-ui, -apple-system, sans-serif',
+                        'fontFamily': _FONT_FAMILY,
                         'fontSize': '14px',
                         'padding': '10px 16px',
                         'textAlign': 'left',
-                        'color': '#374151',
+                        'color': _COLOR['text_secondary'],
                         'border': '1px solid #e5e7eb',
                     },
                     style_header={
-                        'backgroundColor': '#f8fafc',
+                        'backgroundColor': _COLOR['bg_table_head'],
                         'fontWeight': '600',
                         'border': '1px solid #e5e7eb',
-                        'color': '#374151',
+                        'color': _COLOR['text_secondary'],
                     },
                     style_data_conditional=[
-                        {'if': {'row_index': 'odd'}, 'backgroundColor': '#f9fafb'},
+                        {'if': {'row_index': 'odd'}, 'backgroundColor': _COLOR['bg_table_alt']},
                     ],
                     style_cell_conditional=[
                         {'if': {'column_id': 'date'},       'width': '130px'},
@@ -764,7 +789,7 @@ app.index_string = '''
 '''
 
 app.layout = html.Div(
-    style={'backgroundColor': _PAGE_BG, 'minHeight': '100vh'},
+    style={'backgroundColor': _COLOR['bg_page'], 'minHeight': '100vh'},
     children=[
         dcc.Location(id='url', refresh=False),
         dcc.Store(id='displayed-ranks', data=None),
@@ -796,7 +821,7 @@ def spa_routes():
 # ── Navbar ───────────────────────────────────────────────────────────────────
 
 _TOGGLE_LINK_STYLE = {
-    'color': '#6b7280',
+    'color': _COLOR['text_muted'],
     'textDecoration': 'none',
     'fontSize': '14px',
     'fontWeight': '500',
@@ -816,7 +841,7 @@ def render_navbar(pathname):
         brand_text,
         href='/',
         style={
-            'fontWeight': '600', 'color': '#1a202c',
+            'fontWeight': '600', 'color': _COLOR['text_heading'],
             'fontSize': '24px', 'textDecoration': 'none',
         },
     )
@@ -886,10 +911,10 @@ def render_page(pathname):
 )
 def update_report_table(start_date, end_date, rank_filter, pathname):
     strategy = 'weekly' if pathname == '/reports/weekly/' else 'monthly'
-    dir_name = 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
+    dir_name = _strategy_dir(strategy)
     df = _parse_report_files(strategy)
 
-    all_ranks = sorted(df['ranks'].unique(), key=_modal_sort_key) if not df.empty else []
+    all_ranks = sorted(df['ranks'].unique(), key=_ranks_sort_key) if not df.empty else []
     options = [{'label': _rank_label(r), 'value': r} for r in all_ranks]
 
     if start_date:
@@ -944,7 +969,7 @@ def update_simple_view(strategy, period):
     data = _load_all(strategy, months=months)
     chart_df = None
     if data:
-        full_ranks = max(data.keys(), key=lambda r: len(r.split(',')))
+        full_ranks = _pick_full_ranks(data.keys())
         chart_df = data[full_ranks]
 
     fig = _build_simple_figure(chart_df, 'annual_return')
@@ -958,7 +983,7 @@ def update_simple_view(strategy, period):
     Input('simple-strategy', 'value'),
 )
 def update_simple_recommendations(strategy):
-    return _recommendation_card(strategy or 'weekly', view_id='simple')
+    return _recommendation_card(strategy or 'weekly')
 
 
 # ── Main dashboard ────────────────────────────────────────────────────────────
@@ -977,7 +1002,7 @@ def update_kpi(strategy):
         html.Div([
             html.Label(
                 f'{_rank_label(kpi["full_ranks"])}績效',
-                style={'fontSize': '18px', 'fontWeight': '500', 'color': '#374151', 'marginBottom': '0'},
+                style={'fontSize': '18px', 'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '0'},
             ),
             html.Div(
                 f'最新回測：{ts_str}',
@@ -1021,7 +1046,7 @@ def update_main(strategy, metric, confirm_n, _remove_n_list, picker_value, curre
 
     if current_ranks is None:
         d = _load_all(strategy)
-        full = max(d.keys(), key=lambda r: len(r.split(','))) if d else None
+        full = _pick_full_ranks(d.keys()) if d else None
         new_ranks = [full] if full else []
         filtered = {r: df for r, df in d.items() if r in new_ranks}
         return new_ranks, _build_tags(new_ranks), _build_figure(filtered, metric)
@@ -1060,7 +1085,7 @@ def toggle_rank_modal(open_n, _cancel_n, confirm_n, strategy, current_ranks):
         data = _load_all(strategy)
         options = [
             {'label': _rank_label(r), 'value': r}
-            for r in sorted(data.keys(), key=_modal_sort_key)
+            for r in sorted(data.keys(), key=_ranks_sort_key)
         ]
         return True, options, current_ranks or []
     return False, dash.no_update, dash.no_update
@@ -1071,7 +1096,7 @@ def toggle_rank_modal(open_n, _cancel_n, confirm_n, strategy, current_ranks):
     Input('strategy-dropdown', 'value'),
 )
 def update_advanced_recommendations(strategy):
-    return _recommendation_card(strategy or 'weekly', view_id='advanced')
+    return _recommendation_card(strategy or 'weekly')
 
 
 server = flask_server
