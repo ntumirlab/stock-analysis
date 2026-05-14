@@ -59,6 +59,8 @@ _COLOR = {
 
 _FONT_FAMILY = 'system-ui, -apple-system, sans-serif'
 
+_BORDER = f"1px solid {_COLOR['border']}"
+
 _CARD_STYLE = {
     'boxShadow': '0 1px 4px rgba(0,0,0,0.08)',
     'borderRadius': '8px',
@@ -489,12 +491,12 @@ def _recommendation_card(strategy: str):
                 'padding': '10px 16px',
                 'textAlign': 'left',
                 'color': _COLOR['text_secondary'],
-                'border': '1px solid #e5e7eb',
+                'border': _BORDER,
             },
             style_header={
                 'backgroundColor': _COLOR['bg_table_head'],
                 'fontWeight': '600',
-                'border': '1px solid #e5e7eb',
+                'border': _BORDER,
                 'color': _COLOR['text_secondary'],
             },
             style_data_conditional=[
@@ -730,12 +732,12 @@ def _report_browser_layout(strategy: str):
                         'padding': '10px 16px',
                         'textAlign': 'left',
                         'color': _COLOR['text_secondary'],
-                        'border': '1px solid #e5e7eb',
+                        'border': _BORDER,
                     },
                     style_header={
                         'backgroundColor': _COLOR['bg_table_head'],
                         'fontWeight': '600',
-                        'border': '1px solid #e5e7eb',
+                        'border': _BORDER,
                         'color': _COLOR['text_secondary'],
                     },
                     style_data_conditional=[
@@ -799,7 +801,7 @@ app.layout = html.Div(
             id='navbar',
             style={
                 'backgroundColor': 'white',
-                'borderBottom': '1px solid #e5e7eb',
+                'borderBottom': _BORDER,
                 'padding': '0 24px',
             },
         ),
@@ -997,6 +999,9 @@ def update_kpi(strategy):
     if not kpi:
         return []
 
+    def _delta(k):
+        return kpi[k] - kpi['prev'][k] if 'prev' in kpi else None
+
     ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
     return [
         html.Div([
@@ -1011,14 +1016,10 @@ def update_kpi(strategy):
             ),
         ], className='d-flex justify-content-between align-items-baseline mb-2'),
         dbc.Row([
-            _kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,
-                      delta=kpi['annual_return'] - kpi['prev']['annual_return'] if 'prev' in kpi else None),
-            _kpi_card('Sharpe Ratio', kpi['sharpe'],     is_pct=False,
-                      delta=kpi['sharpe'] - kpi['prev']['sharpe'] if 'prev' in kpi else None),
-            _kpi_card('Max Drawdown', kpi['max_drawdown'], is_pct=True,
-                      delta=kpi['max_drawdown'] - kpi['prev']['max_drawdown'] if 'prev' in kpi else None),
-            _kpi_card('勝率',       kpi['win_ratio'],    is_pct=True,
-                      delta=kpi['win_ratio'] - kpi['prev']['win_ratio'] if 'prev' in kpi else None),
+            _kpi_card('年化報酬',     kpi['annual_return'], is_pct=True,  delta=_delta('annual_return')),
+            _kpi_card('Sharpe Ratio', kpi['sharpe'],        is_pct=False, delta=_delta('sharpe')),
+            _kpi_card('Max Drawdown', kpi['max_drawdown'],  is_pct=True,  delta=_delta('max_drawdown')),
+            _kpi_card('勝率',         kpi['win_ratio'],     is_pct=True,  delta=_delta('win_ratio')),
         ], className='g-3'),
     ]
 
