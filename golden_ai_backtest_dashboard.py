@@ -1,5 +1,6 @@
 import os
 import re
+from zoneinfo import ZoneInfo
 import dash
 from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
 import dash_bootstrap_components as dbc
@@ -9,6 +10,9 @@ import plotly.graph_objects as go
 import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from dao.recommendation_dao import RecommendationDAO
+
+_DB_PATH = os.getenv('GOLDEN_AI_DB_PATH', 'data_prod.db')
+_TZ = ZoneInfo('Asia/Taipei')
 
 flask_server = Flask(__name__)
 
@@ -61,45 +65,93 @@ _FONT_FAMILY = 'system-ui, -apple-system, sans-serif'
 
 _BORDER = f"1px solid {_COLOR['border']}"
 
+_TYPO = {
+    'card_title':    {'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
+    'section_label': {'fontSize': '18px', 'fontWeight': '500', 'color': _COLOR['text_secondary']},
+    'form_label':    {'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '6px', 'display': 'block'},
+    'muted':         {'fontSize': '13px', 'color': _COLOR['text_muted']},
+}
+
 _CARD_STYLE = {
     'boxShadow': '0 1px 4px rgba(0,0,0,0.08)',
     'borderRadius': '8px',
     'border': 'none',
 }
 
-dao = GoldenAIBacktestMetricsDAO()
+_CARD_BODY_STYLE = {'padding': '20px 24px'}
+
+_TABLE_STYLE = {
+    'style_table': {'overflowX': 'auto'},
+    'style_cell': {
+        'fontFamily': _FONT_FAMILY,
+        'fontSize': '14px',
+        'padding': '10px 16px',
+        'textAlign': 'left',
+        'color': _COLOR['text_secondary'],
+        'border': _BORDER,
+    },
+    'style_header': {
+        'backgroundColor': _COLOR['bg_table_head'],
+        'fontWeight': '600',
+        'border': _BORDER,
+        'color': _COLOR['text_secondary'],
+    },
+    'style_data_conditional': [
+        {'if': {'row_index': 'odd'}, 'backgroundColor': _COLOR['bg_table_alt']},
+    ],
+}
+
+dao = GoldenAIBacktestMetricsDAO(db_path=_DB_PATH)
 _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
 
 _REC_DAOS = {
-    'weekly':  RecommendationDAO('data_prod.db', frequency='weekly'),
-    'monthly': RecommendationDAO('data_prod.db', frequency='monthly'),
+    'weekly':  RecommendationDAO(_DB_PATH, frequency='weekly'),
+    'monthly': RecommendationDAO(_DB_PATH, frequency='monthly'),
 }
 
+_STRATEGY_META = {
+    'weekly':  {'label': '週策略', 'dir': 'GoldenAITWStrategyWeekly'},
+    'monthly': {'label': '月策略', 'dir': 'GoldenAITWStrategyMonthly'},
+}
 
-def _strategy_dir(strategy: str) -> str:
-    return 'GoldenAITWStrategyWeekly' if strategy == 'weekly' else 'GoldenAITWStrategyMonthly'
+_PERIOD_MONTHS = {'1M': 1, '3M': 3, '6M': 6, '1Y': 12, 'All': None}
 
 
-def _pick_full_ranks(ranks_iter):
+def _longest_ranks(ranks_iter):
+    """Pick the ranks string with the most members. For the 1~8 powerset stored in DB,
+    this is the canonical "full set" `1,2,3,4,5,6,7,8` — callers use this as the
+    default highlighted line in charts and KPI cards."""
     return max(ranks_iter, key=lambda r: len(r.split(',')))
 
 
-def _latest_kpi(strategy: str) -> dict:
+def _normalized(strategy: str) -> pd.DataFrame:
+    """Load metrics for a strategy, normalize timestamp, and monthly-aggregate.
+
+    Both `_latest_kpi` and `_load_all` consume this — callbacks should fetch
+    once and pass the result in to avoid hitting the DB twice.
+    """
     df_all = dao.load(strategy=strategy)
     if df_all.empty:
-        return {}
+        return df_all
 
     df_all['timestamp'] = pd.to_datetime(df_all['timestamp']).dt.normalize()
-
     if strategy == 'monthly':
         df_all = (
             df_all.groupby(['timestamp', 'ranks'])[_KPI_COLS]
             .mean()
             .reset_index()
         )
+    return df_all
 
-    full_ranks = _pick_full_ranks(df_all['ranks'].unique())
-    df_full = df_all[df_all['ranks'] == full_ranks]
+
+def _latest_kpi(strategy: str, df_normalized=None) -> dict:
+    if df_normalized is None:
+        df_normalized = _normalized(strategy)
+    if df_normalized.empty:
+        return {}
+
+    full_ranks = _longest_ranks(df_normalized['ranks'].unique())
+    df_full = df_normalized[df_normalized['ranks'] == full_ranks]
 
     sorted_ts = sorted(df_full['timestamp'].unique())
     if not sorted_ts:
@@ -116,7 +168,80 @@ def _latest_kpi(strategy: str) -> dict:
     return result
 
 
-def _kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
+_KPI_CARD_SIZES = {
+    'compact': {
+        'title': {
+            'fontSize': '16px', 'marginBottom': '6px',
+            'textTransform': 'uppercase', 'letterSpacing': '0.05em',
+        },
+        'value_tag': html.H3,
+        'value': {'fontWeight': '700', 'marginBottom': '0', 'display': 'inline'},
+        'arrow_size': '16px',
+        'arrow_ml': '6px',
+        'body_padding': '20px 24px',
+    },
+    'hero': {
+        'title': {'fontSize': '15px', 'marginBottom': '14px'},
+        'value_tag': html.Span,
+        'value': {'fontWeight': '700', 'fontSize': '40px', 'lineHeight': '1'},
+        'arrow_size': '24px',
+        'arrow_ml': '10px',
+        'body_padding': '24px 28px',
+    },
+}
+
+
+_KPI_HERO_LABEL_OVERRIDES = {
+    # In hero view (simple page), use shorter / friendlier Chinese for these
+    'sharpe': '夏普值',
+    'max_drawdown': '最大回檔',
+}
+
+
+_ARROW_SPEC = {
+    # symbol, color key in _COLOR, bold
+    'flat': ('－', 'text_disabled', True),
+    'up':   ('▲', 'up',             False),
+    'down': ('▼', 'down',           False),
+}
+
+
+def _kpi_title(metric: str, size: str) -> str:
+    base = _METRIC_META[metric][0]
+    if size == 'hero':
+        return _KPI_HERO_LABEL_OVERRIDES.get(metric, base)
+    return base
+
+
+def _kpi_header(kpi: dict) -> html.Div:
+    """Header strip above KPI cards: '第 1~8 支績效' on the left, latest-backtest date on the right."""
+    return html.Div([
+        html.Div(f'{_rank_label(kpi["full_ranks"])}績效', style=_TYPO['section_label']),
+        html.Div(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
+    ], className='d-flex justify-content-between align-items-baseline mb-2')
+
+
+def _render_kpi_row(kpi: dict, size: str) -> dbc.Row:
+    def _delta(k):
+        return kpi[k] - kpi['prev'][k] if 'prev' in kpi else None
+    return dbc.Row(
+        [
+            _kpi_card(
+                _kpi_title(k, size),
+                kpi[k],
+                is_pct=_METRIC_META[k][1],
+                delta=_delta(k),
+                size=size,
+            )
+            for k in _KPI_COLS
+        ],
+        className='g-3',
+    )
+
+
+def _kpi_card(title: str, value, is_pct: bool, delta=None, size: str = 'compact') -> dbc.Col:
+    spec = _KPI_CARD_SIZES[size]
+
     if pd.isna(value):
         display, color = '—', _COLOR['text_disabled']
     else:
@@ -125,91 +250,50 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
 
     arrow = None
     if delta is not None and not pd.isna(delta):
-        if abs(delta) < 1e-6:
-            arrow = html.Span('－', style={'color': _COLOR['text_disabled'], 'fontSize': '16px', 'marginLeft': '6px', 'fontWeight': '700'})
-        elif delta > 0:
-            arrow = html.Span('▲', style={'color': _COLOR['up'], 'fontSize': '16px', 'marginLeft': '6px'})
-        else:
-            arrow = html.Span('▼', style={'color': _COLOR['down'], 'fontSize': '16px', 'marginLeft': '6px'})
+        direction = 'flat' if abs(delta) < 1e-6 else ('up' if delta > 0 else 'down')
+        symbol, color_key, bold = _ARROW_SPEC[direction]
+        arrow_style = {
+            'fontSize': spec['arrow_size'],
+            'marginLeft': spec['arrow_ml'],
+            'color': _COLOR[color_key],
+        }
+        if bold:
+            arrow_style['fontWeight'] = '700'
+        arrow = html.Span(symbol, style=arrow_style)
+
+    title_style = {'color': _COLOR['text_muted'], 'fontWeight': '500', **spec['title']}
+    value_style = {'color': color, **spec['value']}
 
     return dbc.Col(
         dbc.Card(
             dbc.CardBody([
-                html.P(title, style={
-                    'fontSize': '16px', 'color': _COLOR['text_muted'],
-                    'fontWeight': '500', 'marginBottom': '6px',
-                    'textTransform': 'uppercase', 'letterSpacing': '0.05em',
-                }),
+                html.P(title, style=title_style),
                 html.Div([
-                    html.H3(display, style={
-                        'color': color, 'fontWeight': '700',
-                        'marginBottom': '0', 'display': 'inline',
-                    }),
+                    spec['value_tag'](display, style=value_style),
                     arrow,
                 ], style={'display': 'flex', 'alignItems': 'center'}),
-            ], style={'padding': '20px 24px'}),
+            ], style={'padding': spec['body_padding']}),
             style=_CARD_STYLE,
         ),
         xs=6, lg=3,
     )
 
 
-def _simple_kpi_card(title: str, value, is_pct: bool, delta=None) -> dbc.Col:
-    if pd.isna(value):
-        display, color = '—', _COLOR['text_disabled']
-    else:
-        display = f"{value * 100:.2f}%" if is_pct else f"{value:.2f}"
-        color = _COLOR['text_value']
-
-    arrow = None
-    if delta is not None and not pd.isna(delta):
-        if abs(delta) < 1e-6:
-            arrow = html.Span('－', style={'color': _COLOR['text_disabled'], 'fontSize': '24px', 'marginLeft': '10px', 'fontWeight': '700'})
-        elif delta > 0:
-            arrow = html.Span('▲', style={'color': _COLOR['up'], 'fontSize': '24px', 'marginLeft': '10px'})
-        else:
-            arrow = html.Span('▼', style={'color': _COLOR['down'], 'fontSize': '24px', 'marginLeft': '10px'})
-
-    return dbc.Col(
-        dbc.Card(
-            dbc.CardBody([
-                html.P(title, style={
-                    'fontSize': '15px', 'color': _COLOR['text_muted'],
-                    'fontWeight': '500', 'marginBottom': '14px',
-                }),
-                html.Div([
-                    html.Span(display, style={
-                        'color': color, 'fontWeight': '700',
-                        'fontSize': '40px', 'lineHeight': '1',
-                    }),
-                    arrow,
-                ], style={'display': 'flex', 'alignItems': 'center'}),
-            ], style={'padding': '24px 28px'}),
-            style=_CARD_STYLE,
-        ),
-        xs=6, lg=3,
-    )
-
-
-def _load_all(strategy: str, months=3) -> dict:
-    df_all = dao.load(strategy=strategy)
-    if df_all.empty:
+def _load_all(strategy: str, months=3, df_normalized=None) -> dict:
+    if df_normalized is None:
+        df_normalized = _normalized(strategy)
+    if df_normalized.empty:
         return {}
 
     cutoff = (
-        pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
+        pd.Timestamp.now(tz=_TZ).normalize().tz_localize(None) - pd.DateOffset(months=months)
         if months is not None else None
     )
     result = {}
-    for ranks in df_all['ranks'].unique():
-        df = df_all[df_all['ranks'] == ranks].copy()
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.normalize()
+    for ranks in df_normalized['ranks'].unique():
+        df = df_normalized[df_normalized['ranks'] == ranks]
         if cutoff is not None:
             df = df[df['timestamp'] >= cutoff]
-
-        if strategy == 'monthly':
-            df = df.groupby('timestamp')[_KPI_COLS].mean().reset_index()
-
         if not df.empty:
             result[ranks] = df.sort_values('timestamp')
 
@@ -222,7 +306,7 @@ def _rank_label(ranks_str: str) -> str:
         return f'第 {nums[0]} 支'
     if nums == list(range(1, len(nums) + 1)):
         return f'第 1~{len(nums)} 支'
-    return '第 ' + ', '.join(map(str, nums)) + ' 支'
+    return f'第 {", ".join(map(str, nums))} 支'
 
 
 def _build_tags(ranks_list: list) -> list:
@@ -251,6 +335,22 @@ def _ranks_sort_key(r: str):
     nums = list(map(int, r.split(',')))
     is_consec_from_1 = nums == list(range(1, len(nums) + 1))
     return (0 if is_consec_from_1 else 1, len(nums), nums)
+
+
+def _compute_date_ticks(x_min, x_max):
+    delta_days = (x_max - x_min).days
+    if delta_days <= 14:
+        freq = 'D'
+    elif delta_days <= 60:
+        freq = 'W-MON'
+    elif delta_days <= 180:
+        freq = 'MS'
+    else:
+        freq = 'QS'
+    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
+    tickvals = sorted(set([x_min] + interior + [x_max]))
+    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+    return tickvals, ticktext
 
 
 def _build_figure(data: dict, metric: str) -> go.Figure:
@@ -293,19 +393,7 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
         yaxis=dict(title_font=dict(size=16)),
     )
     all_dates = pd.concat([df['timestamp'] for df in data.values()])
-    x_min, x_max = all_dates.min(), all_dates.max()
-    delta_days = (x_max - x_min).days
-    if delta_days <= 14:
-        freq = 'D'
-    elif delta_days <= 60:
-        freq = 'W-MON'
-    elif delta_days <= 180:
-        freq = 'MS'
-    else:
-        freq = 'QS'
-    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
-    tickvals = sorted(set([x_min] + interior + [x_max]))
-    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+    tickvals, ticktext = _compute_date_ticks(all_dates.min(), all_dates.max())
 
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
@@ -376,19 +464,7 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
         yaxis=dict(title_font=dict(size=14)),
     )
 
-    x_min, x_max = df['timestamp'].min(), df['timestamp'].max()
-    delta_days = (x_max - x_min).days
-    if delta_days <= 14:
-        freq = 'D'
-    elif delta_days <= 60:
-        freq = 'W-MON'
-    elif delta_days <= 180:
-        freq = 'MS'
-    else:
-        freq = 'QS'
-    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
-    tickvals = sorted(set([x_min] + interior + [x_max]))
-    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+    tickvals, ticktext = _compute_date_ticks(df['timestamp'].min(), df['timestamp'].max())
 
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
@@ -408,7 +484,7 @@ _REPORT_FILE_PATTERN = re.compile(
 
 
 def _parse_report_files(strategy: str) -> pd.DataFrame:
-    dir_name = _strategy_dir(strategy)
+    dir_name = _STRATEGY_META[strategy]['dir']
     report_dir = os.path.join(_assets, dir_name)
     if not os.path.isdir(report_dir):
         return pd.DataFrame(columns=['date', 'ranks', 'week', 'fname'])
@@ -443,14 +519,8 @@ def _recommendation_card(strategy: str):
     subtitle_text = f'更新於 {record.date}' if record else ''
 
     header_row = html.Div([
-        html.Div(
-            '本週推薦清單',
-            style={'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
-        ),
-        html.Div(
-            subtitle_text,
-            style={'fontSize': '13px', 'color': _COLOR['text_muted']},
-        ),
+        html.Div('本週推薦清單', style=_TYPO['card_title']),
+        html.Div(subtitle_text, style=_TYPO['muted']),
     ], className='d-flex justify-content-between align-items-center flex-wrap gap-2')
 
     header_children = [header_row]
@@ -458,10 +528,7 @@ def _recommendation_card(strategy: str):
         header_children.append(
             html.Div(
                 '月策略每 4 週換倉一次。此處顯示 AI 對月線最新觀點，實際進場時間由策略決定。',
-                style={
-                    'fontSize': '13px', 'color': _COLOR['text_muted'],
-                    'fontStyle': 'italic', 'marginTop': '4px',
-                },
+                style={**_TYPO['muted'], 'fontStyle': 'italic', 'marginTop': '4px'},
             )
         )
     header = html.Div(header_children, className='mb-3')
@@ -484,24 +551,7 @@ def _recommendation_card(strategy: str):
                 {'name': '目標價', 'id': '目標價'},
             ],
             data=rows,
-            style_table={'overflowX': 'auto'},
-            style_cell={
-                'fontFamily': _FONT_FAMILY,
-                'fontSize': '14px',
-                'padding': '10px 16px',
-                'textAlign': 'left',
-                'color': _COLOR['text_secondary'],
-                'border': _BORDER,
-            },
-            style_header={
-                'backgroundColor': _COLOR['bg_table_head'],
-                'fontWeight': '600',
-                'border': _BORDER,
-                'color': _COLOR['text_secondary'],
-            },
-            style_data_conditional=[
-                {'if': {'row_index': 'odd'}, 'backgroundColor': _COLOR['bg_table_alt']},
-            ],
+            **_TABLE_STYLE,
             style_cell_conditional=[
                 {'if': {'column_id': '#'},      'width': '50px',  'textAlign': 'center'},
                 {'if': {'column_id': '代號'},   'width': '90px',  'textAlign': 'center'},
@@ -516,7 +566,7 @@ def _recommendation_card(strategy: str):
         )
 
     return dbc.Card(
-        dbc.CardBody([header, body], style={'padding': '20px 24px'}),
+        dbc.CardBody([header, body], style=_CARD_BODY_STYLE),
         style=_CARD_STYLE,
         className='mb-3',
     )
@@ -526,27 +576,15 @@ def _simple_layout():
     strategy_options = [
         {
             'label': html.Span([
-                html.Span('週策略', style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
-                html.Span('每週換倉', style={'fontSize': '12px', 'opacity': '0.75'}),
+                html.Span(_STRATEGY_META[s]['label'], style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
+                html.Span(sub, style={'fontSize': '12px', 'opacity': '0.75'}),
             ]),
-            'value': 'weekly',
-        },
-        {
-            'label': html.Span([
-                html.Span('月策略', style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
-                html.Span('每月換倉', style={'fontSize': '12px', 'opacity': '0.75'}),
-            ]),
-            'value': 'monthly',
-        },
+            'value': s,
+        }
+        for s, sub in [('weekly', '每週換倉'), ('monthly', '每月換倉')]
     ]
 
-    period_options = [
-        {'label': '1M', 'value': '1M'},
-        {'label': '3M', 'value': '3M'},
-        {'label': '6M', 'value': '6M'},
-        {'label': '1Y', 'value': '1Y'},
-        {'label': 'All', 'value': 'All'},
-    ]
+    period_options = [{'label': k, 'value': k} for k in _PERIOD_MONTHS]
 
     return dbc.Container([
         dbc.RadioItems(
@@ -560,21 +598,12 @@ def _simple_layout():
             className='mt-4 mb-2',
         ),
 
-        html.Div(
-            id='simple-last-update',
-            className='text-end text-muted mb-2',
-            style={'fontSize': '13px'},
-        ),
-
-        html.Div(id='simple-kpi-row', className='mb-3'),
+        html.Div(id='simple-kpi-row', className='mb-3 mt-2'),
 
         dbc.Card([
             dbc.CardBody([
                 html.Div([
-                    html.Div(
-                        '年化報酬走勢',
-                        style={'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
-                    ),
+                    html.Div('年化報酬走勢', style=_TYPO['card_title']),
                     dbc.RadioItems(
                         id='simple-period',
                         options=period_options,
@@ -586,7 +615,7 @@ def _simple_layout():
                     ),
                 ], className='d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2'),
                 dcc.Graph(id='simple-graph', config={'displayModeBar': False}),
-            ], style={'padding': '20px 24px'}),
+            ], style=_CARD_BODY_STYLE),
         ], style=_CARD_STYLE, className='mb-3'),
 
         html.Div(id='simple-recommendations', className='mb-4'),
@@ -613,10 +642,7 @@ def _main_layout():
         dbc.Container([
             dbc.Row([
                 dbc.Col([
-                    html.Label(
-                        '策略',
-                        style={'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '6px', 'fontSize': '18px'},
-                    ),
+                    html.Label('策略', style={**_TYPO['section_label'], 'marginBottom': '6px'}),
                     dcc.Dropdown(
                         id='strategy-dropdown',
                         options=[
@@ -636,10 +662,8 @@ def _main_layout():
                     dbc.RadioItems(
                         id='metric-selector',
                         options=[
-                            {'label': '年化報酬', 'value': 'annual_return'},
-                            {'label': 'Sharpe Ratio', 'value': 'sharpe'},
-                            {'label': 'Max Drawdown', 'value': 'max_drawdown'},
-                            {'label': '勝率', 'value': 'win_ratio'},
+                            {'label': label, 'value': key}
+                            for key, (label, _) in _METRIC_META.items()
                         ],
                         value='annual_return',
                         inputClassName='btn-check',
@@ -660,7 +684,7 @@ def _main_layout():
                         ),
                     ], className='mb-3 d-flex align-items-center gap-2 flex-wrap'),
                     dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
-                ], style={'padding': '20px 24px'}),
+                ], style=_CARD_BODY_STYLE),
             ], style=_CARD_STYLE, className='mb-4'),
 
             html.Div(id='advanced-recommendations', className='mb-4'),
@@ -669,7 +693,7 @@ def _main_layout():
 
 
 def _report_browser_layout(strategy: str):
-    title = 'Weekly 回測報告' if strategy == 'weekly' else 'Monthly 回測報告'
+    title = f'{_STRATEGY_META[strategy]["label"]}回測報告'
     df = _parse_report_files(strategy)
     latest_date = df['date'].iloc[0] if not df.empty else str(pd.Timestamp.today().date())
     return dbc.Container([
@@ -685,10 +709,7 @@ def _report_browser_layout(strategy: str):
         ),
         dbc.Row([
             dbc.Col([
-                html.Label('日期範圍', style={
-                    'fontWeight': '500', 'color': _COLOR['text_secondary'],
-                    'marginBottom': '6px', 'display': 'block',
-                }),
+                html.Label('日期範圍', style=_TYPO['form_label']),
                 dcc.DatePickerRange(
                     id='report-date-range',
                     start_date=latest_date,
@@ -698,10 +719,7 @@ def _report_browser_layout(strategy: str):
                 ),
             ], xs=12, md='auto', className='mb-3'),
             dbc.Col([
-                html.Label('Rank 組合', style={
-                    'fontWeight': '500', 'color': _COLOR['text_secondary'],
-                    'marginBottom': '6px', 'display': 'block',
-                }),
+                html.Label('Rank 組合', style=_TYPO['form_label']),
                 dcc.Dropdown(
                     id='report-rank-filter',
                     placeholder='所有 Rank 組合',
@@ -725,30 +743,13 @@ def _report_browser_layout(strategy: str):
                     sort_action='native',
                     sort_by=[{'column_id': 'date', 'direction': 'desc'}],
                     markdown_options={'link_target': '_blank'},
-                    style_table={'overflowX': 'auto'},
-                    style_cell={
-                        'fontFamily': _FONT_FAMILY,
-                        'fontSize': '14px',
-                        'padding': '10px 16px',
-                        'textAlign': 'left',
-                        'color': _COLOR['text_secondary'],
-                        'border': _BORDER,
-                    },
-                    style_header={
-                        'backgroundColor': _COLOR['bg_table_head'],
-                        'fontWeight': '600',
-                        'border': _BORDER,
-                        'color': _COLOR['text_secondary'],
-                    },
-                    style_data_conditional=[
-                        {'if': {'row_index': 'odd'}, 'backgroundColor': _COLOR['bg_table_alt']},
-                    ],
+                    **_TABLE_STYLE,
                     style_cell_conditional=[
                         {'if': {'column_id': 'date'},       'width': '130px'},
                         {'if': {'column_id': 'link'},       'width': '80px', 'textAlign': 'center'},
                     ],
                 ),
-                style={'padding': '20px 24px'},
+                style=_CARD_BODY_STYLE,
             ),
         ], style=_CARD_STYLE, className='mb-4'),
     ], fluid=True)
@@ -777,6 +778,35 @@ app.index_string = '''
             #report-rank-filter .Select-control { min-height: 44px !important; }
             #report-rank-filter .Select-arrow-zone,
             #report-rank-filter .Select-clear-zone { vertical-align: middle !important; }
+            /* Pill RadioItems active state: use accent blue instead of FLATLY's gray.
+               Color matches _COLOR['accent'] — update both if the accent changes. */
+            #simple-strategy .btn-check:checked + .btn-outline-secondary,
+            #simple-period   .btn-check:checked + .btn-outline-secondary,
+            #metric-selector .btn-check:checked + .btn-outline-secondary,
+            #simple-strategy .btn-outline-secondary.active,
+            #simple-period   .btn-outline-secondary.active,
+            #metric-selector .btn-outline-secondary.active {
+                background-color: #1d4ed8;
+                border-color: #1d4ed8;
+                color: #ffffff;
+            }
+            #simple-strategy .btn-outline-secondary:hover,
+            #simple-period   .btn-outline-secondary:hover,
+            #metric-selector .btn-outline-secondary:hover {
+                background-color: #dbeafe;
+                border-color: #1d4ed8;
+                color: #1d4ed8;
+            }
+            #simple-strategy .btn-check:checked + .btn-outline-secondary:hover,
+            #simple-period   .btn-check:checked + .btn-outline-secondary:hover,
+            #metric-selector .btn-check:checked + .btn-outline-secondary:hover,
+            #simple-strategy .btn-outline-secondary.active:hover,
+            #simple-period   .btn-outline-secondary.active:hover,
+            #metric-selector .btn-outline-secondary.active:hover {
+                background-color: #1d4ed8;
+                border-color: #1d4ed8;
+                color: #ffffff;
+            }
         </style>
     </head>
     <body>
@@ -814,10 +844,18 @@ app.layout = html.Div(
 
 # Flask SPA routes
 @flask_server.route('/advanced')
+@flask_server.route('/advanced/')
 @flask_server.route('/reports/weekly/')
 @flask_server.route('/reports/monthly/')
 def spa_routes():
     return app.index()
+
+
+def _canon_path(p: str) -> str:
+    """Strip trailing slash for route comparison, except for root."""
+    if not p or p == '/':
+        return '/'
+    return p.rstrip('/') or '/'
 
 
 # ── Navbar ───────────────────────────────────────────────────────────────────
@@ -835,8 +873,9 @@ _TOGGLE_LINK_STYLE = {
     Input('url', 'pathname'),
 )
 def render_navbar(pathname):
-    is_advanced = pathname == '/advanced'
-    is_reports = bool(pathname) and pathname.startswith('/reports/')
+    p = _canon_path(pathname)
+    is_advanced = p == '/advanced'
+    is_reports = p.startswith('/reports/')
 
     brand_text = 'GoldenAI 回測績效' if (is_advanced or is_reports) else 'GoldenAI 策略表現'
     brand = dcc.Link(
@@ -892,11 +931,12 @@ def render_navbar(pathname):
     Input('url', 'pathname'),
 )
 def render_page(pathname):
-    if pathname == '/reports/weekly/':
+    p = _canon_path(pathname)
+    if p == '/reports/weekly':
         return _report_browser_layout('weekly')
-    if pathname == '/reports/monthly/':
+    if p == '/reports/monthly':
         return _report_browser_layout('monthly')
-    if pathname == '/advanced':
+    if p == '/advanced':
         return _main_layout()
     return _simple_layout()
 
@@ -912,8 +952,8 @@ def render_page(pathname):
     State('url', 'pathname'),
 )
 def update_report_table(start_date, end_date, rank_filter, pathname):
-    strategy = 'weekly' if pathname == '/reports/weekly/' else 'monthly'
-    dir_name = _strategy_dir(strategy)
+    strategy = 'weekly' if _canon_path(pathname) == '/reports/weekly' else 'monthly'
+    dir_name = _STRATEGY_META[strategy]['dir']
     df = _parse_report_files(strategy)
 
     all_ranks = sorted(df['ranks'].unique(), key=_ranks_sort_key) if not df.empty else []
@@ -939,13 +979,10 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
 
 # ── Simple dashboard ─────────────────────────────────────────────────────────
 
-_PERIOD_MONTHS = {'1M': 1, '3M': 3, '6M': 6, '1Y': 12, 'All': None}
-
 
 @app.callback(
     Output('simple-kpi-row', 'children'),
     Output('simple-graph', 'figure'),
-    Output('simple-last-update', 'children'),
     Input('simple-strategy', 'value'),
     Input('simple-period', 'value'),
 )
@@ -953,31 +990,26 @@ def update_simple_view(strategy, period):
     strategy = strategy or 'weekly'
     period = period or '3M'
 
-    kpi = _latest_kpi(strategy)
+    df_norm = _normalized(strategy)
+    kpi = _latest_kpi(strategy, df_normalized=df_norm)
     if not kpi:
-        return [], _build_simple_figure(None, 'annual_return'), ''
-
-    def _delta(k):
-        return kpi[k] - kpi['prev'][k] if 'prev' in kpi else None
-
-    kpi_row = dbc.Row([
-        _simple_kpi_card('年化報酬',   kpi['annual_return'], is_pct=True,  delta=_delta('annual_return')),
-        _simple_kpi_card('夏普值',     kpi['sharpe'],        is_pct=False, delta=_delta('sharpe')),
-        _simple_kpi_card('最大回檔',   kpi['max_drawdown'],  is_pct=True,  delta=_delta('max_drawdown')),
-        _simple_kpi_card('勝率',       kpi['win_ratio'],     is_pct=True,  delta=_delta('win_ratio')),
-    ], className='g-3')
+        empty = html.Div(
+            '目前尚無回測資料',
+            className='text-center text-muted py-4',
+            style={'fontSize': '15px'},
+        )
+        return empty, _build_simple_figure(None, 'annual_return')
 
     months = _PERIOD_MONTHS.get(period, 3)
-    data = _load_all(strategy, months=months)
+    data = _load_all(strategy, months=months, df_normalized=df_norm)
     chart_df = None
     if data:
-        full_ranks = _pick_full_ranks(data.keys())
+        full_ranks = _longest_ranks(data.keys())
         chart_df = data[full_ranks]
 
     fig = _build_simple_figure(chart_df, 'annual_return')
 
-    last_update = f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}'
-    return kpi_row, fig, last_update
+    return [_kpi_header(kpi), _render_kpi_row(kpi, size='hero')], fig
 
 
 @app.callback(
@@ -998,30 +1030,7 @@ def update_kpi(strategy):
     kpi = _latest_kpi(strategy)
     if not kpi:
         return []
-
-    def _delta(k):
-        return kpi[k] - kpi['prev'][k] if 'prev' in kpi else None
-
-    ts_str = kpi['timestamp'].strftime('%Y-%m-%d')
-    return [
-        html.Div([
-            html.Label(
-                f'{_rank_label(kpi["full_ranks"])}績效',
-                style={'fontSize': '18px', 'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '0'},
-            ),
-            html.Div(
-                f'最新回測：{ts_str}',
-                className='text-muted',
-                style={'fontSize': '13px'},
-            ),
-        ], className='d-flex justify-content-between align-items-baseline mb-2'),
-        dbc.Row([
-            _kpi_card('年化報酬',     kpi['annual_return'], is_pct=True,  delta=_delta('annual_return')),
-            _kpi_card('Sharpe Ratio', kpi['sharpe'],        is_pct=False, delta=_delta('sharpe')),
-            _kpi_card('Max Drawdown', kpi['max_drawdown'],  is_pct=True,  delta=_delta('max_drawdown')),
-            _kpi_card('勝率',         kpi['win_ratio'],     is_pct=True,  delta=_delta('win_ratio')),
-        ], className='g-3'),
-    ]
+    return [_kpi_header(kpi), _render_kpi_row(kpi, size='compact')]
 
 
 @app.callback(
@@ -1040,17 +1049,16 @@ def update_main(strategy, metric, confirm_n, _remove_n_list, picker_value, curre
     strategy = strategy or 'weekly'
     metric = metric or 'annual_return'
 
+    d = _load_all(strategy)
+
     def _fig(ranks_list):
-        d = _load_all(strategy)
         filtered = {r: df for r, df in d.items() if r in (ranks_list or [])}
         return _build_figure(filtered, metric)
 
     if current_ranks is None:
-        d = _load_all(strategy)
-        full = _pick_full_ranks(d.keys()) if d else None
+        full = _longest_ranks(d.keys()) if d else None
         new_ranks = [full] if full else []
-        filtered = {r: df for r, df in d.items() if r in new_ranks}
-        return new_ranks, _build_tags(new_ranks), _build_figure(filtered, metric)
+        return new_ranks, _build_tags(new_ranks), _fig(new_ranks)
 
     if triggered == 'confirm-rank-modal' and confirm_n:
         if picker_value:
