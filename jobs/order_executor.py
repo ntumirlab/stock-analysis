@@ -121,6 +121,8 @@ class OrderExecutor:
             from strategy_class.alan_tw_strategy_ACE import AlanTWStrategyACE as strategy_class
         elif strategy_class_name == 'AlanTWStrategyEFGObserve':
             from strategy_class.alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve as strategy_class
+        elif strategy_class_name == 'AlanTWStrategyEFGObserveDI21Bias05':
+            from strategy_class.alan_tw_strategy_EFG_observe_di21_bias05 import AlanTWStrategyEFGObserveDI21Bias05 as strategy_class
         elif strategy_class_name == 'RAndDManagementStrategy':
             from strategy_class.r_and_d_management_strategy import RAndDManagementStrategy as strategy_class
         else:
