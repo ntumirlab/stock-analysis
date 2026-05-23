@@ -30,11 +30,7 @@ users:
       constant:
         rebalance_safety_weight: 0.3
         strategy_class_name: "AlanTWStrategyEFGObserveDI21Bias05"
-        excluded_stocks:  # 切換策略過渡期排除既有持倉，避免在高點買入
-          - "3430"  # 奇鈦科
-          - "5498"  # 凱崴
-          - "3709"  # 鑫聯大投控
-          - "4989"  # 榮科
+        excluded_stocks: []
     fugle:
       env:
         FUGLE_CONFIG_PATH: "${FUGLE_CONFIG_PATH}"
