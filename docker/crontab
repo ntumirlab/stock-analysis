@@ -7,7 +7,7 @@
 # 每天 21:55 - 執行回測
 55 21 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyACE >> /app/logs/backtest.log 2>&1
 0 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG >> /app/logs/backtest.log 2>&1
-5 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFGObserve >> /app/logs/backtest.log 2>&1
+5 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFGObserveDI21Bias05 >> /app/logs/backtest.log 2>&1
 10 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyNotStartA >> /app/logs/backtest.log 2>&1
 15 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyNotStartB >> /app/logs/backtest.log 2>&1
 20 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=PeterWuStrategy >> /app/logs/backtest.log 2>&1
