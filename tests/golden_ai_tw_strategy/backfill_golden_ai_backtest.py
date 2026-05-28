@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
 from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly
+from strategy_class.golden_ai_tw_strategy_weekly_4w import GoldenAITWStrategyWeekly4W
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config.yaml')
@@ -15,17 +16,19 @@ CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config.yaml')
 STRATEGY_CLASS_MAP = {
     'weekly': GoldenAITWStrategyWeekly,
     'monthly': GoldenAITWStrategyMonthly,
+    'weekly_4w': GoldenAITWStrategyWeekly4W,
 }
 
 ASSETS_DIR_MAP = {
     'weekly': 'GoldenAITWStrategyWeekly',
     'monthly': 'GoldenAITWStrategyMonthly',
+    'weekly_4w': 'GoldenAITWStrategyWeekly4W',
 }
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='GoldenAI 回測補跑工具')
-    parser.add_argument('--strategy', required=True, choices=['weekly', 'monthly'])
+    parser.add_argument('--strategy', required=True, choices=['weekly', 'monthly', 'weekly_4w'])
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--backtest_date', metavar='YYYY-MM-DD')

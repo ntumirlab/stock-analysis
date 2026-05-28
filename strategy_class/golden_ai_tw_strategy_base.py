@@ -38,6 +38,9 @@ def _golden_ai_process_worker(args):
     if strategy_class_name == 'weekly':
         from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
         strategy = GoldenAITWStrategyWeekly(config_path=config_path, override_params=override_params)
+    elif strategy_class_name == 'weekly_4w':
+        from strategy_class.golden_ai_tw_strategy_weekly_4w import GoldenAITWStrategyWeekly4W
+        strategy = GoldenAITWStrategyWeekly4W(config_path=config_path, override_params=override_params)
     else:
         from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly
         strategy = GoldenAITWStrategyMonthly(config_path=config_path, override_params=override_params)
@@ -67,6 +70,7 @@ class GoldenAITWStrategyBase:
         self.global_tp = override_params.get('global_tp', golden_ai_config.get('global_tp', None))
         self.trade_at_price = override_params.get('trade_at_price', golden_ai_config.get('trade_at_price', 'open'))
         self.lookback_months = override_params.get('lookback_months', golden_ai_config.get('lookback_months', None))
+        self.recommendation_frequency = override_params.get('recommendation_frequency', golden_ai_config.get('recommendation_frequency', task_name))
 
         backtest_date_raw = override_params.get('backtest_date', None)
         self.backtest_date = pd.Timestamp(backtest_date_raw).normalize() if backtest_date_raw else None
@@ -82,7 +86,7 @@ class GoldenAITWStrategyBase:
         - 週日當天產出的清單 → 留在當天（代表本週的推薦）
         """
 
-        dao = RecommendationDAO(frequency=self.task_name)
+        dao = RecommendationDAO(frequency=self.recommendation_frequency)
         recommendation_records = dao.load()
 
         weekly_batches = {}
@@ -384,6 +388,7 @@ class GoldenAITWStrategyBase:
                 'global_tp': self.global_tp,
                 'trade_at_price': self.trade_at_price,
                 'lookback_months': self.lookback_months,
+                'recommendation_frequency': self.recommendation_frequency,
             }
             abs_db_path = os.path.abspath(dao.db_path)
             worker_args = [

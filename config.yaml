@@ -79,6 +79,20 @@ golden_ai:
     lookback_months: 3     # 回測期間：幾個月
     num_workers: 8         # 平行 worker 數 (1 = sequential)
 
+  weekly_4w:
+    buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
+    sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
+    rank_start: 1          # 固定跑 Rank start~end 單一組合
+    rank_end: 8
+    use_db_sl: false
+    global_sl: null
+    use_db_tp: false
+    global_tp: null
+    trade_at_price: 'open_close_mix'
+    lookback_months: 1
+    num_workers: 1         # 單組 ranks，不需要 multi-worker
+    recommendation_frequency: 'weekly'  # 推薦清單共用 weekly
+
 # Oscar 策略專用參數
 oscar:
   general:
