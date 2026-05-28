@@ -13,6 +13,7 @@
 20 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=PeterWuStrategy >> /app/logs/backtest.log 2>&1
 
 25 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=OscarCompositeStrategy >> /app/logs/backtest.log 2>&1
+30 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyWeekly4W >> /app/logs/backtest.log 2>&1
 35 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyWeekly >> /app/logs/backtest.log 2>&1
 55 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyMonthly >> /app/logs/backtest.log 2>&1
 

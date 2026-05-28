@@ -24,7 +24,7 @@ class BacktestExecutor:
 
     def run_strategy_and_save(self):
         strategy = self.load_strategy()
-        is_golden_ai = self.strategy_class_name in ('GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly')
+        is_golden_ai = self.strategy_class_name in ('GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly', 'GoldenAITWStrategyWeekly4W')
         if is_golden_ai:
             strategy.run_strategy(report_dir=os.path.join("assets", self.strategy_class_name))
         else:
@@ -70,6 +70,8 @@ class BacktestExecutor:
             from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly as strategy_class
         elif self.strategy_class_name == 'GoldenAITWStrategyMonthly':
             from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly as strategy_class
+        elif self.strategy_class_name == 'GoldenAITWStrategyWeekly4W':
+            from strategy_class.golden_ai_tw_strategy_weekly_4w import GoldenAITWStrategyWeekly4W as strategy_class
         elif self.strategy_class_name == 'OscarAndOrStrategy':
             from strategy_class.oscar.oscar_strategy_andor import OscarAndOrStrategy as strategy_class
         elif self.strategy_class_name == 'OscarCompositeStrategy':
