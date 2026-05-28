@@ -19,7 +19,7 @@ flask_server = Flask(__name__)
 _assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 _ai = AutoIndex(flask_server, browse_root=_assets, add_url_rules=False)
 
-_ALLOWED_DIRS = {'GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly'}
+_ALLOWED_DIRS = {'GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly', 'GoldenAITWStrategyWeekly4W'}
 
 
 @flask_server.route('/reports/<path:path>')
@@ -110,8 +110,9 @@ _REC_DAOS = {
 }
 
 _STRATEGY_META = {
-    'weekly':  {'label': '週策略', 'dir': 'GoldenAITWStrategyWeekly'},
-    'monthly': {'label': '月策略', 'dir': 'GoldenAITWStrategyMonthly'},
+    'weekly':    {'label': '週策略',       'dir': 'GoldenAITWStrategyWeekly'},
+    'monthly':   {'label': '月策略',       'dir': 'GoldenAITWStrategyMonthly'},
+    'weekly_4w': {'label': '週策略（4週）', 'dir': 'GoldenAITWStrategyWeekly4W'},
 }
 
 _PERIOD_MONTHS = {'1M': 1, '3M': 3, '6M': 6, '1Y': 12, 'All': None}
@@ -847,6 +848,7 @@ app.layout = html.Div(
 @flask_server.route('/advanced/')
 @flask_server.route('/reports/weekly/')
 @flask_server.route('/reports/monthly/')
+@flask_server.route('/reports/weekly-4w/')
 def spa_routes():
     return app.index()
 
@@ -856,6 +858,13 @@ def _canon_path(p: str) -> str:
     if not p or p == '/':
         return '/'
     return p.rstrip('/') or '/'
+
+
+_REPORT_PATH_TO_STRATEGY = {
+    '/reports/weekly':    'weekly',
+    '/reports/monthly':   'monthly',
+    '/reports/weekly-4w': 'weekly_4w',
+}
 
 
 # ── Navbar ───────────────────────────────────────────────────────────────────
@@ -892,6 +901,8 @@ def render_navbar(pathname):
             dcc.Link('Weekly 報告', href='/reports/weekly/',
                      className='btn btn-outline-secondary me-2'),
             dcc.Link('Monthly 報告', href='/reports/monthly/',
+                     className='btn btn-outline-secondary me-2'),
+            dcc.Link('Weekly 4W 報告', href='/reports/weekly-4w/',
                      className='btn btn-outline-secondary'),
         ], className='d-flex align-items-center')
     else:
@@ -932,10 +943,8 @@ def render_navbar(pathname):
 )
 def render_page(pathname):
     p = _canon_path(pathname)
-    if p == '/reports/weekly':
-        return _report_browser_layout('weekly')
-    if p == '/reports/monthly':
-        return _report_browser_layout('monthly')
+    if p in _REPORT_PATH_TO_STRATEGY:
+        return _report_browser_layout(_REPORT_PATH_TO_STRATEGY[p])
     if p == '/advanced':
         return _main_layout()
     return _simple_layout()
@@ -952,7 +961,7 @@ def render_page(pathname):
     State('url', 'pathname'),
 )
 def update_report_table(start_date, end_date, rank_filter, pathname):
-    strategy = 'weekly' if _canon_path(pathname) == '/reports/weekly' else 'monthly'
+    strategy = _REPORT_PATH_TO_STRATEGY.get(_canon_path(pathname), 'weekly')
     dir_name = _STRATEGY_META[strategy]['dir']
     df = _parse_report_files(strategy)
 
