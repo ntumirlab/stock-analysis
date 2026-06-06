@@ -68,7 +68,7 @@ class LoggerManager:
         """
         alerting_stocks = []
         pattern = re.compile(
-            r"(?P<action>買入|賣出)\s+(?P<stock_id>\d{4,6})\s+(?P<quantity>-?[\d\.]+)\s+張\s+-\s+總價約\s+(?P<total_amount>-?[\d\.]+)"
+            r"(?P<action>買入|賣出)\s+(?P<stock_id>\d{4,6})\s+(?P<quantity>-?\d+(?:\.\d+)?)\s+張\s+-\s+總價約\s+(?P<total_amount>-?\d+(?:\.\d+)?)"
         )
         with open(log_filepath, "r", encoding="utf-8") as f:
             for line in f:
