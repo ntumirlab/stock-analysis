@@ -32,7 +32,6 @@ class ReservationHandlerBase:
 
         for stock_info in alerting_stocks:
             stock_id = stock_info['stock_id']
-            quantity = stock_info['quantity']
             action = stock_info['action']
 
             try:
@@ -94,7 +93,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
         )
 
         # 計算股數與預估價格
-        shares = int(abs(quantity) * 1000)
+        shares = int(round(abs(quantity) * 1000))
         if shares == 0:
             logger.warning(f"跳過 {stock_id}：股數為 0")
             return
@@ -110,6 +109,8 @@ class ShioajiReservationHandler(ReservationHandlerBase):
             estimated_price
         )
 
+        if not resp.status:
+            raise RuntimeError(f"圈存資金失敗: {stock_id}, info='{resp.info}'")
         logger.info(f"圈存資金成功: {stock_id}, 回應={resp}")
 
     def _reserve_for_sell(self, stock_info):
@@ -125,7 +126,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
         )
 
         # 計算股數
-        shares = int(abs(quantity) * 1000)
+        shares = int(round(abs(quantity) * 1000))
         if shares == 0:
             logger.warning(f"跳過 {stock_id}：股數為 0")
             return
@@ -138,6 +139,8 @@ class ShioajiReservationHandler(ReservationHandlerBase):
             shares
         )
 
+        if not resp.status:
+            raise RuntimeError(f"圈存股票失敗: {stock_id}, info='{resp.info}'")
         logger.info(f"圈存股票成功: {stock_id}, 回應={resp}")
 
 

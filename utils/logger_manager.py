@@ -59,15 +59,16 @@ class LoggerManager:
         從 log 檔案中提取警示股資訊
 
         預期格式:
-        買入 8101 0.429 張 - 總價約         2672.67
-        賣出 2330 1.500 張 - 總價約        45000.00
+        買入 8101  0.429 張 - 總價約         2672.67
+        賣出 2330  1.500 張 - 總價約        45000.00
+        賣出 2492 -0.004 張 - 總價約        -1497.60  (finlab 賣出時數量/金額為負值)
 
         Returns:
             list: 警示股資訊列表，每個元素包含 action, stock_id, quantity, total_amount
         """
         alerting_stocks = []
         pattern = re.compile(
-            r"(?P<action>買入|賣出)\s+(?P<stock_id>\d{4,6})\s+(?P<quantity>[\d\.]+)\s+張\s+-\s+總價約\s+(?P<total_amount>[\d\.]+)"
+            r"(?P<action>買入|賣出)\s+(?P<stock_id>\d{4,6})\s+(?P<quantity>-?[\d\.]+)\s+張\s+-\s+總價約\s+(?P<total_amount>-?[\d\.]+)"
         )
         with open(log_filepath, "r", encoding="utf-8") as f:
             for line in f:
