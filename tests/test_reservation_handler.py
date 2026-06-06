@@ -53,6 +53,19 @@ class TestShioajiReservationHandlerBuy(unittest.TestCase):
         # Should not propagate — handle_alerting_stocks catches per-stock errors
         handler.handle_alerting_stocks([_stock_info_buy()])
 
+    def test_buy_float_truncation_regression(self):
+        """round() 而非 int() 才能正確處理浮點誤差。
+        真實 log 案例：finlab 回傳 quantity=0.0029999999999999957，
+        int(0.003 * 1000) = int(2.999...) = 2（錯），round() = 3（正確）。
+        """
+        handler = _make_handler()
+        handler.account.api.reserve_earmarking.return_value = _make_resp(True)
+        stock_info = {'stock_id': '2492', 'quantity': 0.0029999999999999957, 'action': '買入', 'total_amount': 1300.20}
+        handler._reserve_for_buy(stock_info)
+        call_args = handler.account.api.reserve_earmarking.call_args
+        shares_arg = call_args[0][2]  # positional: (stock_account, contract, shares, price)
+        self.assertEqual(shares_arg, 3)
+
 
 class TestShioajiReservationHandlerSell(unittest.TestCase):
 
