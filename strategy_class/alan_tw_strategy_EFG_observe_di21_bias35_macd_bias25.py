@@ -5,7 +5,7 @@ Alan TW Strategy EFG Observe DI21 Bias35 MACD Bias25
     3日線↓ AND DIF↓ AND (
         -DI > 21
         OR (3日乖離 < -3.5% AND 5日乖離 < -3.5%)
-        OR (MACD柱↓ AND 3日乖離 < -2.5% AND 5日乖離 < -2.5%)
+        OR (MACD(DEA)↓ AND 3日乖離 < -2.5% AND 5日乖離 < -2.5%)
     )
 """
 
@@ -19,7 +19,7 @@ class AlanTWStrategyEFGObserveDI21Bias35MACDBias25(AlanTWStrategyEFGObserve):
     3日線↓ AND DIF↓ AND (
         -DI > 21
         OR (3日乖離 < -3.5% AND 5日乖離 < -3.5%)
-        OR (MACD柱↓ AND 3日乖離 < -2.5% AND 5日乖離 < -2.5%)
+        OR (MACD(DEA)↓ AND 3日乖離 < -2.5% AND 5日乖離 < -2.5%)
     )
     """
 
@@ -31,7 +31,7 @@ class AlanTWStrategyEFGObserveDI21Bias35MACDBias25(AlanTWStrategyEFGObserve):
         ma5 = self.adj_close.rolling(5).mean()
 
         with data.universe(market='TSE_OTC'):
-            dif, macd_hist, _ = data.indicator(
+            dif, macd, _ = data.indicator(
                 'MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True
             )
             minus_di = data.indicator('MINUS_DI', timeperiod=14, adjust_price=True)
@@ -45,7 +45,7 @@ class AlanTWStrategyEFGObserveDI21Bias35MACDBias25(AlanTWStrategyEFGObserve):
             (
                 (minus_di > 21) |
                 ((bias_3 < -0.035) & (bias_5 < -0.035)) |
-                ((macd_hist < macd_hist.shift(1)) & (bias_3 < -0.025) & (bias_5 < -0.025))
+                ((macd < macd.shift(1)) & (bias_3 < -0.025) & (bias_5 < -0.025))
             )
         )
 
