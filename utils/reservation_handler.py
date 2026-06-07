@@ -109,8 +109,8 @@ class ShioajiReservationHandler(ReservationHandlerBase):
             estimated_price
         )
 
-        if not resp.status:
-            raise RuntimeError(f"圈存資金失敗: {stock_id}, info='{resp.info}'")
+        if not resp.response.status:
+            raise RuntimeError(f"圈存資金失敗: {stock_id}, info='{resp.response.info}'")
         logger.info(f"圈存資金成功: {stock_id}, 回應={resp}")
 
     def _reserve_for_sell(self, stock_info):
@@ -139,8 +139,8 @@ class ShioajiReservationHandler(ReservationHandlerBase):
             shares
         )
 
-        if not resp.status:
-            raise RuntimeError(f"圈存股票失敗: {stock_id}, info='{resp.info}'")
+        if not resp.response.status:
+            raise RuntimeError(f"圈存股票失敗: {stock_id}, info='{resp.response.info}'")
         logger.info(f"圈存股票成功: {stock_id}, 回應={resp}")
 
 
