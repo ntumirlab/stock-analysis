@@ -23,9 +23,10 @@ def _stock_info_sell():
 
 
 def _make_resp(status: bool, info: str = ''):
+    # Mirrors shioaji's wrapper structure: resp.response.status / resp.response.info
     resp = MagicMock()
-    resp.status = status
-    resp.info = info
+    resp.response.status = status
+    resp.response.info = info
     return resp
 
 
