@@ -4,6 +4,7 @@ from .alan_tw_strategy_FG import AlanTWStrategyFG
 from .alan_tw_strategy_EFG import AlanTWStrategyEFG
 from .alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve
 from .alan_tw_strategy_EFG_observe_di21_bias05 import AlanTWStrategyEFGObserveDI21Bias05
+from .alan_tw_strategy_EFG_observe_di21_bias35_macd_bias25 import AlanTWStrategyEFGObserveDI21Bias35MACDBias25
 from .oscar.oscar_strategy_andor import OscarAndOrStrategy
 from .oscar.oscar_strategy_composite import OscarCompositeStrategy
 from ._2560_tw_strategy_andor import _2560AndOrTWStrategy
