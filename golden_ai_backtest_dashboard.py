@@ -105,8 +105,9 @@ dao = GoldenAIBacktestMetricsDAO(db_path=_DB_PATH)
 _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
 
 _REC_DAOS = {
-    'weekly':  RecommendationDAO(_DB_PATH, frequency='weekly'),
-    'monthly': RecommendationDAO(_DB_PATH, frequency='monthly'),
+    'weekly':    RecommendationDAO(_DB_PATH, frequency='weekly'),
+    'monthly':   RecommendationDAO(_DB_PATH, frequency='monthly'),
+    'weekly_4w': RecommendationDAO(_DB_PATH, frequency='weekly'),  # 共用 weekly 推薦清單
 }
 
 _STRATEGY_META = {
@@ -136,7 +137,7 @@ def _normalized(strategy: str) -> pd.DataFrame:
         return df_all
 
     df_all['timestamp'] = pd.to_datetime(df_all['timestamp']).dt.normalize()
-    if strategy == 'monthly':
+    if strategy in ('monthly', 'weekly_4w'):
         df_all = (
             df_all.groupby(['timestamp', 'ranks'])[_KPI_COLS]
             .mean()
@@ -532,6 +533,13 @@ def _recommendation_card(strategy: str):
                 style={**_TYPO['muted'], 'fontStyle': 'italic', 'marginTop': '4px'},
             )
         )
+    elif strategy == 'weekly_4w':
+        header_children.append(
+            html.Div(
+                '此策略採用週推薦清單、買進後持有約 4 週。此處顯示最新一期週清單，實際進場時間由策略決定。',
+                style={**_TYPO['muted'], 'fontStyle': 'italic', 'marginTop': '4px'},
+            )
+        )
     header = html.Div(header_children, className='mb-3')
 
     if record and record.stocks:
@@ -582,7 +590,7 @@ def _simple_layout():
             ]),
             'value': s,
         }
-        for s, sub in [('weekly', '每週換倉'), ('monthly', '每月換倉')]
+        for s, sub in [('weekly', '週清單 · 持有 1 週'), ('weekly_4w', '週清單 · 持有 4 週'), ('monthly', '月清單 · 持有 4 週')]
     ]
 
     period_options = [{'label': k, 'value': k} for k in _PERIOD_MONTHS]
@@ -647,8 +655,9 @@ def _main_layout():
                     dcc.Dropdown(
                         id='strategy-dropdown',
                         options=[
-                            {'label': 'Weekly（週策略）', 'value': 'weekly'},
-                            {'label': 'Monthly（月策略 Week 1~4 平均）', 'value': 'monthly'},
+                            {'label': 'Weekly（週清單 · 持有 1 週）', 'value': 'weekly'},
+                            {'label': 'Weekly 4W（週清單 · 持有 4 週，Week 1~4 平均）', 'value': 'weekly_4w'},
+                            {'label': 'Monthly（月清單 · 持有 4 週，Week 1~4 平均）', 'value': 'monthly'},
                         ],
                         value='weekly',
                         clearable=False,
