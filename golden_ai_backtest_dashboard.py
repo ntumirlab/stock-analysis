@@ -1,15 +1,16 @@
 import os
-import re
+import logging
 from zoneinfo import ZoneInfo
 import dash
 from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
 import dash_bootstrap_components as dbc
-from flask import Flask
-from flask_autoindex import AutoIndex
+from flask import Flask, request
 import plotly.graph_objects as go
 import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from dao.recommendation_dao import RecommendationDAO
+
+logger = logging.getLogger(__name__)
 
 _DB_PATH = os.getenv('GOLDEN_AI_DB_PATH', 'data_prod.db')
 _TZ = ZoneInfo('Asia/Taipei')
@@ -17,16 +18,40 @@ _TZ = ZoneInfo('Asia/Taipei')
 flask_server = Flask(__name__)
 
 _assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
-_ai = AutoIndex(flask_server, browse_root=_assets, add_url_rules=False)
 
-_ALLOWED_DIRS = {'GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly', 'GoldenAITWStrategyWeekly4W'}
+_REPORT_TEMPLATE = None
 
 
-@flask_server.route('/reports/<path:path>')
-def autoindex(path):
-    if path.split('/')[0] not in _ALLOWED_DIRS:
-        return 'Forbidden', 403
-    return _ai.render_autoindex(path)
+def _load_report_template():
+    global _REPORT_TEMPLATE
+    if _REPORT_TEMPLATE is not None:
+        return _REPORT_TEMPLATE
+    path = os.path.join(_assets, 'finlab_report_template.html')
+    if not os.path.exists(path):
+        logger.warning('finlab_report_template.html not found — run scripts/extract_report_template.py first')
+        return None
+    with open(path, 'r', encoding='utf-8') as f:
+        _REPORT_TEMPLATE = f.read()
+    return _REPORT_TEMPLATE
+
+
+@flask_server.route('/report/view')
+def report_view():
+    strategy = request.args.get('strategy', '')
+    timestamp = request.args.get('timestamp', '')
+    ranks = request.args.get('ranks')
+    week = request.args.get('week') or None
+
+    result = dao.get_report(timestamp, strategy, week=week, ranks=ranks)
+    if not result:
+        return 'Report not found', 404
+
+    template = _load_report_template()
+    if not template:
+        return 'Report template not configured. Run: python3 scripts/extract_report_template.py', 500
+
+    report_json, position_json = result
+    return template.replace('{{REPORT_JSON}}', report_json).replace('{{POSITION_JSON}}', position_json)
 
 
 _METRIC_META = {
@@ -111,9 +136,9 @@ _REC_DAOS = {
 }
 
 _STRATEGY_META = {
-    'weekly':    {'label': '週策略',       'dir': 'GoldenAITWStrategyWeekly'},
-    'monthly':   {'label': '月策略',       'dir': 'GoldenAITWStrategyMonthly'},
-    'weekly_4w': {'label': '週策略（4週）', 'dir': 'GoldenAITWStrategyWeekly4W'},
+    'weekly':    {'label': '週策略'},
+    'monthly':   {'label': '月策略'},
+    'weekly_4w': {'label': '週策略（4週）'},
 }
 
 _PERIOD_MONTHS = {'1M': 1, '3M': 3, '6M': 6, '1Y': 12, 'All': None}
@@ -480,39 +505,15 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     return fig
 
 
-_REPORT_FILE_PATTERN = re.compile(
-    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d))?\.html$'
-)
-
-
-def _parse_report_files(strategy: str) -> pd.DataFrame:
-    dir_name = _STRATEGY_META[strategy]['dir']
-    report_dir = os.path.join(_assets, dir_name)
-    if not os.path.isdir(report_dir):
-        return pd.DataFrame(columns=['date', 'ranks', 'week', 'fname'])
-
-    rows = []
-    for fname in os.listdir(report_dir):
-        m = _REPORT_FILE_PATTERN.match(fname)
-        if not m:
-            continue
-        date_str, time_str, ranks_str, week_str = m.groups()
-        rows.append({
-            'date': date_str,
-            'datetime_key': f'{date_str}_{time_str}',
-            'ranks': ranks_str,
-            'week': week_str or '',
-            'fname': fname,
-        })
-
-    if not rows:
-        return pd.DataFrame(columns=['date', 'ranks', 'week', 'fname'])
-
-    df = pd.DataFrame(rows)
-    df = df.sort_values('datetime_key', ascending=False)
+def _query_report_list(strategy: str) -> pd.DataFrame:
+    df = dao.list_reports(strategy)
+    if df.empty:
+        return pd.DataFrame(columns=['date', 'timestamp', 'ranks', 'week'])
+    df['date'] = df['timestamp'].str[:10]
+    df['week'] = df['week'].fillna('')
     df = df.drop_duplicates(subset=['date', 'ranks', 'week'], keep='first')
     df = df.sort_values(['date', 'ranks', 'week'], ascending=[False, True, True]).reset_index(drop=True)
-    return df[['date', 'ranks', 'week', 'fname']]
+    return df[['date', 'timestamp', 'ranks', 'week']]
 
 
 def _recommendation_card(strategy: str):
@@ -704,7 +705,7 @@ def _main_layout():
 
 def _report_browser_layout(strategy: str):
     title = f'{_STRATEGY_META[strategy]["label"]}回測報告'
-    df = _parse_report_files(strategy)
+    df = _query_report_list(strategy)
     latest_date = df['date'].iloc[0] if not df.empty else str(pd.Timestamp.today().date())
     return dbc.Container([
         dbc.Row(
@@ -971,8 +972,7 @@ def render_page(pathname):
 )
 def update_report_table(start_date, end_date, rank_filter, pathname):
     strategy = _REPORT_PATH_TO_STRATEGY.get(_canon_path(pathname), 'weekly')
-    dir_name = _STRATEGY_META[strategy]['dir']
-    df = _parse_report_files(strategy)
+    df = _query_report_list(strategy)
 
     all_ranks = sorted(df['ranks'].unique(), key=_ranks_sort_key) if not df.empty else []
     options = [{'label': _rank_label(r), 'value': r} for r in all_ranks]
@@ -984,14 +984,16 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
     if rank_filter:
         df = df[df['ranks'].isin(rank_filter)]
 
-    table_data = [
-        {
+    table_data = []
+    for _, row in df.iterrows():
+        params = f'strategy={strategy}&timestamp={row["timestamp"]}&ranks={row["ranks"]}'
+        if row['week']:
+            params += f'&week={row["week"]}'
+        table_data.append({
             'date':       row['date'],
             'rank_label': _rank_label(row['ranks']) + (f' · {row["week"]}' if row['week'] else ''),
-            'link':       f'[開啟](/reports/{dir_name}/{row["fname"]})',
-        }
-        for _, row in df.iterrows()
-    ]
+            'link':       f'[開啟](/report/view?{params})',
+        })
     return table_data, options
 
 
