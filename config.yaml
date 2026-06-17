@@ -6,7 +6,7 @@ env:
 
 # LLM 配置
 llm_settings:
-  model_name: "gemini-2.0-flash"
+  model_name: "gemini-3.5-flash"
   api_rate_limit_sleep: 30
   max_retries: 3
   prompt_file_path: "./config/prompts/golden_ai_parsing_prompt.txt"
@@ -79,18 +79,18 @@ golden_ai:
     lookback_months: 3     # 回測期間：幾個月
     num_workers: 8         # 平行 worker 數 (1 = sequential)
 
-  weekly_4w:
+  weekly_4w:                # 行為同 monthly，推薦清單吃 weekly
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
     sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
-    rank_start: 1          # 固定跑 Rank start~end 單一組合
-    rank_end: 8
-    use_db_sl: false
-    global_sl: null
-    use_db_tp: false
-    global_tp: null
-    trade_at_price: 'open_close_mix'
-    lookback_months: 1
-    num_workers: 1         # 單組 ranks，不需要 multi-worker
+    rank_start: 1          # 回測起始的 Top N
+    rank_end: 8            # 回測結束的 Top N
+    use_db_sl: false       # 是否使用資料庫中的停損價格，若為 false 則不使用停損
+    global_sl: null        # 全域停損比例，若不用則設為 null
+    use_db_tp: false       # 是否使用資料庫中的停利價格，若為 false 則不使用停利
+    global_tp: null        # 全域停利比例，若不用則設為 null
+    trade_at_price: 'open_close_mix'  # 成交價
+    lookback_months: 3     # 回測期間：幾個月
+    num_workers: 8         # 平行 worker 數 (1 = sequential)
     recommendation_frequency: 'weekly'  # 推薦清單共用 weekly
 
 # Oscar 策略專用參數

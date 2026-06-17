@@ -111,13 +111,13 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
 
     def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
         ranks_str = ','.join(map(str, ranks))
-        if dao.exists_for_date(date_str, 'monthly', ranks_str):
+        if dao.exists_for_date(date_str, self.task_name, ranks_str):
             print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         week_reports = self._run_core(ranks=ranks)
         for week_name, report in week_reports.items():
-            dao.save(timestamp=timestamp, strategy='monthly', week=week_name, ranks=ranks_str, report=report)
+            dao.save(timestamp=timestamp, strategy=self.task_name, week=week_name, ranks=ranks_str, report=report)
         if report_dir is not None:
             wrapper = MultiReportWrapper(week_reports)
             save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
