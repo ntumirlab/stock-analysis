@@ -6,7 +6,7 @@ env:
 
 # LLM 配置
 llm_settings:
-  model_name: "gemini-2.0-flash"
+  model_name: "gemini-3.5-flash"
   api_rate_limit_sleep: 30
   max_retries: 3
   prompt_file_path: "./config/prompts/golden_ai_parsing_prompt.txt"

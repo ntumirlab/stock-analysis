@@ -31,7 +31,7 @@ class RecommendationsParser:
         self.config_loader.load_global_env_vars()
 
         self.llm_config = self.config_loader.config.get('llm_settings', {})
-        self.model_name = self.llm_config.get('model_name', "gemini-2.0-flash")
+        self.model_name = self.llm_config.get('model_name', "gemini-3.5-flash")
         self.api_rate_sleep = self.llm_config.get('api_rate_limit_sleep', 30)
         self.max_retries = self.llm_config.get('max_retries', 3)
 
@@ -159,20 +159,22 @@ class RecommendationsParser:
         else:
             logger.info(f"Found {len(sorted_dates)} new dates to process: {sorted_dates}")
 
+            saved_count = 0
             for f_date in sorted_dates:
                 f_name = candidates[f_date]
                 logger.info(f"Parsing new file for {f_date}: {f_name}")
-                
+
                 file_path = os.path.join(self.input_folder, f_name)
                 with open(file_path, 'r', encoding='utf-8') as file:
                     record = self._call_gemini(file.read(), f_date)
-                    
+
                     if record:
                         dao.add_record(record)
+                        saved_count += 1
                         logger.info(f"Saved {len(record.stocks)} stocks for {f_date}")
-                        time.sleep(self.api_rate_sleep)  # 避免 Rate Limit
-            
-            logger.info(f"Updated {len(sorted_dates)} new records to database")
+                        time.sleep(self.api_rate_sleep)
+
+            logger.info(f"Updated {saved_count}/{len(sorted_dates)} new records to database")
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
