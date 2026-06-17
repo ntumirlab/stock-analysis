@@ -1,10 +1,11 @@
 import os
+import tempfile
 import numpy as np
 import pandas as pd
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
-from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase, MultiReportWrapper
+from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase, MultiReportWrapper, _extract_report_json
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 
 
@@ -118,6 +119,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         week_reports = self._run_core(ranks=ranks)
         for week_name, report in week_reports.items():
             dao.save(timestamp=timestamp, strategy=self.task_name, week=week_name, ranks=ranks_str, report=report)
+
         if report_dir is not None:
             wrapper = MultiReportWrapper(week_reports)
             save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
@@ -127,6 +129,30 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 wrapper.display(save_report_path=save_path)
             finally:
                 data.truncate_end = None
+            base_dir, file_name = os.path.split(save_path)
+            file_base, ext = os.path.splitext(file_name)
+            for week_name in week_reports:
+                week_path = os.path.join(base_dir, f"{file_base}_{week_name}{ext}")
+                rj, pj = _extract_report_json(week_path)
+                if rj:
+                    dao.save_report(timestamp=timestamp, strategy=self.task_name, week=week_name,
+                                    ranks=ranks_str, report_json=rj, position_json=pj)
+        else:
+            for week_name, report in week_reports.items():
+                tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
+                tmp_path = tmp.name
+                tmp.close()
+                if self.backtest_date is not None:
+                    data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
+                try:
+                    report.display(save_report_path=tmp_path)
+                finally:
+                    data.truncate_end = None
+                rj, pj = _extract_report_json(tmp_path)
+                os.unlink(tmp_path)
+                if rj:
+                    dao.save_report(timestamp=timestamp, strategy=self.task_name, week=week_name,
+                                    ranks=ranks_str, report_json=rj, position_json=pj)
 
 
 if __name__ == '__main__':
