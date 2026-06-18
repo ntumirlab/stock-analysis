@@ -17,8 +17,8 @@ ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 OUTPUT = os.path.join(ASSETS, 'finlab_report_template.html')
 
 PLACEHOLDER_LINES = (
-    '    <script>const reportJson = {{REPORT_JSON}};</script>\n',
-    '    <script>const positionJson = {{POSITION_JSON}};</script>\n',
+    '    <script>const reportJson = {{REPORT_JSON}}</script>\n',
+    '    <script>const positionJson = {{POSITION_JSON}}</script>\n',
 )
 
 

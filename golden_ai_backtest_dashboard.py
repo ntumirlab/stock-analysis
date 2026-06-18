@@ -1,5 +1,6 @@
 import os
 import logging
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 import dash
 from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
@@ -986,13 +987,13 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
 
     table_data = []
     for _, row in df.iterrows():
-        params = f'strategy={strategy}&timestamp={row["timestamp"]}&ranks={row["ranks"]}'
+        qp = {'strategy': strategy, 'timestamp': row['timestamp'], 'ranks': row['ranks']}
         if row['week']:
-            params += f'&week={row["week"]}'
+            qp['week'] = row['week']
         table_data.append({
             'date':       row['date'],
             'rank_label': _rank_label(row['ranks']) + (f' · {row["week"]}' if row['week'] else ''),
-            'link':       f'[開啟](/report/view?{params})',
+            'link':       f'[開啟](/report/view?{urlencode(qp)})',
         })
     return table_data, options
 

@@ -26,7 +26,7 @@ class BacktestExecutor:
         strategy = self.load_strategy()
         is_golden_ai = self.strategy_class_name in ('GoldenAITWStrategyWeekly', 'GoldenAITWStrategyMonthly', 'GoldenAITWStrategyWeekly4W')
         if is_golden_ai:
-            strategy.run_strategy(report_dir=os.path.join("assets", self.strategy_class_name))
+            strategy.run_strategy()
         else:
             report = strategy.run_strategy()
             self.save_finlab_report(report)

@@ -54,11 +54,11 @@ def _golden_ai_process_worker(args):
 def _extract_report_json(html_path):
     with open(html_path, 'r', encoding='utf-8') as f:
         lines = [f.readline() for _ in range(11)]
-    report_match = re.search(r'const reportJson = (.+);\s*</script>', lines[8])
-    position_match = re.search(r'const positionJson = (.+);\s*</script>', lines[9])
+    report_match = re.search(r'const reportJson = (.+)</script>', lines[8])
+    position_match = re.search(r'const positionJson = (.+)</script>', lines[9])
     if not report_match or not position_match:
         return None, None
-    return report_match.group(1), position_match.group(1)
+    return report_match.group(1).rstrip('; '), position_match.group(1).rstrip('; ')
 
 
 class GoldenAITWStrategyBase:
