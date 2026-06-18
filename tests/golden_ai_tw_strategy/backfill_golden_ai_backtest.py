@@ -19,12 +19,6 @@ STRATEGY_CLASS_MAP = {
     'weekly_4w': GoldenAITWStrategyWeekly4W,
 }
 
-ASSETS_DIR_MAP = {
-    'weekly': 'GoldenAITWStrategyWeekly',
-    'monthly': 'GoldenAITWStrategyMonthly',
-    'weekly_4w': 'GoldenAITWStrategyWeekly4W',
-}
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description='GoldenAI 回測補跑工具')
@@ -57,12 +51,11 @@ def resolve_dates(args):
 
 
 def run_one(strategy_name, backtest_date, num_workers=1):
-    report_dir = os.path.join(PROJECT_ROOT, 'assets', ASSETS_DIR_MAP[strategy_name])
     strategy = STRATEGY_CLASS_MAP[strategy_name](
         config_path=CONFIG_PATH,
         override_params={'backtest_date': backtest_date},
     )
-    strategy.run_strategy(report_dir=report_dir, num_workers=num_workers)
+    strategy.run_strategy(num_workers=num_workers)
 
 
 def main():

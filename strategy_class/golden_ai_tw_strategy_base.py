@@ -1,5 +1,7 @@
 import os
+import re
 import time
+import tempfile
 import traceback
 import numpy as np
 import pandas as pd
@@ -47,6 +49,16 @@ def _golden_ai_process_worker(args):
 
     dao = GoldenAIBacktestMetricsDAO(db_path=db_path)
     strategy._run_one_ranks(ranks, dao, timestamp, date_str, time_str, report_dir, i, total)
+
+
+def _extract_report_json(html_path):
+    with open(html_path, 'r', encoding='utf-8') as f:
+        lines = [f.readline() for _ in range(11)]
+    report_match = re.search(r'const reportJson = (.+)</script>', lines[8])
+    position_match = re.search(r'const positionJson = (.+)</script>', lines[9])
+    if not report_match or not position_match:
+        return None, None
+    return report_match.group(1).rstrip('; '), position_match.group(1).rstrip('; ')
 
 
 class GoldenAITWStrategyBase:
@@ -339,14 +351,29 @@ class GoldenAITWStrategyBase:
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         report = self._run_core(ranks=ranks)
         dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
+
         if report_dir is not None:
-            save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
-            if self.backtest_date is not None:
-                data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
-            try:
-                report.display(save_report_path=save_path)
-            finally:
-                data.truncate_end = None
+            html_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
+            cleanup = False
+        else:
+            tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
+            html_path = tmp.name
+            tmp.close()
+            cleanup = True
+
+        if self.backtest_date is not None:
+            data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
+        try:
+            report.display(save_report_path=html_path)
+        finally:
+            data.truncate_end = None
+
+        rj, pj = _extract_report_json(html_path)
+        if cleanup:
+            os.unlink(html_path)
+        if rj:
+            dao.save_report(timestamp=timestamp, strategy=self.task_name, week=None,
+                            ranks=ranks_str, report_json=rj, position_json=pj)
 
     def run_strategy(self, report_dir=None, num_workers=None):
         if num_workers is None:

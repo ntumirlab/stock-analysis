@@ -1,7 +1,7 @@
 import sqlite3
 import logging
 import pandas as pd
-from typing import Optional
+from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,22 @@ class GoldenAIBacktestMetricsDAO:
                     max_drawdown  REAL,
                     win_ratio     REAL
                 )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS golden_ai_backtest_reports (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp     TEXT NOT NULL,
+                    strategy      TEXT NOT NULL,
+                    week          TEXT,
+                    ranks         TEXT NOT NULL DEFAULT '',
+                    report_json   TEXT NOT NULL,
+                    position_json TEXT NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reports_lookup
+                ON golden_ai_backtest_reports(strategy, timestamp, ranks)
             """)
 
             # Migration: if top_n column exists, recreate table without it
@@ -140,6 +156,72 @@ class GoldenAIBacktestMetricsDAO:
                 f"SELECT * FROM golden_ai_backtest_metrics {where} ORDER BY timestamp ASC",
                 conn,
                 params=params
+            )
+        finally:
+            conn.close()
+        return df
+
+    # ── Report JSON persistence ──
+
+    def save_report(self, timestamp: str, strategy: str, week: Optional[str],
+                    ranks: str, report_json: str, position_json: str) -> None:
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            conn.execute("""
+                INSERT INTO golden_ai_backtest_reports
+                    (timestamp, strategy, week, ranks, report_json, position_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (timestamp, strategy, week, ranks, report_json, position_json))
+            conn.commit()
+        finally:
+            conn.close()
+        logger.info(f"Saved report JSON: {strategy} {week} Ranks[{ranks}] @ {timestamp}")
+
+    def get_report(self, timestamp: str, strategy: str,
+                   week: Optional[str] = None,
+                   ranks: Optional[str] = None) -> Optional[Tuple[str, str]]:
+        conditions = ["strategy = ?", "timestamp = ?"]
+        params: list = [strategy, timestamp]
+        if week is not None:
+            conditions.append("week = ?")
+            params.append(week)
+        if ranks is not None:
+            conditions.append("ranks = ?")
+            params.append(ranks)
+
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT report_json, position_json FROM golden_ai_backtest_reports "
+                f"WHERE {' AND '.join(conditions)} LIMIT 1",
+                params
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        return (row[0], row[1]) if row else None
+
+    def list_reports(self, strategy: str,
+                     date_from: Optional[str] = None,
+                     date_to: Optional[str] = None) -> pd.DataFrame:
+        conditions = ["strategy = ?"]
+        params: list = [strategy]
+        if date_from:
+            conditions.append("timestamp >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("timestamp <= ?")
+            params.append(date_to + " 23:59:59")
+
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            df = pd.read_sql_query(
+                f"SELECT timestamp, strategy, week, ranks "
+                f"FROM golden_ai_backtest_reports "
+                f"WHERE {' AND '.join(conditions)} "
+                f"ORDER BY timestamp DESC",
+                conn, params=params
             )
         finally:
             conn.close()
