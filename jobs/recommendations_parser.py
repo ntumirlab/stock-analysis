@@ -59,20 +59,23 @@ class RecommendationsParser:
             raise EnvironmentError("Missing environment variable: GOOGLE_API_KEY")
         self.client = genai.Client(api_key=self.api_key)
 
-    def _extract_date(self, filename):
-        try:
-            match_new = re.match(r"^(\d{8})_\d{6}_", filename)
-            if match_new:
-                date_str = match_new.group(1)
-                return datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+    TASK_EXPECTED_DAYS = {'weekly': '5', 'monthly': '30'}
 
-            match_old = re.search(r"recommendation_(\d{8})_", filename)
-            if match_old:
-                date_str = match_old.group(1)
-                return datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+    def _extract_date(self, filename):
+        match = re.match(r"^(\d{8})_\d{4}_推薦股票_台股(\d+)日_金策智能\.md$", filename)
+        if not match:
+            return None
+
+        date_raw, days = match.group(1), match.group(2)
+        expected_days = self.TASK_EXPECTED_DAYS.get(self.task_name)
+        if expected_days and days != expected_days:
+            logger.warning(f"Skipping {filename}: 台股{days}日 does not match task '{self.task_name}' (expected 台股{expected_days}日)")
+            return None
+
+        try:
+            return datetime.strptime(date_raw, "%Y%m%d").strftime("%Y-%m-%d")
         except ValueError:
-            return None 
-        return None
+            return None
 
     def _call_gemini(self, content, date_str):        
         if not self.prompt_template:
