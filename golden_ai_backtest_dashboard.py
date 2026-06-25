@@ -643,18 +643,14 @@ def _simple_layout():
                         className='print-hide',
                     ),
                 ], className='d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2'),
-                dcc.Graph(
-                    id='simple-graph',
-                    config={
-                        'displayModeBar': False,
-                        'responsive': True,
-                    },
-                    responsive=True,
-                    style={
-                        'width': '100%',
-                        'minWidth': 0,
-                        'minHeight': '250px',
-                    },
+                dcc.Loading(
+                    dcc.Graph(
+                        id='simple-graph',
+                        config={'displayModeBar': False},
+                        style={'width': '100%', 'minWidth': 0},
+                    ),
+                    type='dot',
+                    color='#6C757D',
                 ),
             ], style=_CARD_BODY_STYLE),
         ], style=_CARD_STYLE, className='mb-3'),
@@ -725,7 +721,11 @@ def _main_layout():
                             style={'borderRadius': '20px', 'padding': '2px 14px', 'fontWeight': '600'},
                         ),
                     ], className='mb-3 d-flex align-items-center gap-2 flex-wrap'),
-                    dcc.Graph(id='metrics-graph', config={'displayModeBar': False}, style={'minHeight': '350px'}),
+                    dcc.Loading(
+                        dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
+                        type='dot',
+                        color='#6C757D',
+                    ),
                 ], style=_CARD_BODY_STYLE),
             ], style=_CARD_STYLE, className='mb-4'),
 
