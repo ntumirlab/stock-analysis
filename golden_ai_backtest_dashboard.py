@@ -92,10 +92,10 @@ _FONT_FAMILY = 'system-ui, -apple-system, sans-serif'
 _BORDER = f"1px solid {_COLOR['border']}"
 
 _TYPO = {
-    'card_title':    {'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
-    'section_label': {'fontSize': '18px', 'fontWeight': '500', 'color': _COLOR['text_secondary']},
+    'card_title':    {'fontSize': 'clamp(15px, 3vw, 18px)', 'fontWeight': '600', 'color': _COLOR['text_heading']},
+    'section_label': {'fontSize': 'clamp(13px, 3vw, 18px)', 'fontWeight': '500', 'color': _COLOR['text_secondary']},
     'form_label':    {'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '6px', 'display': 'block'},
-    'muted':         {'fontSize': '13px', 'color': _COLOR['text_muted']},
+    'muted':         {'fontSize': 'clamp(11px, 2vw, 13px)', 'color': _COLOR['text_muted']},
 }
 
 _CARD_STYLE = {
@@ -104,14 +104,14 @@ _CARD_STYLE = {
     'border': 'none',
 }
 
-_CARD_BODY_STYLE = {'padding': '20px 24px'}
+_CARD_BODY_STYLE = {'padding': 'clamp(12px, 2.5vw, 20px) clamp(10px, 2vw, 24px)'}
 
 _TABLE_STYLE = {
     'style_table': {'overflowX': 'auto'},
     'style_cell': {
         'fontFamily': _FONT_FAMILY,
-        'fontSize': '14px',
-        'padding': '10px 16px',
+        'fontSize': 'clamp(12px, 2.5vw, 14px)',
+        'padding': 'clamp(6px, 1.5vw, 10px) clamp(8px, 2vw, 16px)',
         'textAlign': 'left',
         'color': _COLOR['text_secondary'],
         'border': _BORDER,
@@ -199,22 +199,23 @@ def _latest_kpi(strategy: str, df_normalized=None) -> dict:
 _KPI_CARD_SIZES = {
     'compact': {
         'title': {
-            'fontSize': '16px', 'marginBottom': '6px',
+            'fontSize': 'clamp(12px, 2.5vw, 16px)', 'marginBottom': '6px',
             'textTransform': 'uppercase', 'letterSpacing': '0.05em',
         },
         'value_tag': html.H3,
-        'value': {'fontWeight': '700', 'marginBottom': '0', 'display': 'inline'},
-        'arrow_size': '16px',
+        'value': {'fontWeight': '700', 'marginBottom': '0', 'display': 'inline', 'fontSize': 'clamp(18px, 4vw, 24px)'},
+        'arrow_size': 'clamp(12px, 2.5vw, 16px)',
         'arrow_ml': '6px',
-        'body_padding': '20px 24px',
+        'body_padding': 'clamp(12px, 2.5vw, 20px) clamp(10px, 2vw, 24px)',
     },
     'hero': {
-        'title': {'fontSize': '15px', 'marginBottom': '14px'},
+        'title': {'fontSize': 'clamp(12px, 2.5vw, 15px)', 'marginBottom': 'clamp(6px, 1.5vw, 14px)'},
         'value_tag': html.Span,
-        'value': {'fontWeight': '700', 'fontSize': '40px', 'lineHeight': '1'},
-        'arrow_size': '24px',
-        'arrow_ml': '10px',
-        'body_padding': '24px 28px',
+        'value': {'fontWeight': '700', 'fontSize': 'clamp(22px, 6vw, 40px)', 'lineHeight': '1'},
+        'value_class': 'kpi-hero-value',
+        'arrow_size': 'clamp(14px, 3.5vw, 24px)',
+        'arrow_ml': 'clamp(4px, 1vw, 10px)',
+        'body_padding': 'clamp(14px, 3vw, 24px) clamp(12px, 2.5vw, 28px)',
     },
 }
 
@@ -246,7 +247,7 @@ def _kpi_header(kpi: dict) -> html.Div:
     return html.Div([
         html.Div(f'{_rank_label(kpi["full_ranks"])}績效', style=_TYPO['section_label']),
         html.Div(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
-    ], className='d-flex justify-content-between align-items-baseline mb-2')
+    ], className='d-flex justify-content-between align-items-baseline mb-2 kpi-header-strip')
 
 
 def _render_kpi_row(kpi: dict, size: str) -> dbc.Row:
@@ -287,7 +288,7 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None, size: str = 'compact'
         }
         if bold:
             arrow_style['fontWeight'] = '700'
-        arrow = html.Span(symbol, style=arrow_style)
+        arrow = html.Span(symbol, style=arrow_style, className='kpi-arrow')
 
     title_style = {'color': _COLOR['text_muted'], 'fontWeight': '500', **spec['title']}
     value_style = {'color': color, **spec['value']}
@@ -295,12 +296,12 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None, size: str = 'compact'
     return dbc.Col(
         dbc.Card(
             dbc.CardBody([
-                html.P(title, style=title_style),
+                html.P(title, style=title_style, className='kpi-title'),
                 html.Div([
-                    spec['value_tag'](display, style=value_style),
+                    spec['value_tag'](display, style=value_style, className=spec.get('value_class', '')),
                     arrow,
                 ], style={'display': 'flex', 'alignItems': 'center'}),
-            ], style={'padding': spec['body_padding']}),
+            ], style={'padding': spec['body_padding']}, className='kpi-card-body'),
             style=_CARD_STYLE,
         ),
         xs=6, lg=3,
@@ -341,12 +342,12 @@ def _build_tags(ranks_list: list) -> list:
     tags = []
     for ranks in (ranks_list or []):
         tags.append(html.Div([
-            html.Span(_rank_label(ranks), style={'fontSize': '13px', 'marginRight': '4px'}),
+            html.Span(_rank_label(ranks), style={'fontSize': 'clamp(11px, 2.5vw, 13px)', 'marginRight': '4px'}),
             html.Span(
                 '×',
                 id={'type': 'remove-rank', 'index': ranks},
                 n_clicks=0,
-                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': '14px', 'lineHeight': '1'},
+                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': 'clamp(12px, 2.5vw, 14px)', 'lineHeight': '1'},
             ),
         ], style={
             'backgroundColor': _COLOR['accent_bg'],
@@ -365,19 +366,13 @@ def _ranks_sort_key(r: str):
     return (0 if is_consec_from_1 else 1, len(nums), nums)
 
 
-def _compute_date_ticks(x_min, x_max):
-    delta_days = (x_max - x_min).days
-    if delta_days <= 14:
-        freq = 'D'
-    elif delta_days <= 60:
-        freq = 'W-MON'
-    elif delta_days <= 180:
-        freq = 'MS'
-    else:
-        freq = 'QS'
-    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
-    tickvals = sorted(set([x_min] + interior + [x_max]))
-    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+
+
+def _month_and_latest_ticks(timestamps):
+    x_min, x_max = timestamps.min(), timestamps.max()
+    firsts = pd.date_range(x_min.replace(day=1) + pd.DateOffset(months=1), x_max, freq='MS').tolist()
+    tickvals = sorted(set(firsts + [x_max]))
+    ticktext = [d.strftime('%m/01') if d.day == 1 else d.strftime('%m/%d') for d in tickvals]
     return tickvals, ticktext
 
 
@@ -386,7 +381,7 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
     fig = go.Figure()
 
     if not data:
-        fig.update_layout(height=500, title='尚無資料', plot_bgcolor='white')
+        fig.update_layout(height=300, title='尚無資料', plot_bgcolor='white')
         return fig
 
     for i, (ranks, df) in enumerate(sorted(data.items())):
@@ -403,34 +398,39 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
             hovertemplate=f'%{{x|%Y-%m-%d}}<br>{rl}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         ))
 
+    all_ts = pd.concat([df['timestamp'] for df in data.values()])
+    tickvals, ticktext = _month_and_latest_ticks(all_ts)
+
     fig.update_layout(
-        height=500,
-        margin=dict(l=60, r=20, t=30, b=40),
+        height=350,
+        margin=dict(l=0, r=0, t=30, b=0),
         plot_bgcolor='white',
         paper_bgcolor=_COLOR['transparent'],
-        yaxis_title=f'{label} (%)' if is_pct else label,
         legend=dict(
             orientation='h',
             yanchor='bottom',
             y=1.02,
             xanchor='left',
             x=0,
-            font=dict(size=16),
+            font=dict(size=12),
         ),
-        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=16),
-        yaxis=dict(title_font=dict(size=16)),
+        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=12),
     )
-    all_dates = pd.concat([df['timestamp'] for df in data.values()])
-    tickvals, ticktext = _compute_date_ticks(all_dates.min(), all_dates.max())
-
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
     fig.update_xaxes(
         showgrid=True, gridcolor=_COLOR['border'],
         tickmode='array', tickvals=tickvals, ticktext=ticktext,
-        tickfont=dict(size=16), tickangle=-30,
+        tickfont=dict(size=11), tickangle=0,
+        automargin=True,
     )
-    fig.update_yaxes(showgrid=True, gridcolor=_COLOR['border'], zeroline=True, zerolinecolor=_COLOR['grid_zero'], tickfont=dict(size=16))
+    fig.update_yaxes(
+        showgrid=True, gridcolor=_COLOR['border'],
+        zeroline=True, zerolinecolor=_COLOR['grid_zero'],
+        tickfont=dict(size=11),
+        ticklabelposition='inside top',
+        automargin=True,
+    )
 
     return fig
 
@@ -440,7 +440,7 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     fig = go.Figure()
 
     if df is None or df.empty:
-        fig.update_layout(height=400, title='尚無資料', plot_bgcolor='white')
+        fig.update_layout(height=300, title='尚無資料', plot_bgcolor='white')
         return fig
 
     y = df[metric] * 100 if is_pct else df[metric]
@@ -471,10 +471,10 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     fig.add_annotation(
         x=last_x, y=last_y,
         text=f'<b>{last_text}</b>',
-        xanchor='left', yanchor='middle',
-        xshift=14,
+        xanchor='center', yanchor='bottom',
+        yshift=12,
         showarrow=False,
-        font=dict(size=15, color=_COLOR['accent']),
+        font=dict(size=13, color=_COLOR['accent']),
     )
 
     fig.add_hline(
@@ -482,26 +482,30 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
         line=dict(color=_COLOR['text_disabled'], width=1, dash='dash'),
     )
 
+    tickvals, ticktext = _month_and_latest_ticks(df['timestamp'])
+
     fig.update_layout(
-        height=400,
-        margin=dict(l=60, r=90, t=20, b=40),
+        height=300,
+        margin=dict(l=0, r=0, t=10, b=0),
         plot_bgcolor='white',
         paper_bgcolor=_COLOR['transparent'],
-        yaxis_title=f'{label} (%)' if is_pct else label,
-        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=14),
-        yaxis=dict(title_font=dict(size=14)),
+        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=12),
     )
-
-    tickvals, ticktext = _compute_date_ticks(df['timestamp'].min(), df['timestamp'].max())
 
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
     fig.update_xaxes(
         showgrid=True, gridcolor=_COLOR['border'],
         tickmode='array', tickvals=tickvals, ticktext=ticktext,
-        tickfont=dict(size=13), tickangle=-30,
+        tickfont=dict(size=11), tickangle=0,
+        automargin=True,
     )
-    fig.update_yaxes(showgrid=True, gridcolor=_COLOR['border'], tickfont=dict(size=13))
+    fig.update_yaxes(
+        showgrid=True, gridcolor=_COLOR['border'],
+        tickfont=dict(size=11),
+        ticklabelposition='inside top',
+        automargin=True,
+    )
 
     return fig
 
@@ -564,16 +568,16 @@ def _recommendation_card(strategy: str):
             data=rows,
             **_TABLE_STYLE,
             style_cell_conditional=[
-                {'if': {'column_id': '#'},      'width': '50px',  'textAlign': 'center'},
-                {'if': {'column_id': '代號'},   'width': '90px',  'textAlign': 'center'},
-                {'if': {'column_id': '目標價'}, 'width': '110px', 'textAlign': 'right'},
+                {'if': {'column_id': '#'},      'width': '10%',  'textAlign': 'center'},
+                {'if': {'column_id': '代號'},   'width': '20%',  'textAlign': 'center'},
+                {'if': {'column_id': '目標價'}, 'width': '25%',  'textAlign': 'right'},
             ],
         )
     else:
         body = html.Div(
             '目前無推薦資料',
             className='text-muted text-center py-4',
-            style={'fontSize': '14px'},
+            style={'fontSize': 'clamp(12px, 2.5vw, 14px)'},
         )
 
     return dbc.Card(
@@ -587,8 +591,8 @@ def _simple_layout():
     strategy_options = [
         {
             'label': html.Span([
-                html.Span(_STRATEGY_META[s]['label'], style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
-                html.Span(sub, style={'fontSize': '12px', 'opacity': '0.75'}),
+                html.Span(_STRATEGY_META[s]['label'], style={'fontWeight': '600', 'display': 'block', 'fontSize': 'clamp(13px, 2.5vw, 15px)'}),
+                html.Span(sub, style={'fontSize': 'clamp(10px, 2vw, 12px)', 'opacity': '0.75'}),
             ]),
             'value': s,
         }
@@ -717,7 +721,7 @@ def _report_browser_layout(strategy: str):
         ),
         html.H5(
             title,
-            style={'fontWeight': '600', 'color': _COLOR['text_heading'], 'fontSize': '20px', 'marginBottom': '20px'},
+            style={'fontWeight': '600', 'color': _COLOR['text_heading'], 'fontSize': 'clamp(16px, 3vw, 20px)', 'marginBottom': '20px'},
         ),
         dbc.Row([
             dbc.Col([
@@ -757,8 +761,8 @@ def _report_browser_layout(strategy: str):
                     markdown_options={'link_target': '_blank'},
                     **_TABLE_STYLE,
                     style_cell_conditional=[
-                        {'if': {'column_id': 'date'},       'width': '130px'},
-                        {'if': {'column_id': 'link'},       'width': '80px', 'textAlign': 'center'},
+                        {'if': {'column_id': 'date'},       'width': '30%'},
+                        {'if': {'column_id': 'link'},       'width': '15%', 'textAlign': 'center'},
                     ],
                 ),
                 style=_CARD_BODY_STYLE,
@@ -819,6 +823,15 @@ app.index_string = '''
                 border-color: #1d4ed8;
                 color: #ffffff;
             }
+            @media (max-width: 576px) {
+                #simple-strategy,
+                #metric-selector { flex-direction: column; }
+                #simple-strategy .form-check,
+                #metric-selector .form-check { width: 100%; }
+                #simple-strategy .btn,
+                #metric-selector .btn { width: 100%; text-align: left; }
+                .container-fluid { padding-left: 12px; padding-right: 12px; }
+            }
         </style>
     </head>
     <body>
@@ -844,7 +857,7 @@ app.layout = html.Div(
             style={
                 'backgroundColor': 'white',
                 'borderBottom': _BORDER,
-                'padding': '0 24px',
+                'padding': '0 clamp(12px, 3vw, 24px)',
             },
         ),
 
@@ -883,7 +896,7 @@ _REPORT_PATH_TO_STRATEGY = {
 _TOGGLE_LINK_STYLE = {
     'color': _COLOR['text_muted'],
     'textDecoration': 'none',
-    'fontSize': '14px',
+    'fontSize': 'clamp(12px, 2.5vw, 14px)',
     'fontWeight': '500',
 }
 
@@ -903,19 +916,20 @@ def render_navbar(pathname):
         href='/',
         style={
             'fontWeight': '600', 'color': _COLOR['text_heading'],
-            'fontSize': '24px', 'textDecoration': 'none',
+            'fontSize': 'clamp(16px, 3.5vw, 24px)', 'textDecoration': 'none',
         },
+        className='navbar-brand',
     )
 
     if is_advanced:
         center = html.Div([
             dcc.Link('Weekly 報告', href='/reports/weekly/',
-                     className='btn btn-outline-secondary me-2'),
-            dcc.Link('Monthly 報告', href='/reports/monthly/',
-                     className='btn btn-outline-secondary me-2'),
+                     className='btn btn-outline-secondary'),
             dcc.Link('Weekly 4W 報告', href='/reports/weekly-4w/',
                      className='btn btn-outline-secondary'),
-        ], className='d-flex align-items-center')
+            dcc.Link('Monthly 報告', href='/reports/monthly/',
+                     className='btn btn-outline-secondary'),
+        ], className='d-flex align-items-center flex-wrap gap-2')
     else:
         center = None
 
@@ -931,7 +945,8 @@ def render_navbar(pathname):
         left_children.append(center)
     left_group = html.Div(
         left_children,
-        style={'display': 'flex', 'alignItems': 'center', 'gap': '32px'},
+        style={'display': 'flex', 'alignItems': 'center', 'gap': 'clamp(12px, 3vw, 32px)', 'flexWrap': 'wrap'},
+        className='navbar-inner',
     )
 
     return dbc.Container([
@@ -1017,7 +1032,7 @@ def update_simple_view(strategy, period):
         empty = html.Div(
             '目前尚無回測資料',
             className='text-center text-muted py-4',
-            style={'fontSize': '15px'},
+            style={'fontSize': 'clamp(13px, 2.5vw, 15px)'},
         )
         return empty, _build_simple_figure(None, 'annual_return')
 
@@ -1133,4 +1148,4 @@ server = flask_server
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8051)
+    app.run(debug=True, host='0.0.0.0', port=8051)
