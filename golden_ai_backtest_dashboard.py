@@ -482,8 +482,8 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     fig.add_annotation(
         x=last_x, y=last_y,
         text=f'<b>{last_text}</b>',
-        xanchor='center', yanchor='bottom',
-        yshift=12,
+        xanchor='left', yanchor='middle',
+        xshift=10,
         showarrow=False,
         font=dict(size=13, color=_COLOR['accent']),
     )
