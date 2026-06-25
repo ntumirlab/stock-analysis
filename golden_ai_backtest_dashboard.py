@@ -1,6 +1,7 @@
 import os
 import logging
 from urllib.parse import urlencode
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import dash
 from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
@@ -92,10 +93,10 @@ _FONT_FAMILY = 'system-ui, -apple-system, sans-serif'
 _BORDER = f"1px solid {_COLOR['border']}"
 
 _TYPO = {
-    'card_title':    {'fontSize': '18px', 'fontWeight': '600', 'color': _COLOR['text_heading']},
-    'section_label': {'fontSize': '18px', 'fontWeight': '500', 'color': _COLOR['text_secondary']},
+    'card_title':    {'fontSize': 'clamp(15px, 3vw, 18px)', 'fontWeight': '600', 'color': _COLOR['text_heading']},
+    'section_label': {'fontSize': 'clamp(13px, 3vw, 18px)', 'fontWeight': '500', 'color': _COLOR['text_secondary']},
     'form_label':    {'fontWeight': '500', 'color': _COLOR['text_secondary'], 'marginBottom': '6px', 'display': 'block'},
-    'muted':         {'fontSize': '13px', 'color': _COLOR['text_muted']},
+    'muted':         {'fontSize': 'clamp(11px, 2vw, 13px)', 'color': _COLOR['text_muted']},
 }
 
 _CARD_STYLE = {
@@ -104,14 +105,14 @@ _CARD_STYLE = {
     'border': 'none',
 }
 
-_CARD_BODY_STYLE = {'padding': '20px 24px'}
+_CARD_BODY_STYLE = {'padding': 'clamp(12px, 2.5vw, 20px) clamp(10px, 2vw, 24px)'}
 
 _TABLE_STYLE = {
     'style_table': {'overflowX': 'auto'},
     'style_cell': {
         'fontFamily': _FONT_FAMILY,
-        'fontSize': '14px',
-        'padding': '10px 16px',
+        'fontSize': 'clamp(12px, 2.5vw, 14px)',
+        'padding': 'clamp(6px, 1.5vw, 10px) clamp(8px, 2vw, 16px)',
         'textAlign': 'left',
         'color': _COLOR['text_secondary'],
         'border': _BORDER,
@@ -199,22 +200,23 @@ def _latest_kpi(strategy: str, df_normalized=None) -> dict:
 _KPI_CARD_SIZES = {
     'compact': {
         'title': {
-            'fontSize': '16px', 'marginBottom': '6px',
+            'fontSize': 'clamp(12px, 2.5vw, 16px)', 'marginBottom': '6px',
             'textTransform': 'uppercase', 'letterSpacing': '0.05em',
         },
         'value_tag': html.H3,
-        'value': {'fontWeight': '700', 'marginBottom': '0', 'display': 'inline'},
-        'arrow_size': '16px',
+        'value': {'fontWeight': '700', 'marginBottom': '0', 'display': 'inline', 'fontSize': 'clamp(18px, 4vw, 24px)'},
+        'arrow_size': 'clamp(12px, 2.5vw, 16px)',
         'arrow_ml': '6px',
-        'body_padding': '20px 24px',
+        'body_padding': 'clamp(12px, 2.5vw, 20px) clamp(10px, 2vw, 24px)',
     },
     'hero': {
-        'title': {'fontSize': '15px', 'marginBottom': '14px'},
+        'title': {'fontSize': 'clamp(12px, 2.5vw, 15px)', 'marginBottom': 'clamp(6px, 1.5vw, 14px)'},
         'value_tag': html.Span,
-        'value': {'fontWeight': '700', 'fontSize': '40px', 'lineHeight': '1'},
-        'arrow_size': '24px',
-        'arrow_ml': '10px',
-        'body_padding': '24px 28px',
+        'value': {'fontWeight': '700', 'fontSize': 'clamp(22px, 6vw, 40px)', 'lineHeight': '1'},
+        'value_class': 'kpi-hero-value',
+        'arrow_size': 'clamp(14px, 3.5vw, 24px)',
+        'arrow_ml': 'clamp(4px, 1vw, 10px)',
+        'body_padding': 'clamp(14px, 3vw, 24px) clamp(12px, 2.5vw, 28px)',
     },
 }
 
@@ -241,12 +243,22 @@ def _kpi_title(metric: str, size: str) -> str:
     return base
 
 
-def _kpi_header(kpi: dict) -> html.Div:
+def _kpi_header(kpi: dict, show_button: bool = True) -> html.Div:
     """Header strip above KPI cards: '第 1~8 支績效' on the left, latest-backtest date on the right."""
+    right_children = [
+        html.Span(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
+    ]
+    if show_button:
+        right_children.append(html.Button(
+            '下載報告',
+            id='print-btn',
+            className='btn btn-outline-secondary btn-sm',
+            style={'whiteSpace': 'nowrap', 'marginLeft': '12px', 'fontSize': 'clamp(11px, 2vw, 13px)'},
+        ))
     return html.Div([
         html.Div(f'{_rank_label(kpi["full_ranks"])}績效', style=_TYPO['section_label']),
-        html.Div(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
-    ], className='d-flex justify-content-between align-items-baseline mb-2')
+        html.Div(right_children, style={'display': 'flex', 'alignItems': 'center'}),
+    ], className='d-flex justify-content-between align-items-center mb-2 kpi-header-strip')
 
 
 def _render_kpi_row(kpi: dict, size: str) -> dbc.Row:
@@ -287,7 +299,7 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None, size: str = 'compact'
         }
         if bold:
             arrow_style['fontWeight'] = '700'
-        arrow = html.Span(symbol, style=arrow_style)
+        arrow = html.Span(symbol, style=arrow_style, className='kpi-arrow')
 
     title_style = {'color': _COLOR['text_muted'], 'fontWeight': '500', **spec['title']}
     value_style = {'color': color, **spec['value']}
@@ -295,12 +307,12 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None, size: str = 'compact'
     return dbc.Col(
         dbc.Card(
             dbc.CardBody([
-                html.P(title, style=title_style),
+                html.P(title, style=title_style, className='kpi-title'),
                 html.Div([
-                    spec['value_tag'](display, style=value_style),
+                    spec['value_tag'](display, style=value_style, className=spec.get('value_class', '')),
                     arrow,
                 ], style={'display': 'flex', 'alignItems': 'center'}),
-            ], style={'padding': spec['body_padding']}),
+            ], style={'padding': spec['body_padding']}, className='kpi-card-body'),
             style=_CARD_STYLE,
         ),
         xs=6, lg=3,
@@ -341,12 +353,12 @@ def _build_tags(ranks_list: list) -> list:
     tags = []
     for ranks in (ranks_list or []):
         tags.append(html.Div([
-            html.Span(_rank_label(ranks), style={'fontSize': '13px', 'marginRight': '4px'}),
+            html.Span(_rank_label(ranks), style={'fontSize': 'clamp(11px, 2.5vw, 13px)', 'marginRight': '4px'}),
             html.Span(
                 '×',
                 id={'type': 'remove-rank', 'index': ranks},
                 n_clicks=0,
-                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': '14px', 'lineHeight': '1'},
+                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': 'clamp(12px, 2.5vw, 14px)', 'lineHeight': '1'},
             ),
         ], style={
             'backgroundColor': _COLOR['accent_bg'],
@@ -365,28 +377,22 @@ def _ranks_sort_key(r: str):
     return (0 if is_consec_from_1 else 1, len(nums), nums)
 
 
-def _compute_date_ticks(x_min, x_max):
-    delta_days = (x_max - x_min).days
-    if delta_days <= 14:
-        freq = 'D'
-    elif delta_days <= 60:
-        freq = 'W-MON'
-    elif delta_days <= 180:
-        freq = 'MS'
-    else:
-        freq = 'QS'
-    interior = pd.date_range(x_min, x_max, freq=freq).tolist()
-    tickvals = sorted(set([x_min] + interior + [x_max]))
-    ticktext = [d.strftime('%Y-%m-%d') for d in tickvals]
+
+
+def _month_and_latest_ticks(timestamps):
+    x_min, x_max = timestamps.min(), timestamps.max()
+    firsts = pd.date_range(x_min.replace(day=1) + pd.DateOffset(months=1), x_max, freq='MS').tolist()
+    tickvals = sorted(set(firsts + [x_max]))
+    ticktext = [d.strftime('%m/01') if d.day == 1 else d.strftime('%m/%d') for d in tickvals]
     return tickvals, ticktext
 
 
 def _build_figure(data: dict, metric: str) -> go.Figure:
-    label, is_pct = _METRIC_META[metric]
+    _, is_pct = _METRIC_META[metric]
     fig = go.Figure()
 
     if not data:
-        fig.update_layout(height=500, title='尚無資料', plot_bgcolor='white')
+        fig.update_layout(height=300, title='尚無資料', plot_bgcolor='white')
         return fig
 
     for i, (ranks, df) in enumerate(sorted(data.items())):
@@ -403,34 +409,39 @@ def _build_figure(data: dict, metric: str) -> go.Figure:
             hovertemplate=f'%{{x|%Y-%m-%d}}<br>{rl}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         ))
 
+    all_ts = pd.concat([df['timestamp'] for df in data.values()])
+    tickvals, ticktext = _month_and_latest_ticks(all_ts)
+
     fig.update_layout(
-        height=500,
-        margin=dict(l=60, r=20, t=30, b=40),
+        height=350,
+        margin=dict(l=0, r=0, t=30, b=0),
         plot_bgcolor='white',
         paper_bgcolor=_COLOR['transparent'],
-        yaxis_title=f'{label} (%)' if is_pct else label,
         legend=dict(
             orientation='h',
             yanchor='bottom',
             y=1.02,
             xanchor='left',
             x=0,
-            font=dict(size=16),
+            font=dict(size=12),
         ),
-        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=16),
-        yaxis=dict(title_font=dict(size=16)),
+        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=12),
     )
-    all_dates = pd.concat([df['timestamp'] for df in data.values()])
-    tickvals, ticktext = _compute_date_ticks(all_dates.min(), all_dates.max())
-
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
     fig.update_xaxes(
         showgrid=True, gridcolor=_COLOR['border'],
         tickmode='array', tickvals=tickvals, ticktext=ticktext,
-        tickfont=dict(size=16), tickangle=-30,
+        tickfont=dict(size=11), tickangle=0,
+        automargin=True,
     )
-    fig.update_yaxes(showgrid=True, gridcolor=_COLOR['border'], zeroline=True, zerolinecolor=_COLOR['grid_zero'], tickfont=dict(size=16))
+    fig.update_yaxes(
+        showgrid=True, gridcolor=_COLOR['border'],
+        zeroline=True, zerolinecolor=_COLOR['grid_zero'],
+        tickfont=dict(size=11),
+        ticklabelposition='inside top',
+        automargin=True,
+    )
 
     return fig
 
@@ -440,7 +451,7 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     fig = go.Figure()
 
     if df is None or df.empty:
-        fig.update_layout(height=400, title='尚無資料', plot_bgcolor='white')
+        fig.update_layout(height=300, title='尚無資料', plot_bgcolor='white')
         return fig
 
     y = df[metric] * 100 if is_pct else df[metric]
@@ -471,10 +482,10 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     fig.add_annotation(
         x=last_x, y=last_y,
         text=f'<b>{last_text}</b>',
-        xanchor='left', yanchor='middle',
-        xshift=14,
+        xanchor='center', yanchor='bottom',
+        yshift=12,
         showarrow=False,
-        font=dict(size=15, color=_COLOR['accent']),
+        font=dict(size=13, color=_COLOR['accent']),
     )
 
     fig.add_hline(
@@ -482,26 +493,30 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
         line=dict(color=_COLOR['text_disabled'], width=1, dash='dash'),
     )
 
+    tickvals, ticktext = _month_and_latest_ticks(df['timestamp'])
+
     fig.update_layout(
-        height=400,
-        margin=dict(l=60, r=90, t=20, b=40),
+        height=250,
+        margin=dict(l=0, r=0, t=10, b=0),
         plot_bgcolor='white',
         paper_bgcolor=_COLOR['transparent'],
-        yaxis_title=f'{label} (%)' if is_pct else label,
-        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=14),
-        yaxis=dict(title_font=dict(size=14)),
+        font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=12),
     )
-
-    tickvals, ticktext = _compute_date_ticks(df['timestamp'].min(), df['timestamp'].max())
 
     if is_pct:
         fig.update_yaxes(ticksuffix='%')
     fig.update_xaxes(
         showgrid=True, gridcolor=_COLOR['border'],
         tickmode='array', tickvals=tickvals, ticktext=ticktext,
-        tickfont=dict(size=13), tickangle=-30,
+        tickfont=dict(size=11), tickangle=0,
+        automargin=True,
     )
-    fig.update_yaxes(showgrid=True, gridcolor=_COLOR['border'], tickfont=dict(size=13))
+    fig.update_yaxes(
+        showgrid=True, gridcolor=_COLOR['border'],
+        tickfont=dict(size=11),
+        ticklabelposition='inside top',
+        automargin=True,
+    )
 
     return fig
 
@@ -564,16 +579,16 @@ def _recommendation_card(strategy: str):
             data=rows,
             **_TABLE_STYLE,
             style_cell_conditional=[
-                {'if': {'column_id': '#'},      'width': '50px',  'textAlign': 'center'},
-                {'if': {'column_id': '代號'},   'width': '90px',  'textAlign': 'center'},
-                {'if': {'column_id': '目標價'}, 'width': '110px', 'textAlign': 'right'},
+                {'if': {'column_id': '#'},      'width': '10%',  'textAlign': 'center'},
+                {'if': {'column_id': '代號'},   'width': '20%',  'textAlign': 'center'},
+                {'if': {'column_id': '目標價'}, 'width': '25%',  'textAlign': 'right'},
             ],
         )
     else:
         body = html.Div(
             '目前無推薦資料',
             className='text-muted text-center py-4',
-            style={'fontSize': '14px'},
+            style={'fontSize': 'clamp(12px, 2.5vw, 14px)'},
         )
 
     return dbc.Card(
@@ -587,8 +602,8 @@ def _simple_layout():
     strategy_options = [
         {
             'label': html.Span([
-                html.Span(_STRATEGY_META[s]['label'], style={'fontWeight': '600', 'display': 'block', 'fontSize': '15px'}),
-                html.Span(sub, style={'fontSize': '12px', 'opacity': '0.75'}),
+                html.Span(_STRATEGY_META[s]['label'], style={'fontWeight': '600', 'display': 'block', 'fontSize': 'clamp(13px, 2.5vw, 15px)'}),
+                html.Span(sub, style={'fontSize': 'clamp(10px, 2vw, 12px)', 'opacity': '0.75'}),
             ]),
             'value': s,
         }
@@ -598,6 +613,8 @@ def _simple_layout():
     period_options = [{'label': k, 'value': k} for k in _PERIOD_MONTHS]
 
     return dbc.Container([
+        html.Div(id='print-header', className='print-header'),
+
         dbc.RadioItems(
             id='simple-strategy',
             options=strategy_options,
@@ -623,9 +640,21 @@ def _simple_layout():
                         labelClassName='btn btn-outline-secondary btn-sm',
                         labelCheckedClassName='active',
                         inline=True,
+                        className='print-hide',
                     ),
                 ], className='d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2'),
-                dcc.Graph(id='simple-graph', config={'displayModeBar': False}),
+                dcc.Graph(
+                    id='simple-graph',
+                    config={
+                        'displayModeBar': False,
+                        'responsive': True,
+                    },
+                    responsive=True,
+                    style={
+                        'width': '100%',
+                        'minWidth': 0,
+                    },
+                ),
             ], style=_CARD_BODY_STYLE),
         ], style=_CARD_STYLE, className='mb-3'),
 
@@ -717,7 +746,7 @@ def _report_browser_layout(strategy: str):
         ),
         html.H5(
             title,
-            style={'fontWeight': '600', 'color': _COLOR['text_heading'], 'fontSize': '20px', 'marginBottom': '20px'},
+            style={'fontWeight': '600', 'color': _COLOR['text_heading'], 'fontSize': 'clamp(16px, 3vw, 20px)', 'marginBottom': '20px'},
         ),
         dbc.Row([
             dbc.Col([
@@ -757,8 +786,8 @@ def _report_browser_layout(strategy: str):
                     markdown_options={'link_target': '_blank'},
                     **_TABLE_STYLE,
                     style_cell_conditional=[
-                        {'if': {'column_id': 'date'},       'width': '130px'},
-                        {'if': {'column_id': 'link'},       'width': '80px', 'textAlign': 'center'},
+                        {'if': {'column_id': 'date'},       'width': '30%'},
+                        {'if': {'column_id': 'link'},       'width': '15%', 'textAlign': 'center'},
                     ],
                 ),
                 style=_CARD_BODY_STYLE,
@@ -819,6 +848,87 @@ app.index_string = '''
                 border-color: #1d4ed8;
                 color: #ffffff;
             }
+            .print-header { display: none; }
+            @media print {
+                @page { size: A4 portrait; margin: 12mm 15mm; }
+                html, body, #app-root, #react-entry-point, #_dash-app-content,
+                #page-content, .container-fluid {
+                    background: white !important; background-color: white !important;
+                }
+                #app-root { min-height: auto !important; }
+                body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                #navbar, #simple-strategy,
+                #print-btn, .print-hide, .kpi-header-strip,
+                .dash-debug-menu { display: none !important; }
+
+                /* ── Header ── */
+                .print-header {
+                    display: block !important;
+                    font-size: 15px; font-weight: 700;
+                    padding-bottom: 6px; margin-bottom: 11px;
+                    border-bottom: 2px solid #1d4ed8;
+                }
+                .print-header .print-sub {
+                    font-size: 11px; font-weight: 400; color: #6b7280; margin-top: 1px;
+                }
+
+                /* ── Layout reset ── */
+                .container-fluid { padding: 0 !important; max-width: 100% !important; }
+                .mb-3 { margin-bottom: 15px !important; }
+                .mb-4 { margin-bottom: 15px !important; }
+                .d-flex.align-items-start.gap-3 { gap: 0 !important; }
+
+                /* ── KPI strip: 4-across, no card borders ── */
+                .g-3 {
+                    --bs-gutter-x: 0 !important; --bs-gutter-y: 0 !important;
+                    display: flex !important; flex-wrap: nowrap !important;
+                    border-bottom: 1px solid #d1d5db;
+                    padding: 15px 0 13px !important; margin: 0 !important;
+                }
+                .g-3 > * {
+                    flex: 0 0 25% !important; max-width: 25% !important;
+                    padding: 0 !important;
+                }
+                .card {
+                    box-shadow: none !important; border: none !important;
+                    border-radius: 0 !important; background: white !important;
+                    break-inside: avoid;
+                }
+                .kpi-card-body { padding: 0 6px !important; }
+                .kpi-title {
+                    font-size: 10px !important; margin-bottom: 1px !important;
+                    text-transform: uppercase !important; letter-spacing: 0.03em !important;
+                }
+                .kpi-hero-value { font-size: 20px !important; }
+                .kpi-arrow { font-size: 11px !important; margin-left: 3px !important; }
+
+                /* ── Chart section: no card wrapper ── */
+                .card.mb-3 { border: none !important; margin-top: 9px !important; }
+                .card.mb-3 .card-body { padding: 4px 0 0 !important; }
+
+                /* ── Recommendation table ── */
+                #simple-recommendations .card {
+                    border: none !important; margin-top: 13px !important;
+                    border-top: 1px solid #d1d5db !important; border-radius: 0 !important;
+                }
+                #simple-recommendations .card-body { padding: 8px 0 0 !important; }
+                #simple-recommendations .dash-table-container { font-size: 11px !important; }
+                #simple-recommendations td, #simple-recommendations th {
+                    padding: 4px 8px !important; font-size: 11px !important;
+                }
+
+                /* ── Plotly ── */
+                .js-plotly-plot { break-inside: avoid; width: 100% !important; }
+            }
+            @media (max-width: 576px) {
+                #simple-strategy,
+                #metric-selector { flex-direction: column; }
+                #simple-strategy .form-check,
+                #metric-selector .form-check { width: 100%; }
+                #simple-strategy .btn,
+                #metric-selector .btn { width: 100%; text-align: left; }
+                .container-fluid { padding-left: 12px; padding-right: 12px; }
+            }
         </style>
     </head>
     <body>
@@ -833,6 +943,7 @@ app.index_string = '''
 '''
 
 app.layout = html.Div(
+    id='app-root',
     style={'backgroundColor': _COLOR['bg_page'], 'minHeight': '100vh'},
     children=[
         dcc.Location(id='url', refresh=False),
@@ -844,7 +955,7 @@ app.layout = html.Div(
             style={
                 'backgroundColor': 'white',
                 'borderBottom': _BORDER,
-                'padding': '0 24px',
+                'padding': '0 clamp(12px, 3vw, 24px)',
             },
         ),
 
@@ -883,7 +994,7 @@ _REPORT_PATH_TO_STRATEGY = {
 _TOGGLE_LINK_STYLE = {
     'color': _COLOR['text_muted'],
     'textDecoration': 'none',
-    'fontSize': '14px',
+    'fontSize': 'clamp(12px, 2.5vw, 14px)',
     'fontWeight': '500',
 }
 
@@ -903,19 +1014,20 @@ def render_navbar(pathname):
         href='/',
         style={
             'fontWeight': '600', 'color': _COLOR['text_heading'],
-            'fontSize': '24px', 'textDecoration': 'none',
+            'fontSize': 'clamp(16px, 3.5vw, 24px)', 'textDecoration': 'none',
         },
+        className='navbar-brand',
     )
 
     if is_advanced:
         center = html.Div([
             dcc.Link('Weekly 報告', href='/reports/weekly/',
-                     className='btn btn-outline-secondary me-2'),
-            dcc.Link('Monthly 報告', href='/reports/monthly/',
-                     className='btn btn-outline-secondary me-2'),
+                     className='btn btn-outline-secondary'),
             dcc.Link('Weekly 4W 報告', href='/reports/weekly-4w/',
                      className='btn btn-outline-secondary'),
-        ], className='d-flex align-items-center')
+            dcc.Link('Monthly 報告', href='/reports/monthly/',
+                     className='btn btn-outline-secondary'),
+        ], className='d-flex align-items-center flex-wrap gap-2')
     else:
         center = None
 
@@ -931,7 +1043,8 @@ def render_navbar(pathname):
         left_children.append(center)
     left_group = html.Div(
         left_children,
-        style={'display': 'flex', 'alignItems': 'center', 'gap': '32px'},
+        style={'display': 'flex', 'alignItems': 'center', 'gap': 'clamp(12px, 3vw, 32px)', 'flexWrap': 'wrap'},
+        className='navbar-inner',
     )
 
     return dbc.Container([
@@ -1004,6 +1117,7 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
 @app.callback(
     Output('simple-kpi-row', 'children'),
     Output('simple-graph', 'figure'),
+    Output('print-header', 'children'),
     Input('simple-strategy', 'value'),
     Input('simple-period', 'value'),
 )
@@ -1011,26 +1125,33 @@ def update_simple_view(strategy, period):
     strategy = strategy or 'weekly'
     period = period or '3M'
 
+    label = _STRATEGY_META.get(strategy, {}).get('label', strategy)
+    date_str = datetime.now(_TZ).strftime('%Y-%m-%d')
+    print_header = [
+        html.Span(f'金策智能 — 台股{label}'),
+        html.Div(f'區間：{period} ｜ 產出日期：{date_str}', className='print-sub'),
+    ]
+
     df_norm = _normalized(strategy)
     kpi = _latest_kpi(strategy, df_normalized=df_norm)
     if not kpi:
         empty = html.Div(
             '目前尚無回測資料',
             className='text-center text-muted py-4',
-            style={'fontSize': '15px'},
+            style={'fontSize': 'clamp(13px, 2.5vw, 15px)'},
         )
-        return empty, _build_simple_figure(None, 'annual_return')
+        return empty, _build_simple_figure(None, 'annual_return'), print_header
 
     months = _PERIOD_MONTHS.get(period, 3)
     data = _load_all(strategy, months=months, df_normalized=df_norm)
     chart_df = None
     if data:
-        full_ranks = _longest_ranks(data.keys())
+        full_ranks = kpi['full_ranks'] if kpi['full_ranks'] in data else _longest_ranks(data.keys())
         chart_df = data[full_ranks]
 
     fig = _build_simple_figure(chart_df, 'annual_return')
 
-    return [_kpi_header(kpi), _render_kpi_row(kpi, size='hero')], fig
+    return [_kpi_header(kpi), _render_kpi_row(kpi, size='hero')], fig, print_header
 
 
 @app.callback(
@@ -1045,16 +1166,6 @@ def update_simple_recommendations(strategy):
 
 @app.callback(
     Output('kpi-row', 'children'),
-    Input('strategy-dropdown', 'value'),
-)
-def update_kpi(strategy):
-    kpi = _latest_kpi(strategy)
-    if not kpi:
-        return []
-    return [_kpi_header(kpi), _render_kpi_row(kpi, size='compact')]
-
-
-@app.callback(
     Output('displayed-ranks', 'data'),
     Output('rank-tags', 'children'),
     Output('metrics-graph', 'figure'),
@@ -1070,32 +1181,34 @@ def update_main(strategy, metric, confirm_n, _remove_n_list, picker_value, curre
     strategy = strategy or 'weekly'
     metric = metric or 'annual_return'
 
-    d = _load_all(strategy)
+    df_norm = _normalized(strategy)
+    d = _load_all(strategy, df_normalized=df_norm)
 
     def _fig(ranks_list):
         filtered = {r: df for r, df in d.items() if r in (ranks_list or [])}
         return _build_figure(filtered, metric)
 
-    if current_ranks is None:
+    if current_ranks is None or triggered == 'strategy-dropdown':
+        kpi = _latest_kpi(strategy, df_normalized=df_norm)
+        kpi_children = [_kpi_header(kpi, show_button=False), _render_kpi_row(kpi, size='compact')] if kpi else []
         full = _longest_ranks(d.keys()) if d else None
         new_ranks = [full] if full else []
-        return new_ranks, _build_tags(new_ranks), _fig(new_ranks)
+        return kpi_children, new_ranks, _build_tags(new_ranks), _fig(new_ranks)
 
     if triggered == 'confirm-rank-modal' and confirm_n:
         if picker_value:
-            return picker_value, _build_tags(picker_value), _fig(picker_value)
-        return dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, picker_value, _build_tags(picker_value), _fig(picker_value)
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
     if isinstance(triggered, dict) and triggered.get('type') == 'remove-rank':
         if not any(_remove_n_list):
-            # remove-rank components just appeared in layout (n_clicks=0), not actually clicked
-            return dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         rank_to_remove = triggered['index']
         new_ranks = [r for r in current_ranks if r != rank_to_remove]
-        return new_ranks, _build_tags(new_ranks), _fig(new_ranks)
+        return dash.no_update, new_ranks, _build_tags(new_ranks), _fig(new_ranks)
 
-    # strategy-dropdown or metric-selector triggered (change or navigation back)
-    return dash.no_update, _build_tags(current_ranks), _fig(current_ranks)
+    # metric-selector triggered
+    return dash.no_update, dash.no_update, _build_tags(current_ranks), _fig(current_ranks)
 
 
 @app.callback(
@@ -1129,8 +1242,42 @@ def update_advanced_recommendations(strategy):
     return _recommendation_card(strategy or 'weekly')
 
 
+app.clientside_callback(
+    """
+    function(n) {
+        if (!n) return window.dash_clientside.no_update;
+
+        var root = document.getElementById('app-root');
+        var origStyle = root.style.cssText;
+        root.style.background = 'white';
+        root.style.minHeight = 'auto';
+        root.style.maxWidth = '680px';
+
+        window.dispatchEvent(new Event('resize'));
+
+        setTimeout(function() {
+            var hdr = document.getElementById('print-header');
+            var title = hdr ? hdr.textContent.trim().split('\\n')[0] : 'GoldenAI';
+            var prevTitle = document.title;
+            document.title = title;
+
+            window.print();
+
+            document.title = prevTitle;
+            root.style.cssText = origStyle;
+            window.dispatchEvent(new Event('resize'));
+        }, 400);
+
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('print-btn', 'className'),
+    Input('print-btn', 'n_clicks'),
+    prevent_initial_call=True,
+)
+
 server = flask_server
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8051)
+    app.run(debug=True, host='0.0.0.0', port=8051)
