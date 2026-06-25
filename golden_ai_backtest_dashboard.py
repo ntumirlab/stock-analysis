@@ -1,6 +1,7 @@
 import os
 import logging
 from urllib.parse import urlencode
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import dash
 from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
@@ -242,12 +243,22 @@ def _kpi_title(metric: str, size: str) -> str:
     return base
 
 
-def _kpi_header(kpi: dict) -> html.Div:
+def _kpi_header(kpi: dict, show_button: bool = True) -> html.Div:
     """Header strip above KPI cards: '第 1~8 支績效' on the left, latest-backtest date on the right."""
+    right_children = [
+        html.Span(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
+    ]
+    if show_button:
+        right_children.append(html.Button(
+            '下載報告',
+            id='print-btn',
+            className='btn btn-outline-secondary btn-sm',
+            style={'whiteSpace': 'nowrap', 'marginLeft': '12px', 'fontSize': 'clamp(11px, 2vw, 13px)'},
+        ))
     return html.Div([
         html.Div(f'{_rank_label(kpi["full_ranks"])}績效', style=_TYPO['section_label']),
-        html.Div(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
-    ], className='d-flex justify-content-between align-items-baseline mb-2 kpi-header-strip')
+        html.Div(right_children, style={'display': 'flex', 'alignItems': 'center'}),
+    ], className='d-flex justify-content-between align-items-center mb-2 kpi-header-strip')
 
 
 def _render_kpi_row(kpi: dict, size: str) -> dbc.Row:
@@ -377,7 +388,7 @@ def _month_and_latest_ticks(timestamps):
 
 
 def _build_figure(data: dict, metric: str) -> go.Figure:
-    label, is_pct = _METRIC_META[metric]
+    _, is_pct = _METRIC_META[metric]
     fig = go.Figure()
 
     if not data:
@@ -485,7 +496,7 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
     tickvals, ticktext = _month_and_latest_ticks(df['timestamp'])
 
     fig.update_layout(
-        height=300,
+        height=250,
         margin=dict(l=0, r=0, t=10, b=0),
         plot_bgcolor='white',
         paper_bgcolor=_COLOR['transparent'],
@@ -602,6 +613,8 @@ def _simple_layout():
     period_options = [{'label': k, 'value': k} for k in _PERIOD_MONTHS]
 
     return dbc.Container([
+        html.Div(id='print-header', className='print-header'),
+
         dbc.RadioItems(
             id='simple-strategy',
             options=strategy_options,
@@ -627,9 +640,21 @@ def _simple_layout():
                         labelClassName='btn btn-outline-secondary btn-sm',
                         labelCheckedClassName='active',
                         inline=True,
+                        className='print-hide',
                     ),
                 ], className='d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2'),
-                dcc.Graph(id='simple-graph', config={'displayModeBar': False}),
+                dcc.Graph(
+                    id='simple-graph',
+                    config={
+                        'displayModeBar': False,
+                        'responsive': True,
+                    },
+                    responsive=True,
+                    style={
+                        'width': '100%',
+                        'minWidth': 0,
+                    },
+                ),
             ], style=_CARD_BODY_STYLE),
         ], style=_CARD_STYLE, className='mb-3'),
 
@@ -823,6 +848,78 @@ app.index_string = '''
                 border-color: #1d4ed8;
                 color: #ffffff;
             }
+            .print-header { display: none; }
+            @media print {
+                @page { size: A4 portrait; margin: 12mm 15mm; }
+                html, body, #app-root, #react-entry-point, #_dash-app-content,
+                #page-content, .container-fluid {
+                    background: white !important; background-color: white !important;
+                }
+                #app-root { min-height: auto !important; }
+                body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                #navbar, #simple-strategy,
+                #print-btn, .print-hide, .kpi-header-strip,
+                .dash-debug-menu { display: none !important; }
+
+                /* ── Header ── */
+                .print-header {
+                    display: block !important;
+                    font-size: 15px; font-weight: 700;
+                    padding-bottom: 6px; margin-bottom: 11px;
+                    border-bottom: 2px solid #1d4ed8;
+                }
+                .print-header .print-sub {
+                    font-size: 11px; font-weight: 400; color: #6b7280; margin-top: 1px;
+                }
+
+                /* ── Layout reset ── */
+                .container-fluid { padding: 0 !important; max-width: 100% !important; }
+                .mb-3 { margin-bottom: 15px !important; }
+                .mb-4 { margin-bottom: 15px !important; }
+                .d-flex.align-items-start.gap-3 { gap: 0 !important; }
+
+                /* ── KPI strip: 4-across, no card borders ── */
+                .g-3 {
+                    --bs-gutter-x: 0 !important; --bs-gutter-y: 0 !important;
+                    display: flex !important; flex-wrap: nowrap !important;
+                    border-bottom: 1px solid #d1d5db;
+                    padding: 15px 0 13px !important; margin: 0 !important;
+                }
+                .g-3 > * {
+                    flex: 0 0 25% !important; max-width: 25% !important;
+                    padding: 0 !important;
+                }
+                .card {
+                    box-shadow: none !important; border: none !important;
+                    border-radius: 0 !important; background: white !important;
+                    break-inside: avoid;
+                }
+                .kpi-card-body { padding: 0 6px !important; }
+                .kpi-title {
+                    font-size: 10px !important; margin-bottom: 1px !important;
+                    text-transform: uppercase !important; letter-spacing: 0.03em !important;
+                }
+                .kpi-hero-value { font-size: 20px !important; }
+                .kpi-arrow { font-size: 11px !important; margin-left: 3px !important; }
+
+                /* ── Chart section: no card wrapper ── */
+                .card.mb-3 { border: none !important; margin-top: 9px !important; }
+                .card.mb-3 .card-body { padding: 4px 0 0 !important; }
+
+                /* ── Recommendation table ── */
+                #simple-recommendations .card {
+                    border: none !important; margin-top: 13px !important;
+                    border-top: 1px solid #d1d5db !important; border-radius: 0 !important;
+                }
+                #simple-recommendations .card-body { padding: 8px 0 0 !important; }
+                #simple-recommendations .dash-table-container { font-size: 11px !important; }
+                #simple-recommendations td, #simple-recommendations th {
+                    padding: 4px 8px !important; font-size: 11px !important;
+                }
+
+                /* ── Plotly ── */
+                .js-plotly-plot { break-inside: avoid; width: 100% !important; }
+            }
             @media (max-width: 576px) {
                 #simple-strategy,
                 #metric-selector { flex-direction: column; }
@@ -846,6 +943,7 @@ app.index_string = '''
 '''
 
 app.layout = html.Div(
+    id='app-root',
     style={'backgroundColor': _COLOR['bg_page'], 'minHeight': '100vh'},
     children=[
         dcc.Location(id='url', refresh=False),
@@ -1019,12 +1117,20 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
 @app.callback(
     Output('simple-kpi-row', 'children'),
     Output('simple-graph', 'figure'),
+    Output('print-header', 'children'),
     Input('simple-strategy', 'value'),
     Input('simple-period', 'value'),
 )
 def update_simple_view(strategy, period):
     strategy = strategy or 'weekly'
     period = period or '3M'
+
+    label = _STRATEGY_META.get(strategy, {}).get('label', strategy)
+    date_str = datetime.now(_TZ).strftime('%Y-%m-%d')
+    print_header = [
+        html.Span(f'金策智能 — 台股{label}'),
+        html.Div(f'區間：{period} ｜ 產出日期：{date_str}', className='print-sub'),
+    ]
 
     df_norm = _normalized(strategy)
     kpi = _latest_kpi(strategy, df_normalized=df_norm)
@@ -1034,18 +1140,18 @@ def update_simple_view(strategy, period):
             className='text-center text-muted py-4',
             style={'fontSize': 'clamp(13px, 2.5vw, 15px)'},
         )
-        return empty, _build_simple_figure(None, 'annual_return')
+        return empty, _build_simple_figure(None, 'annual_return'), print_header
 
     months = _PERIOD_MONTHS.get(period, 3)
     data = _load_all(strategy, months=months, df_normalized=df_norm)
     chart_df = None
     if data:
-        full_ranks = _longest_ranks(data.keys())
+        full_ranks = kpi['full_ranks'] if kpi['full_ranks'] in data else _longest_ranks(data.keys())
         chart_df = data[full_ranks]
 
     fig = _build_simple_figure(chart_df, 'annual_return')
 
-    return [_kpi_header(kpi), _render_kpi_row(kpi, size='hero')], fig
+    return [_kpi_header(kpi), _render_kpi_row(kpi, size='hero')], fig, print_header
 
 
 @app.callback(
@@ -1060,16 +1166,6 @@ def update_simple_recommendations(strategy):
 
 @app.callback(
     Output('kpi-row', 'children'),
-    Input('strategy-dropdown', 'value'),
-)
-def update_kpi(strategy):
-    kpi = _latest_kpi(strategy)
-    if not kpi:
-        return []
-    return [_kpi_header(kpi), _render_kpi_row(kpi, size='compact')]
-
-
-@app.callback(
     Output('displayed-ranks', 'data'),
     Output('rank-tags', 'children'),
     Output('metrics-graph', 'figure'),
@@ -1085,32 +1181,34 @@ def update_main(strategy, metric, confirm_n, _remove_n_list, picker_value, curre
     strategy = strategy or 'weekly'
     metric = metric or 'annual_return'
 
-    d = _load_all(strategy)
+    df_norm = _normalized(strategy)
+    d = _load_all(strategy, df_normalized=df_norm)
 
     def _fig(ranks_list):
         filtered = {r: df for r, df in d.items() if r in (ranks_list or [])}
         return _build_figure(filtered, metric)
 
-    if current_ranks is None:
+    if current_ranks is None or triggered == 'strategy-dropdown':
+        kpi = _latest_kpi(strategy, df_normalized=df_norm)
+        kpi_children = [_kpi_header(kpi, show_button=False), _render_kpi_row(kpi, size='compact')] if kpi else []
         full = _longest_ranks(d.keys()) if d else None
         new_ranks = [full] if full else []
-        return new_ranks, _build_tags(new_ranks), _fig(new_ranks)
+        return kpi_children, new_ranks, _build_tags(new_ranks), _fig(new_ranks)
 
     if triggered == 'confirm-rank-modal' and confirm_n:
         if picker_value:
-            return picker_value, _build_tags(picker_value), _fig(picker_value)
-        return dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, picker_value, _build_tags(picker_value), _fig(picker_value)
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
     if isinstance(triggered, dict) and triggered.get('type') == 'remove-rank':
         if not any(_remove_n_list):
-            # remove-rank components just appeared in layout (n_clicks=0), not actually clicked
-            return dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         rank_to_remove = triggered['index']
         new_ranks = [r for r in current_ranks if r != rank_to_remove]
-        return new_ranks, _build_tags(new_ranks), _fig(new_ranks)
+        return dash.no_update, new_ranks, _build_tags(new_ranks), _fig(new_ranks)
 
-    # strategy-dropdown or metric-selector triggered (change or navigation back)
-    return dash.no_update, _build_tags(current_ranks), _fig(current_ranks)
+    # metric-selector triggered
+    return dash.no_update, dash.no_update, _build_tags(current_ranks), _fig(current_ranks)
 
 
 @app.callback(
@@ -1143,6 +1241,40 @@ def toggle_rank_modal(open_n, _cancel_n, confirm_n, strategy, current_ranks):
 def update_advanced_recommendations(strategy):
     return _recommendation_card(strategy or 'weekly')
 
+
+app.clientside_callback(
+    """
+    function(n) {
+        if (!n) return window.dash_clientside.no_update;
+
+        var root = document.getElementById('app-root');
+        var origStyle = root.style.cssText;
+        root.style.background = 'white';
+        root.style.minHeight = 'auto';
+        root.style.maxWidth = '680px';
+
+        window.dispatchEvent(new Event('resize'));
+
+        setTimeout(function() {
+            var hdr = document.getElementById('print-header');
+            var title = hdr ? hdr.textContent.trim().split('\\n')[0] : 'GoldenAI';
+            var prevTitle = document.title;
+            document.title = title;
+
+            window.print();
+
+            document.title = prevTitle;
+            root.style.cssText = origStyle;
+            window.dispatchEvent(new Event('resize'));
+        }, 400);
+
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('print-btn', 'className'),
+    Input('print-btn', 'n_clicks'),
+    prevent_initial_call=True,
+)
 
 server = flask_server
 
