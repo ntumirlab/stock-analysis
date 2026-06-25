@@ -125,6 +125,11 @@ class OrderExecutor:
             from strategy_class.alan_tw_strategy_EFG_observe_di21_bias05 import AlanTWStrategyEFGObserveDI21Bias05 as strategy_class
         elif strategy_class_name == 'RAndDManagementStrategy':
             from strategy_class.r_and_d_management_strategy import RAndDManagementStrategy as strategy_class
+        elif strategy_class_name == 'GoldenAIStrategy':
+            from strategy_class.golden_ai_order_adapter import GoldenAIOrderAdapter as strategy_class
+            frequency = self.config_loader.get_user_constant('golden_ai_frequency') or 'weekly'
+            hold_weeks = int(self.config_loader.get_user_constant('hold_weeks') or 1)
+            return strategy_class(frequency=frequency, hold_weeks=hold_weeks)
         else:
             raise ValueError(f"Unknown strategy class: {strategy_class_name}")
         return strategy_class()
