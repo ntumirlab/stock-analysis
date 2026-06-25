@@ -497,7 +497,7 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
 
     fig.update_layout(
         height=250,
-        margin=dict(l=0, r=0, t=10, b=0),
+        margin=dict(l=0, r=10, t=10, b=0),
         plot_bgcolor='white',
         paper_bgcolor=_COLOR['transparent'],
         font=dict(family=_FONT_FAMILY, color=_COLOR['text_secondary'], size=12),
@@ -653,6 +653,7 @@ def _simple_layout():
                     style={
                         'width': '100%',
                         'minWidth': 0,
+                        'minHeight': '250px',
                     },
                 ),
             ], style=_CARD_BODY_STYLE),
@@ -724,7 +725,7 @@ def _main_layout():
                             style={'borderRadius': '20px', 'padding': '2px 14px', 'fontWeight': '600'},
                         ),
                     ], className='mb-3 d-flex align-items-center gap-2 flex-wrap'),
-                    dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
+                    dcc.Graph(id='metrics-graph', config={'displayModeBar': False}, style={'minHeight': '350px'}),
                 ], style=_CARD_BODY_STYLE),
             ], style=_CARD_STYLE, className='mb-4'),
 
