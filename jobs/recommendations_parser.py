@@ -62,14 +62,16 @@ class RecommendationsParser:
     TASK_EXPECTED_DAYS = {'weekly': '5', 'monthly': '30'}
 
     def _extract_date(self, filename):
-        match = re.match(r"^(\d{8})_\d{4}_推薦股票_台股(\d+)日_金策智能\.md$", filename)
+        match = re.match(r"^(\d{8})_\d{6}_tw_(\d+)d_recommendation\.md$", filename)
+        if not match:
+            match = re.match(r"^(\d{8})_\d{4}_推薦股票_台股(\d+)日_金策智能\.md$", filename)
         if not match:
             return None
 
         date_raw, days = match.group(1), match.group(2)
         expected_days = self.TASK_EXPECTED_DAYS.get(self.task_name)
         if expected_days and days != expected_days:
-            logger.warning(f"Skipping {filename}: 台股{days}日 does not match task '{self.task_name}' (expected 台股{expected_days}日)")
+            logger.warning(f"Skipping {filename}: {days}d does not match task '{self.task_name}' (expected {expected_days}d)")
             return None
 
         try:
