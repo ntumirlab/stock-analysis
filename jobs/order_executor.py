@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import importlib
 import logging
 import os
 import traceback
@@ -18,6 +19,18 @@ from utils.stock_mapper import StockMapper
 apply_finlab_patches()
 
 logger = logging.getLogger(__name__)
+
+# 可「實盤下單」的策略白名單（刻意與 backtest_executor 的清單分開維護：
+# 不是所有可回測的策略都允許被拿來下單）。GoldenAIStrategy 需要 config
+# 參數，於 load_strategy 內特別處理，不在此表。
+ORDERABLE_STRATEGIES = {
+    'TibetanMastiffTWStrategy': ('strategy_class.tibetanmastiff_tw_strategy', 'TibetanMastiffTWStrategy'),
+    'PeterWuStrategy': ('strategy_class.peterwu_tw_strategy', 'PeterWuStrategy'),
+    'AlanTWStrategyACE': ('strategy_class.alan_tw_strategy_ACE', 'AlanTWStrategyACE'),
+    'AlanTWStrategyEFGObserve': ('strategy_class.alan_tw_strategy_EFG_observe', 'AlanTWStrategyEFGObserve'),
+    'AlanTWStrategyEFGObserveDI21Bias05': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias05', 'AlanTWStrategyEFGObserveDI21Bias05'),
+    'RAndDManagementStrategy': ('strategy_class.r_and_d_management_strategy', 'RAndDManagementStrategy'),
+}
 
 class OrderExecutor:
     def __init__(self, user_name, market_order, broker_name, view_only, config_path="config.yaml", base_log_directory="logs"):
@@ -117,20 +130,8 @@ class OrderExecutor:
         handler.handle_alerting_stocks(alerting_stocks)
 
     def load_strategy(self, strategy_class_name):
-        if strategy_class_name == 'TibetanMastiffTWStrategy':
-            from strategy_class.tibetanmastiff_tw_strategy import TibetanMastiffTWStrategy as strategy_class
-        elif strategy_class_name == 'PeterWuStrategy':
-            from strategy_class.peterwu_tw_strategy import PeterWuStrategy as strategy_class
-        elif strategy_class_name == 'AlanTWStrategyACE':
-            from strategy_class.alan_tw_strategy_ACE import AlanTWStrategyACE as strategy_class
-        elif strategy_class_name == 'AlanTWStrategyEFGObserve':
-            from strategy_class.alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve as strategy_class
-        elif strategy_class_name == 'AlanTWStrategyEFGObserveDI21Bias05':
-            from strategy_class.alan_tw_strategy_EFG_observe_di21_bias05 import AlanTWStrategyEFGObserveDI21Bias05 as strategy_class
-        elif strategy_class_name == 'RAndDManagementStrategy':
-            from strategy_class.r_and_d_management_strategy import RAndDManagementStrategy as strategy_class
-        elif strategy_class_name == 'GoldenAIStrategy':
-            from strategy_class.golden_ai_order_adapter import GoldenAIOrderAdapter as strategy_class
+        if strategy_class_name == 'GoldenAIStrategy':
+            from strategy_class.golden_ai_order_adapter import GoldenAIOrderAdapter
             frequency = self.config_loader.get_user_constant('golden_ai_frequency') or 'weekly'
             hold_weeks = int(self.config_loader.get_user_constant('hold_weeks') or 1)
             cycle_start_date = self.config_loader.get_user_constant('cycle_start_date')
@@ -138,10 +139,14 @@ class OrderExecutor:
                 raise ValueError(
                     "GoldenAIStrategy 需要在 config 的 constant 設定 cycle_start_date（第一個買入日，如 '2026-07-06'）"
                 )
-            return strategy_class(frequency=frequency, hold_weeks=hold_weeks,
-                                  cycle_start_date=str(cycle_start_date))
-        else:
+            return GoldenAIOrderAdapter(frequency=frequency, hold_weeks=hold_weeks,
+                                        cycle_start_date=str(cycle_start_date))
+
+        entry = ORDERABLE_STRATEGIES.get(strategy_class_name)
+        if entry is None:
             raise ValueError(f"Unknown strategy class: {strategy_class_name}")
+        module_path, class_name = entry
+        strategy_class = getattr(importlib.import_module(module_path), class_name)
         return strategy_class()
 
 if __name__ == "__main__":

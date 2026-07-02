@@ -1,10 +1,3 @@
-# utils/__init__.py
-from .authentication import Authenticator
-from .config_loader import ConfigLoader
-from .logger_manager import LoggerManager
-
-__all__ = [
-    'Authenticator',
-    'ConfigLoader',
-    'LoggerManager'
-]
+# 刻意不在此 eager import 子模組：authentication 會連鎖載入 finlab/shioaji 等
+# 重依賴，導致沒裝 finlab 的環境（CI）連 config_loader、logger_manager 都無法
+# import。請直接 `from utils.<module> import <name>`。

@@ -1,3 +1,5 @@
 # CI 單元測試用的最小依賴（tests/unit 不需要 finlab / ta-lib）
 pytest
 PyYAML
+numpy==1.26.4  # 與 environment.yml 對齊；pandas 2.0.3 的 wheel 不相容 numpy 2.x
+pandas==2.0.3  # 與 environment.yml 的容器版本對齊

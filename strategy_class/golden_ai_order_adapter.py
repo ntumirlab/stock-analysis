@@ -4,6 +4,11 @@ import pandas as pd
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
+from core.trading_cycles import (
+    compute_cycles,
+    compute_historical_cycles,
+    check_recommendation_freshness,
+)
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
@@ -33,46 +38,12 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
         self.ranks = list(range(self.rank_start, self.rank_end + 1))
 
     def _compute_cycles(self, until):
-        """從錨點鋪出各週期的 (買入日, 賣出日)，直到 until（含）之後的第一個買入日為止。
-
-        賣出日 = 買入日之後（含當天）的第 hold_weeks 個賣出 weekday；
-        下一個買入日 = 賣出日之後的第一個買入 weekday。日期落在假日時
-        由 finlab 訊號對齊處理，行程表本身不位移。
-        """
-        anchor = self.cycle_start_date
-        entry = anchor + pd.Timedelta(days=(self.buy_weekday - anchor.dayofweek) % 7)
-        sell_offset = (self.sell_weekday - self.buy_weekday) % 7
-        cycles = []
-        while entry <= until:
-            exit_d = entry + pd.Timedelta(days=sell_offset + 7 * (self.hold_weeks - 1))
-            cycles.append((entry, exit_d))
-            step = (self.buy_weekday - exit_d.dayofweek) % 7
-            entry = exit_d + pd.Timedelta(days=step if step else 7)
-        return cycles
+        return compute_cycles(self.cycle_start_date, self.buy_weekday,
+                              self.sell_weekday, self.hold_weeks, until)
 
     def _compute_historical_cycles(self, index, before):
-        """錨點之前的歷史週期（資料驅動、僅完整週期，且整個週期須在 before 之前結束）。
-
-        僅供報告延續性：finlab Report 會把全為 1.0 的 creturn 截斷成空序列，
-        導致 Portfolio 建構時 iloc[0] 崩潰，所以報告視窗內必須有可定價的既往交易。
-        今日目標持股永遠由錨點行程表（_compute_cycles）決定，歷史週期不影響。
-        """
-        dow = index.dayofweek
-        all_buy_days = index[dow == self.buy_weekday]
-        all_sell_days = index[dow == self.sell_weekday]
-        cycles = []
-        current_entry = all_buy_days[0] if len(all_buy_days) > 0 else None
-        while current_entry is not None and current_entry < before:
-            sell_days_after = all_sell_days[all_sell_days >= current_entry]
-            if len(sell_days_after) < self.hold_weeks:
-                break
-            current_exit = sell_days_after[self.hold_weeks - 1]
-            if current_exit >= before:
-                break
-            cycles.append((current_entry, current_exit))
-            next_buy_days = all_buy_days[all_buy_days > current_exit]
-            current_entry = next_buy_days[0] if len(next_buy_days) > 0 else None
-        return cycles
+        return compute_historical_cycles(index, self.buy_weekday,
+                                         self.sell_weekday, self.hold_weeks, before)
 
     def _run_core(self, ranks):
         try:
@@ -195,28 +166,9 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
             data.truncate_end = None
 
     def _check_recommendation_freshness(self, latest_rec, today):
-        """進行中的週期若缺少進場日應使用的週日清單，擋下下單並拋錯（由外層通知）。
-
-        清單晚入庫時每日 sync 會自動補進場，寧可晚買也不要默默用過期清單買。
-        """
         cycles = self._compute_cycles(until=today + pd.Timedelta(days=7))
-        current = next(((e, x) for e, x in cycles if e <= today <= x), None)
-        if current is None:
-            return
-        entry = current[0]
-        expected_sunday = entry - pd.Timedelta(days=(entry.dayofweek - 6) % 7)
-        if latest_rec is None:
-            raise RuntimeError(
-                f"DB 無推薦清單：當前週期（買入日 {entry:%Y-%m-%d}）"
-                f"需要 {expected_sunday:%Y-%m-%d} 的清單，不下單"
-            )
-        rec_date = pd.to_datetime(latest_rec.date)
-        aligned = rec_date + pd.Timedelta(days=6 - rec_date.weekday())
-        if aligned < expected_sunday:
-            raise RuntimeError(
-                f"推薦清單過期：最新清單日期 {latest_rec.date}（對齊週日 {aligned:%Y-%m-%d}），"
-                f"當前週期買入日 {entry:%Y-%m-%d} 應使用 {expected_sunday:%Y-%m-%d} 的清單，不下單"
-            )
+        latest_rec_date = latest_rec.date if latest_rec else None
+        check_recommendation_freshness(cycles, today, latest_rec_date)
 
     def run_strategy(self):
         weekday_names = '一二三四五六日'
