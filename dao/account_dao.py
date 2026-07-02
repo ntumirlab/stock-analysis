@@ -60,7 +60,7 @@ class AccountDAO:
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT account_id, account_name, broker_name, user_name, created_timestamp FROM account")
+        cursor.execute("SELECT account_id, account_name, broker_name, user_name, created_timestamp FROM account ORDER BY account_id DESC")
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
         conn.close()

@@ -88,7 +88,7 @@ class GoldenAITWStrategyBase:
         self.backtest_date = pd.Timestamp(backtest_date_raw).normalize() if backtest_date_raw else None
         self.num_workers = override_params.get('num_workers', golden_ai_config.get('num_workers', 1))
 
-    def _create_df(self, universe, ranks):
+    def _create_df(self, universe, ranks, end_date=None):
         """
         讀取推薦 DAO 並轉換為 Finlab 可用的 Position DataFrame
         支援 stocks 為物件列表，從 stock.id 取代號
@@ -96,6 +96,11 @@ class GoldenAITWStrategyBase:
         日期對齊規則：
         - 周中（週一～週六）產出的清單 → 對齊到「下一個週日」（代表下週的推薦）
         - 週日當天產出的清單 → 留在當天（代表本週的推薦）
+
+        end_date：
+        - 預設 None：以 universe 最後一個交易日為界（回測用）
+        - 指定日期：延伸/裁切到該日（live 下單用——早上跑的時候市場資料
+          只到前一交易日，需延伸到今天才能保留最新週日清單與今日進場訊號）
         """
 
         dao = RecommendationDAO(frequency=self.recommendation_frequency)
@@ -176,17 +181,17 @@ class GoldenAITWStrategyBase:
         sl_df    = sl_df.resample('D').ffill()
         tp_df    = tp_df.resample('D').ffill()
 
-        latest_market_date = universe.index.max()
-        if latest_market_date > position.index.max():
+        end = universe.index.max() if end_date is None else end_date
+        if end > position.index.max():
             extended_index = pd.date_range(start=position.index.min(),
-                                           end=latest_market_date, freq='D')
+                                           end=end, freq='D')
             position = position.reindex(extended_index, method='ffill')
             sl_df    = sl_df.reindex(extended_index, method='ffill')
             tp_df    = tp_df.reindex(extended_index, method='ffill')
-        elif latest_market_date < position.index.max():
-            position = position[position.index <= latest_market_date]
-            sl_df    = sl_df[sl_df.index <= latest_market_date]
-            tp_df    = tp_df[tp_df.index <= latest_market_date]
+        elif end < position.index.max():
+            position = position[position.index <= end]
+            sl_df    = sl_df[sl_df.index <= end]
+            tp_df    = tp_df[tp_df.index <= end]
 
         position = position.reindex(columns=universe.columns, fill_value=0)
         sl_df    = sl_df.reindex(columns=universe.columns, fill_value=0)

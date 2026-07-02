@@ -41,6 +41,21 @@ users:
       constant:
         rebalance_safety_weight: 0.3
         strategy_class_name: "AlanTWStrategyACE"
+  kiri:
+    shioaji:
+      env:
+        SHIOAJI_API_KEY: "${KIRI_SHIOAJI_API_KEY}"
+        SHIOAJI_SECRET_KEY: "${KIRI_SHIOAJI_SECRET_KEY}"
+        SHIOAJI_CERT_PERSON_ID: "${KIRI_SHIOAJI_CERT_PERSON_ID}"
+        SHIOAJI_CERT_PATH: "${KIRI_SHIOAJI_CERT_PATH}"
+        SHIOAJI_CERT_PASSWORD: "${KIRI_SHIOAJI_CERT_PASSWORD}"
+      constant:
+        rebalance_safety_weight: 0.3
+        strategy_class_name: "GoldenAIStrategy"
+        golden_ai_frequency: "weekly"
+        hold_weeks: 4
+        cycle_start_date: "2026-07-06"  # 週期錨點（第一個買入日），定義買賣節奏的相位；中途改動請選在空手的週期交界
+        excluded_stocks: []
 
 recommendation_tasks:
   weekly:
