@@ -3,6 +3,7 @@ import importlib
 import logging
 import os
 import traceback
+from core.report_rewrap import rewrap_report_html
 from utils.config_loader import ConfigLoader
 from utils.logger_manager import LoggerManager
 from utils.notifier import create_notification_manager
@@ -63,7 +64,27 @@ class BacktestExecutor:
         datetime_str = self.backtest_timestamp.strftime("%Y-%m-%d_%H-%M-%S")
         save_report_path = os.path.join(report_directory, f"{datetime_str}.html")
         report.display(save_report_path=save_report_path)
-        
+        self._apply_report_template(save_report_path)
+
+    def _apply_report_template(self, report_path, template_path="assets/finlab_report_template.html"):
+        """維持報告舊版外觀：finlab 2.x 改版了報告前端，把資料重包進 1.x 模板。
+
+        模板不存在或資料抽取失敗時保留 finlab 原始輸出。
+        """
+        if not os.path.exists(template_path):
+            logger.warning(f"報告模板不存在，保留 finlab 原始輸出: {template_path}")
+            return
+        with open(report_path, 'r', encoding='utf-8') as f:
+            report_html = f.read()
+        with open(template_path, 'r', encoding='utf-8') as f:
+            template_html = f.read()
+        wrapped = rewrap_report_html(report_html, template_html)
+        if wrapped is None:
+            logger.warning("報告資料抽取失敗（finlab 輸出格式可能已變），保留原始輸出")
+            return
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(wrapped)
+        logger.info(f"報告已套用舊版模板外觀: {report_path}")
 
 
     def load_strategy(self):
