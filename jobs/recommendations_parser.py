@@ -1,6 +1,4 @@
 import os
-import json
-import re
 import time
 import argparse
 import logging
@@ -9,7 +7,8 @@ import google.genai as genai
 from google.genai import types
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from dao.recommendation_dao import RecommendationDAO, RecommendationRecord, Stock
+from core.recommendation_parsing import extract_recommendation_date, parse_recommendation_response
+from dao.recommendation_dao import RecommendationDAO
 from utils.config_loader import ConfigLoader
 from utils.logger_manager import LoggerManager
 from utils.notifier import create_notification_manager
@@ -59,31 +58,14 @@ class RecommendationsParser:
             raise EnvironmentError("Missing environment variable: GOOGLE_API_KEY")
         self.client = genai.Client(api_key=self.api_key)
 
-    TASK_EXPECTED_DAYS = {'weekly': '5', 'monthly': '30'}
-
     def _extract_date(self, filename):
-        match = re.match(r"^(\d{8})_\d{6}_tw_(\d+)d_recommendation\.md$", filename)
-        if not match:
-            match = re.match(r"^(\d{8})_\d{4}_推薦股票_台股(\d+)日_金策智能\.md$", filename)
-        if not match:
-            return None
+        return extract_recommendation_date(filename, self.task_name)
 
-        date_raw, days = match.group(1), match.group(2)
-        expected_days = self.TASK_EXPECTED_DAYS.get(self.task_name)
-        if expected_days and days != expected_days:
-            logger.warning(f"Skipping {filename}: {days}d does not match task '{self.task_name}' (expected {expected_days}d)")
-            return None
-
-        try:
-            return datetime.strptime(date_raw, "%Y%m%d").strftime("%Y-%m-%d")
-        except ValueError:
-            return None
-
-    def _call_gemini(self, content, date_str):        
+    def _call_gemini(self, content, date_str):
         if not self.prompt_template:
             logger.error("Prompt template is empty!")
             return None
-            
+
         prompt = self.prompt_template.format(date_str=date_str, content=content)
         for attempt in range(self.max_retries):
             try:
@@ -95,23 +77,8 @@ class RecommendationsParser:
                         response_mime_type="application/json"
                     )
                 )
-                
-                # Parse JSON response
-                parsed_json = json.loads(response.text)
-                
-                # Validate stocks field exists
-                if 'stocks' not in parsed_json:
-                    logger.warning(f"JSON missing 'stocks' field in {date_str}")
-                    return None
-                
-                # Convert raw dicts to Stock objects
-                stocks = [Stock(**stock_dict) for stock_dict in parsed_json.get('stocks', [])]
-                
-                # Create RecommendationRecord with Stock objects
-                record = RecommendationRecord(date=date_str, stocks=stocks)
-                
-                logger.info(f"[{date_str}] Parsed {len(stocks)} stocks: {[s.id for s in stocks]}")
-                return record
+
+                return parse_recommendation_response(response.text, date_str)
 
             except Exception as e:
                 error_msg = str(e)
