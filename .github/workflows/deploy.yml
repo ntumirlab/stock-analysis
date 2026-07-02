@@ -1,11 +1,30 @@
-name: CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [ "main" ]
+  pull_request:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: pytest tests/unit -v
+
   deploy:
+    # 只有 push 到 main 且測試通過才部署；PR 只跑測試
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Server via SSH
@@ -31,5 +50,5 @@ jobs:
 
             docker compose down
             docker compose up -d --build
-            
+
             docker image prune -f

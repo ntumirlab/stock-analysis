@@ -42,6 +42,19 @@
     + IPython：互動式 Python 介面
     + pyyaml：讀取配置文件
 
+## 測試
+
++ `tests/unit/`：純邏輯 + SQLite 測試，不需要 finlab，任何機器可跑；CI 會在每個 PR 與部署前自動執行
+    ```bash
+    pip install -r requirements-dev.txt
+    pytest tests/unit
+    ```
++ `tests/integration/`：需要完整環境（finlab 等），用容器現成環境跑（bind mount 蓋掉 image 內的舊 code，不用 rebuild）
+    ```bash
+    docker compose run --rm -v $(pwd):/app stock-analysis pytest tests
+    ```
++ `research/`：策略研究腳本（backfill、grid search、bayesian optimize），手動執行，不是測試
+
 ## 手冊
 
 ### Docker 部署 (推薦)
