@@ -2,7 +2,7 @@
 # 格式: 分 時 日 月 週 指令
 
 # 每天 20:30 - 抓取當日持股和帳戶資訊
-30 20 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.scheduler --user_name=junting --broker_name=shioaji >> /app/logs/fetch.log 2>&1
+30 20 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.scheduler --user_name=kiri --broker_name=shioaji >> /app/logs/fetch.log 2>&1
 
 # 每天 21:50 - 執行回測
 50 21 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyACE >> /app/logs/backtest.log 2>&1
@@ -19,7 +19,7 @@
 55 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyMonthly >> /app/logs/backtest.log 2>&1
 
 # 每天 08:10 - 下單 (暫時停用)
-# 10 8 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=junting --broker_name=shioaji >> /app/logs/order.log 2>&1
+# 10 8 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=kiri --broker_name=shioaji >> /app/logs/order.log 2>&1
 
 # 每週日 23:45 - 抓取新推薦名單.md
 45 23 * * 7 cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.drive_fetcher >> /app/logs/drive_fetcher.log 2>&1

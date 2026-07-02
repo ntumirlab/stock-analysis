@@ -51,6 +51,10 @@ class OrderExecutor:
         strategy = self.load_strategy(strategy_class_name)
         report = strategy.run_strategy()
 
+        if report is None:
+            logger.info("策略今日無目標持股與歷史部位，跳過下單")
+            return
+
         # 排除指定成分股
         excluded_stocks = self.config_loader.get_user_constant("excluded_stocks") or []
         if excluded_stocks:
@@ -129,7 +133,13 @@ class OrderExecutor:
             from strategy_class.golden_ai_order_adapter import GoldenAIOrderAdapter as strategy_class
             frequency = self.config_loader.get_user_constant('golden_ai_frequency') or 'weekly'
             hold_weeks = int(self.config_loader.get_user_constant('hold_weeks') or 1)
-            return strategy_class(frequency=frequency, hold_weeks=hold_weeks)
+            cycle_start_date = self.config_loader.get_user_constant('cycle_start_date')
+            if not cycle_start_date:
+                raise ValueError(
+                    "GoldenAIStrategy 需要在 config 的 constant 設定 cycle_start_date（第一個買入日，如 '2026-07-06'）"
+                )
+            return strategy_class(frequency=frequency, hold_weeks=hold_weeks,
+                                  cycle_start_date=str(cycle_start_date))
         else:
             raise ValueError(f"Unknown strategy class: {strategy_class_name}")
         return strategy_class()
