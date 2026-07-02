@@ -48,7 +48,9 @@ jobs:
 
             echo "$ENV_FILE" > .env
 
+            # 先 build 成功再停服務：build 失敗時舊容器繼續跑，避免停機卡在壞版本
+            docker compose build
             docker compose down
-            docker compose up -d --build
+            docker compose up -d
 
             docker image prune -f

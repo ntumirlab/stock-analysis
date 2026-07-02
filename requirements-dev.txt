@@ -1,3 +1,4 @@
 # CI 單元測試用的最小依賴（tests/unit 不需要 finlab / ta-lib）
 pytest
 PyYAML
+pandas==2.0.3  # 與 environment.yml 的容器版本對齊

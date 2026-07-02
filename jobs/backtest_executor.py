@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import logging
 import os
 import traceback
@@ -9,6 +10,28 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+
+# 可回測的策略：名稱 → (module, class)。lazy import 避免一次載入所有策略模組。
+BACKTEST_STRATEGIES = {
+    'TibetanMastiffTWStrategy': ('strategy_class.tibetanmastiff_tw_strategy', 'TibetanMastiffTWStrategy'),
+    'PeterWuStrategy': ('strategy_class.peterwu_tw_strategy', 'PeterWuStrategy'),
+    'AlanTWStrategyACE': ('strategy_class.alan_tw_strategy_ACE', 'AlanTWStrategyACE'),
+    'AlanTWStrategyFG': ('strategy_class.alan_tw_strategy_FG', 'AlanTWStrategyFG'),
+    'AlanTWStrategyEFG': ('strategy_class.alan_tw_strategy_EFG', 'AlanTWStrategyEFG'),
+    'AlanTWStrategyEFGObserve': ('strategy_class.alan_tw_strategy_EFG_observe', 'AlanTWStrategyEFGObserve'),
+    'AlanTWStrategyEFGObserveDI21Bias05': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias05', 'AlanTWStrategyEFGObserveDI21Bias05'),
+    'AlanTWStrategyEFGObserveDI21Bias35MACDBias25': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias35_macd_bias25', 'AlanTWStrategyEFGObserveDI21Bias35MACDBias25'),
+    'AlanTWStrategyNotStart': ('strategy_class.alan_tw_strategy_not_start', 'AlanTWStrategyNotStart'),
+    'AlanTWStrategyNotStartA': ('strategy_class.alan_tw_strategy_not_start_A', 'AlanTWStrategyNotStartA'),
+    'AlanTWStrategyNotStartB': ('strategy_class.alan_tw_strategy_not_start_B', 'AlanTWStrategyNotStartB'),
+    'RAndDManagementStrategy': ('strategy_class.r_and_d_management_strategy', 'RAndDManagementStrategy'),
+    'GoldenAITWStrategyWeekly': ('strategy_class.golden_ai_tw_strategy_weekly', 'GoldenAITWStrategyWeekly'),
+    'GoldenAITWStrategyMonthly': ('strategy_class.golden_ai_tw_strategy_monthly', 'GoldenAITWStrategyMonthly'),
+    'GoldenAITWStrategyWeekly4W': ('strategy_class.golden_ai_tw_strategy_weekly_4w', 'GoldenAITWStrategyWeekly4W'),
+    'OscarAndOrStrategy': ('strategy_class.oscar.oscar_strategy_andor', 'OscarAndOrStrategy'),
+    'OscarCompositeStrategy': ('strategy_class', 'OscarCompositeStrategy'),
+    '2560AndOrTWStrategy': ('strategy_class', '_2560AndOrTWStrategy'),
+}
 
 class BacktestExecutor:
     def __init__(self, strategy_class_name, config_path="config.yaml", base_log_directory="logs"):
@@ -44,44 +67,11 @@ class BacktestExecutor:
 
 
     def load_strategy(self):
-        if self.strategy_class_name == 'TibetanMastiffTWStrategy':
-            from strategy_class.tibetanmastiff_tw_strategy import TibetanMastiffTWStrategy as strategy_class
-        elif self.strategy_class_name == 'PeterWuStrategy':
-            from strategy_class.peterwu_tw_strategy import PeterWuStrategy as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyACE':
-            from strategy_class.alan_tw_strategy_ACE import AlanTWStrategyACE as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyFG':
-            from strategy_class.alan_tw_strategy_FG import AlanTWStrategyFG as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyEFG':
-            from strategy_class.alan_tw_strategy_EFG import AlanTWStrategyEFG as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyEFGObserve':
-            from strategy_class.alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyEFGObserveDI21Bias05':
-            from strategy_class.alan_tw_strategy_EFG_observe_di21_bias05 import AlanTWStrategyEFGObserveDI21Bias05 as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyEFGObserveDI21Bias35MACDBias25':
-            from strategy_class.alan_tw_strategy_EFG_observe_di21_bias35_macd_bias25 import AlanTWStrategyEFGObserveDI21Bias35MACDBias25 as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyNotStart':
-            from strategy_class.alan_tw_strategy_not_start import AlanTWStrategyNotStart as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyNotStartA':
-            from strategy_class.alan_tw_strategy_not_start_A import AlanTWStrategyNotStartA as strategy_class
-        elif self.strategy_class_name == 'AlanTWStrategyNotStartB':
-            from strategy_class.alan_tw_strategy_not_start_B import AlanTWStrategyNotStartB as strategy_class
-        elif self.strategy_class_name == 'RAndDManagementStrategy':
-            from strategy_class.r_and_d_management_strategy import RAndDManagementStrategy as strategy_class
-        elif self.strategy_class_name == 'GoldenAITWStrategyWeekly':
-            from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly as strategy_class
-        elif self.strategy_class_name == 'GoldenAITWStrategyMonthly':
-            from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly as strategy_class
-        elif self.strategy_class_name == 'GoldenAITWStrategyWeekly4W':
-            from strategy_class.golden_ai_tw_strategy_weekly_4w import GoldenAITWStrategyWeekly4W as strategy_class
-        elif self.strategy_class_name == 'OscarAndOrStrategy':
-            from strategy_class.oscar.oscar_strategy_andor import OscarAndOrStrategy as strategy_class
-        elif self.strategy_class_name == 'OscarCompositeStrategy':
-            from strategy_class import OscarCompositeStrategy as strategy_class
-        elif self.strategy_class_name == '2560AndOrTWStrategy':
-            from strategy_class import _2560AndOrTWStrategy as strategy_class
-        else:
+        entry = BACKTEST_STRATEGIES.get(self.strategy_class_name)
+        if entry is None:
             raise ValueError(f"Unknown strategy class: {self.strategy_class_name}")
+        module_path, class_name = entry
+        strategy_class = getattr(importlib.import_module(module_path), class_name)
         return strategy_class()
 
 if __name__ == "__main__":
