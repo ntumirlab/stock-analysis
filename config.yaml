@@ -55,6 +55,7 @@ users:
         golden_ai_frequency: "weekly"
         hold_weeks: 4
         cycle_start_date: "2026-07-06"  # 週期錨點（第一個買入日），定義買賣節奏的相位；中途改動請選在空手的週期交界
+        invest_ratio: 0.7  # 總投入比例上限（按當日總資產計），均分給 hold_weeks 份滾動 tranche，其餘留現金
         excluded_stocks: []
 
 recommendation_tasks:

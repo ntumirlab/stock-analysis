@@ -61,11 +61,19 @@ class OrderExecutor:
 
     def run_strategy_and_sync(self):
         strategy_class_name = self.config_loader.get_user_constant("strategy_class_name")
-        strategy = self.load_strategy(strategy_class_name)
-        report = strategy.run_strategy()
+        strategies = self.load_strategies(strategy_class_name)
 
-        if report is None:
-            logger.info("策略今日無目標持股與歷史部位，跳過下單")
+        reports = {}
+        for name, (strategy, weight) in strategies.items():
+            logger.info(f"--- 策略 {name} (weight={weight:.4f}) ---")
+            report = strategy.run_strategy()
+            if report is None:
+                logger.info(f"{name} 今日無目標持股與歷史部位，跳過")
+                continue
+            reports[name] = (report, weight)
+
+        if not reports:
+            logger.info("所有策略今日皆無目標持股與歷史部位，跳過下單")
             return
 
         # 排除指定成分股
@@ -73,9 +81,7 @@ class OrderExecutor:
         if excluded_stocks:
             logger.info(f"排除成分股: {excluded_stocks}")
 
-        port = Portfolio({
-            'strategy': (report, 1.0),
-        })
+        port = Portfolio(reports)
         pm_name = f"{self.user_name}_{self.broker_name}"
         try:
             pm = PortfolioSyncManager.from_local(name=pm_name)
@@ -129,8 +135,10 @@ class OrderExecutor:
         # 執行圈存
         handler.handle_alerting_stocks(alerting_stocks)
 
-    def load_strategy(self, strategy_class_name):
+    def load_strategies(self, strategy_class_name):
+        """回傳 {名稱: (策略實例, 權重)}；名稱是 PortfolioSyncManager state 的 key，實倉後不可改。"""
         if strategy_class_name == 'GoldenAIStrategy':
+            from core.trading_cycles import build_tranche_specs
             from strategy_class.golden_ai_order_adapter import GoldenAIOrderAdapter
             frequency = self.config_loader.get_user_constant('golden_ai_frequency') or 'weekly'
             hold_weeks = int(self.config_loader.get_user_constant('hold_weeks') or 1)
@@ -139,15 +147,22 @@ class OrderExecutor:
                 raise ValueError(
                     "GoldenAIStrategy 需要在 config 的 constant 設定 cycle_start_date（第一個買入日，如 '2026-07-06'）"
                 )
-            return GoldenAIOrderAdapter(frequency=frequency, hold_weeks=hold_weeks,
-                                        cycle_start_date=str(cycle_start_date))
+            invest_ratio = float(self.config_loader.get_user_constant('invest_ratio') or 1.0)
+            # 滾動 tranche：週頻進場、持有 hold_weeks 週 → hold_weeks 份錯開 7 天無縫輪替，
+            # 各份均分 invest_ratio，其餘留現金
+            specs = build_tranche_specs(str(cycle_start_date), hold_weeks, invest_ratio)
+            return {
+                name: (GoldenAIOrderAdapter(frequency=frequency, hold_weeks=hold_weeks,
+                                            cycle_start_date=anchor), weight)
+                for name, anchor, weight in specs
+            }
 
         entry = ORDERABLE_STRATEGIES.get(strategy_class_name)
         if entry is None:
             raise ValueError(f"Unknown strategy class: {strategy_class_name}")
         module_path, class_name = entry
         strategy_class = getattr(importlib.import_module(module_path), class_name)
-        return strategy_class()
+        return {'strategy': (strategy_class(), 1.0)}
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -9,6 +9,7 @@ import pytest
 
 from core.trading_cycles import (
     align_to_sunday,
+    build_tranche_specs,
     check_recommendation_freshness,
     compute_cycles,
     compute_historical_cycles,
@@ -94,6 +95,40 @@ class TestComputeHistoricalCycles:
     def test_empty_index(self):
         index = pd.DatetimeIndex([])
         assert compute_historical_cycles(index, 0, 4, 4, before=ts("2026-07-06")) == []
+
+
+class TestBuildTrancheSpecs:
+    """2026-07-03 定案的 4-tranche 滾動制：同帳戶分 4 份錯開一週、各持有 4 週。"""
+
+    def test_kiri_four_tranches(self):
+        specs = build_tranche_specs("2026-07-06", 4, invest_ratio=0.7)
+        assert [name for name, _, _ in specs] == [
+            "tranche_1", "tranche_2", "tranche_3", "tranche_4"]
+        assert [anchor for _, anchor, _ in specs] == [
+            ts("2026-07-06"), ts("2026-07-13"), ts("2026-07-20"), ts("2026-07-27")]
+        for _, _, weight in specs:
+            assert weight == pytest.approx(0.175)
+
+    def test_weights_sum_to_invest_ratio(self):
+        specs = build_tranche_specs("2026-07-06", 4, invest_ratio=0.7)
+        assert sum(w for _, _, w in specs) == pytest.approx(0.7)
+
+    def test_single_tranche_defaults_to_full_weight(self):
+        # hold_weeks=1 的舊單 cycle 設定退化為單一 tranche、權重 = invest_ratio 預設 1.0
+        assert build_tranche_specs("2026-07-06", 1) == [
+            ("tranche_1", ts("2026-07-06"), 1.0)]
+
+    def test_tranche_cycles_cover_every_monday_seamlessly(self):
+        # 4 tranches × 28 天週期 → 聯集恰好每週一各有一個 tranche 進場、不重不漏
+        specs = build_tranche_specs("2026-07-06", 4)
+        entries = sorted(
+            entry
+            for _, anchor, _ in specs
+            for entry, _ in compute_cycles(anchor, 0, 4, 4, ts("2026-12-31"))
+            if entry <= ts("2026-11-30")
+        )
+        expected = list(pd.date_range("2026-07-06", "2026-11-30", freq="W-MON"))
+        assert entries == expected
 
 
 class TestFindCurrentCycle:
