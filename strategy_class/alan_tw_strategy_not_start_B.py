@@ -134,8 +134,10 @@ class AlanTWStrategyNotStartB:
 
         # 主力籌碼數據
         with data.universe(market='TSE_OTC'):
-            top15_buy_shares = data.get('etl:broker_transactions:top15_buy')
-            top15_sell_shares = data.get('etl:broker_transactions:top15_sell')
+            # finlab 2.x 將此資料集載為 nullable Int64（pd.NA）：rank() 會 TypeError，
+            # 且 NA 的比較語意與 NaN 不同（NA>x 回 NA 而非 False），統一轉回 float64
+            top15_buy_shares = data.get('etl:broker_transactions:top15_buy').astype('float64')
+            top15_sell_shares = data.get('etl:broker_transactions:top15_sell').astype('float64')
 
         net_buy_shares = (top15_buy_shares - top15_sell_shares) * 1000
         net_buy_ratio = net_buy_shares / self.shares_outstanding

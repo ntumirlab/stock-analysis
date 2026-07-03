@@ -1,7 +1,13 @@
 import logging
 from finlab.online.base_account import Account
-from finlab.online.fugle_account import FugleAccount
 from finlab.online.sinopac_account import SinopacAccount
+
+# finlab 2.x 的 Fugle 模組依賴未公開發行的 esun_trade 套件，無法安裝；
+# fugle 為 legacy 路徑（正式排程僅 shioaji），import 失敗時僅停用 fugle 分支
+try:
+    from finlab.online.fugle_account import FugleAccount
+except ImportError:
+    FugleAccount = None
 import shioaji as sj
 
 logger = logging.getLogger(__name__)

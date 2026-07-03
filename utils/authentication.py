@@ -5,9 +5,15 @@ import logging
 import traceback
 import keyring
 import finlab
-from finlab.online.fugle_account import FugleAccount
 from finlab.online.sinopac_account import SinopacAccount
 from fugle_trade.util import setup_keyring
+
+# finlab 2.x 的 Fugle 模組依賴未公開發行的 esun_trade 套件，無法安裝；
+# fugle 為 legacy 路徑（正式排程僅 shioaji），import 失敗時僅停用 fugle 分支
+try:
+    from finlab.online.fugle_account import FugleAccount
+except ImportError:
+    FugleAccount = None
 from utils.config_loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
@@ -27,6 +33,8 @@ class Authenticator:
         logger.info("Successfully logged into FinLab")
 
     def _login_fugle(self):
+        if FugleAccount is None:
+            raise RuntimeError("finlab 2.x 不再支援 Fugle（esun_trade 套件未公開發行），無法登入 fugle 帳戶")
         if not self.config_loader:
             raise RuntimeError("ConfigLoader is required for Authenticator. Pass an instance when constructing.")
         required_vars = [
