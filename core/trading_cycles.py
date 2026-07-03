@@ -62,6 +62,20 @@ def compute_historical_cycles(index: pd.DatetimeIndex, buy_weekday: int,
     return cycles
 
 
+def build_tranche_specs(cycle_start_date, num_tranches: int,
+                        invest_ratio: float = 1.0) -> List[Tuple[str, pd.Timestamp, float]]:
+    """滾動 tranche 規格：[(名稱, 錨點, 權重)]。
+
+    第 k 個 tranche 的錨點 = cycle_start_date + 7k 天，權重 = invest_ratio / num_tranches。
+    週頻進場 + 持有 num_tranches 週時，各 tranche 週期恰好無縫涵蓋每個買入 weekday。
+    名稱是 PortfolioSyncManager state 的 key，實倉啟用後不可再改。
+    """
+    start = pd.Timestamp(cycle_start_date).normalize()
+    weight = invest_ratio / num_tranches
+    return [(f"tranche_{k + 1}", start + pd.Timedelta(days=7 * k), weight)
+            for k in range(num_tranches)]
+
+
 def find_current_cycle(cycles: List[Cycle], today: pd.Timestamp) -> Optional[Cycle]:
     """回傳 today 所在的 (買入日, 賣出日)，不在任何週期內則回傳 None。"""
     return next(((e, x) for e, x in cycles if e <= today <= x), None)
