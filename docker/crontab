@@ -1,6 +1,10 @@
 # Crontab for stock-analysis scheduler
 # 格式: 分 時 日 月 週 指令
 
+# cron 啟動的 job 拿不到 docker-compose 的 TZ 環境變數（cron 給 job 乾淨環境），
+# 沒有這行的話 job 內的 log 時間戳會顯示 UTC。排程時間不受此行影響（daemon 已是台北時區）。
+TZ=Asia/Taipei
+
 # 每天 20:30 - 抓取當日持股和帳戶資訊
 30 20 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.scheduler --user_name=kiri --broker_name=shioaji >> /app/logs/fetch.log 2>&1
 
@@ -17,6 +21,9 @@
 35 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyWeekly >> /app/logs/backtest.log 2>&1
 45 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyWeekly4W >> /app/logs/backtest.log 2>&1
 55 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyMonthly >> /app/logs/backtest.log 2>&1
+
+# 每天 07:30 - 發布解析後的推薦清單 JSON 到 Drive（只補 Drive 缺的日期）
+30 7 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.recommendations_publisher >> /app/logs/recommendations_publisher.log 2>&1
 
 # 每天 08:10 - 下單
 10 8 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name=kiri --broker_name=shioaji >> /app/logs/order.log 2>&1
