@@ -22,6 +22,7 @@ BACKTEST_STRATEGIES = {
     'AlanTWStrategyEFGObserve': ('strategy_class.alan_tw_strategy_EFG_observe', 'AlanTWStrategyEFGObserve'),
     'AlanTWStrategyEFGObserveDI21Bias05': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias05', 'AlanTWStrategyEFGObserveDI21Bias05'),
     'AlanTWStrategyEFGObserveDI21Bias35MACDBias25': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias35_macd_bias25', 'AlanTWStrategyEFGObserveDI21Bias35MACDBias25'),
+    'AlanTWStrategyEFGObserveDI21Bias35MACDBias25ADX31Bias05': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias35_macd_bias25_adx31_bias05', 'AlanTWStrategyEFGObserveDI21Bias35MACDBias25ADX31Bias05'),
     'AlanTWStrategyNotStart': ('strategy_class.alan_tw_strategy_not_start', 'AlanTWStrategyNotStart'),
     'AlanTWStrategyNotStartA': ('strategy_class.alan_tw_strategy_not_start_A', 'AlanTWStrategyNotStartA'),
     'AlanTWStrategyNotStartB': ('strategy_class.alan_tw_strategy_not_start_B', 'AlanTWStrategyNotStartB'),
