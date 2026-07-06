@@ -32,4 +32,4 @@ finlab_db
 .DS_Store
 
 # VSCode settings
-.vscode/
+.vscode/.coverage
