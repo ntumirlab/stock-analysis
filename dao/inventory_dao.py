@@ -12,7 +12,7 @@ class InventoryDAO:
     
     def _create_table(self):
         """建立 inventory_history 資料表，記錄庫存資料並以 account_id 作為外鍵"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inventory_history (
@@ -42,7 +42,7 @@ class InventoryDAO:
                 'quantity', 'last_price', 'pnl', 以及原始資料('raw_data')
             fetch_timestamp (str, optional): 資料擷取時間戳記，若未提供則使用當前時間
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         
         # 使用提供的擷取時間戳記或當前時間
@@ -53,7 +53,7 @@ class InventoryDAO:
         # 寫入新資料 (不刪除舊資料，以保留歷史記錄)
         for item in inventory_data:
             # 將原始資料轉為 JSON 字串儲存
-            raw_data_json = json.dumps(item.get('raw_data', {}))
+            raw_data_json = json.dumps(item.get('raw_data', {}), default=str)
             
             cursor.execute("""
                 INSERT INTO inventory_history (
@@ -93,7 +93,7 @@ class InventoryDAO:
         Returns:
             list: 包含庫存記錄的列表
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row  # 使結果以字典形式返回
         cursor = conn.cursor()
         

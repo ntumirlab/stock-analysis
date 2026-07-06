@@ -10,7 +10,7 @@ class AccountDAO:
     
     def _create_table(self):
         """建立 account 資料表，包含 account_id (PK)user_name 與建立時間"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS account (
@@ -36,7 +36,7 @@ class AccountDAO:
         Returns:
             int: 資料表 account 的主鍵 account_id。
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("SELECT account_id FROM account WHERE account_name = ?", (account_name,))
         row = cursor.fetchone()
@@ -58,7 +58,7 @@ class AccountDAO:
         """
         取得所有帳戶資料，回傳一個列表，每個項目為 dict，包含 account_id, account_name, broker_name, user_name, created_timestamp。
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("SELECT account_id, account_name, broker_name, user_name, created_timestamp FROM account ORDER BY account_id DESC")
         rows = cursor.fetchall()

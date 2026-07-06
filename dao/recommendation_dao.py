@@ -91,7 +91,7 @@ class RecommendationDAO:
     
     def _create_table(self):
         """建立 recommendation_stocks 資料表"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         
         # Single table design: recommendation_stocks
@@ -152,7 +152,7 @@ class RecommendationDAO:
         Returns:
             List of RecommendationRecord objects sorted by date
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -215,7 +215,7 @@ class RecommendationDAO:
         if not self.frequency:
             raise ValueError("frequency must be set when calling save()")
         
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         
         # Clear existing data for this frequency only
@@ -245,7 +245,7 @@ class RecommendationDAO:
         if not self.frequency:
             raise ValueError("frequency must be set when calling add_record()")
         
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         
         # Delete existing stocks for this date and frequency
@@ -273,7 +273,7 @@ class RecommendationDAO:
         Returns:
             RecommendationRecord or None if not found
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -319,7 +319,7 @@ class RecommendationDAO:
         Returns:
             Latest RecommendationRecord or None if empty
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -392,7 +392,7 @@ class RecommendationDAO:
         Args:
             date: Date string in YYYY-MM-DD format
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         
         if self.frequency:
