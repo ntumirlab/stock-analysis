@@ -146,8 +146,11 @@ class RecommendationsParser:
 
             saved_records = []
             failed_dates = []
-            for f_date in sorted_dates:
+            for i, f_date in enumerate(sorted_dates):
                 f_name = candidates[f_date]
+                if i:
+                    # Gemini 呼叫之間的間隔；最後一份之後不再空等
+                    time.sleep(self.api_rate_sleep)
                 logger.info(f"Parsing new file for {f_date}: {f_name}")
 
                 file_path = os.path.join(self.input_folder, f_name)
@@ -158,7 +161,6 @@ class RecommendationsParser:
                         dao.add_record(record)
                         saved_records.append(record)
                         logger.info(f"Saved {len(record.stocks)} stocks for {f_date}")
-                        time.sleep(self.api_rate_sleep)
                     else:
                         failed_dates.append(f_date)
 
