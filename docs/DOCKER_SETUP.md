@@ -347,19 +347,17 @@ python -m jobs.backtest_executor --strategy_class_name=PrisonRabbitStrategy
 |------|------|--------|------|
 | `--user_name` | ✅ | 無 | 使用者名稱 (需與 `config.yaml` 一致) |
 | `--broker_name` | ✅ | 無 | 券商名稱 (`shioaji`) |
-| `--extra_bid_pct` | ❌ | `0` | 額外加價百分比 (例如 `0.01` = 加價 1%) |
 | `--view_only` | ❌ | `false` | 僅查看模式,不實際下單 |
+
+註：下單一律為市價單（漲停價限價模擬），舊版的 `--extra_bid_pct` 參數已移除。
 
 **範例:**
 ```bash
 # 一般下單
-python -m jobs.order_executor --user_name=junting --broker_name=shioaji
-
-# 加價 1% 下單 (尾盤)
-python -m jobs.order_executor --user_name=junting --broker_name=shioaji --extra_bid_pct=0.01
+python -m jobs.order_executor --user_name=kiri --broker_name=shioaji
 
 # 只看不下單 (測試模式)
-python -m jobs.order_executor --user_name=junting --broker_name=shioaji --view_only
+python -m jobs.order_executor --user_name=kiri --broker_name=shioaji --view_only
 ```
 
 ---
@@ -411,7 +409,7 @@ tail -f logs/backtest.log
 ```bash
 # 手動執行下單 (測試模式)
 docker exec -it stock-scheduler python -m jobs.order_executor \
-  --user_name=junting \
+  --user_name=kiri \
   --broker_name=shioaji \
   --view_only
 
@@ -421,8 +419,11 @@ docker exec -it stock-scheduler python -m jobs.backtest_executor \
 
 # 手動抓取帳務資料
 docker exec -it stock-scheduler python -m jobs.scheduler \
-  --user_name=junting \
+  --user_name=kiri \
   --broker_name=shioaji
+
+# 手動發布推薦清單 JSON 到 Drive
+docker exec -it stock-scheduler python -m jobs.recommendations_publisher
 ```
 
 ### 更新程式
@@ -438,6 +439,18 @@ docker compose up -d --build
 docker compose ps
 docker compose logs --tail=50
 ```
+
+### 部署與升級紀律
+
+- **避開排程時段 merge / 部署**：CI 部署會 `docker compose down`，正在執行的 cron job
+  會被直接砍掉。避開 07:30（發布清單）、08:10（下單）、20:30（帳務）、21:50–23:00（回測）、
+  週日 23:45–24:00（清單抓取解析）。
+- **升級 finlab / shioaji 後必做**：跑一次 `--view_only` 下單，確認
+  「log 中 finlab 印出的委託筆數」＝「Inserted N order logs 的 N」＝「TG 摘要筆數」。
+  order log 是用 regex 從 finlab 輸出字串抽取的，格式改變會**靜默抽到 0 筆**
+  （單照下但 DB 無紀錄、無摘要通知），此檢查是唯一防線。
+- 升級 finlab 版本時參考過往做法：留舊 image tag、同晚資料跑新舊兩版比對
+  （1.3.0 → 2.0.13 曾以此驗到位元級一致）。
 
 ### 清理資源
 
