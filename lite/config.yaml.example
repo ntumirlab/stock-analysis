@@ -1,0 +1,53 @@
+# GoldenAI Lite 設定範本：複製為 config.yaml 後填寫
+# 敏感資訊一律放 .env（見 .env.example），此檔只放 ${...} 引用與策略參數
+
+# 全域環境變數
+env:
+  FINLAB_API_TOKEN: "${FINLAB_API_TOKEN}"
+  GOOGLE_TOKEN_PATH: "${GOOGLE_TOKEN_PATH}"
+
+# Telegram 通知
+notification:
+  enabled: true
+  telegram:
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"
+
+users:
+  # 注意：david 這個 key 與 image 內建排程綁定（--user_name=david），請勿改名
+  david:
+    shioaji:
+      env:
+        SHIOAJI_API_KEY: "${SHIOAJI_API_KEY}"
+        SHIOAJI_SECRET_KEY: "${SHIOAJI_SECRET_KEY}"
+        SHIOAJI_CERT_PERSON_ID: "${SHIOAJI_CERT_PERSON_ID}"
+        SHIOAJI_CERT_PATH: "${SHIOAJI_CERT_PATH}"
+        SHIOAJI_CERT_PASSWORD: "${SHIOAJI_CERT_PASSWORD}"
+      constant:
+        rebalance_safety_weight: 0.3
+        strategy_class_name: "GoldenAIStrategy"
+        golden_ai_frequency: "weekly"
+        hold_weeks: 1              # 週一全額買進、週五全數賣出、每週換清單
+        cycle_start_date: ""       # 必填：第一個買入日（週一），如 "2026-07-13"；中途改動請選在空手的週期交界
+        invest_ratio: 0.7          # 總投入比例上限（按當日總資產計），其餘留現金
+        excluded_stocks: []        # 不想買的股票代號清單，如 ["2330"]
+
+# 推薦清單來源（Google Drive 發布資料夾，由實驗室提供 folder id）
+recommendation_tasks:
+  weekly:
+    fetch_folder_id: "${WEEKLY_FETCH_FOLDER_ID}"
+
+# Golden AI 策略參數（與實驗室端一致，不建議修改）
+golden_ai:
+  weekly:
+    buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)
+    sell_weekday: 5        # 賣出日：週一 ~ 週五 (1-5)
+    rank_start: 1          # 回測起始的 Top N
+    rank_end: 8            # 回測結束的 Top N
+    use_db_sl: false       # 是否使用資料庫中的停損價格，若為 false 則不使用停損
+    global_sl: null        # 全域停損比例，若不用則設為 null
+    use_db_tp: false       # 是否使用資料庫中的停利價格，若為 false 則不使用停利
+    global_tp: null        # 全域停利比例，若不用則設為 null
+    trade_at_price: 'open_close_mix'  # 成交價
+    lookback_months: 3     # 回測期間：幾個月
+    num_workers: 8         # 平行 worker 數 (1 = sequential)

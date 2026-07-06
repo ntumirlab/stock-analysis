@@ -1,0 +1,47 @@
+name: goldenai-lite
+
+services:
+  lite-scheduler:
+    platform: linux/amd64
+    image: goldenai-lite:${GOLDENAI_LITE_TAG:?請在 .env 設定 GOLDENAI_LITE_TAG（如 v1.0.0）}
+    container_name: goldenai-lite-scheduler
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+      # credentials 需可寫：Drive token 過期時 fetcher 會自動 refresh 並回寫
+      - ./credentials:/app/credentials
+      - ./data_prod.db:/app/data_prod.db
+      - ./logs:/app/logs
+      - ./finlab_db:/root/finlab_db
+    environment:
+      - TZ=Asia/Taipei
+
+  lite-dashboard:
+    platform: linux/amd64
+    image: goldenai-lite:${GOLDENAI_LITE_TAG:?請在 .env 設定 GOLDENAI_LITE_TAG（如 v1.0.0）}
+    container_name: goldenai-lite-dashboard
+    restart: unless-stopped
+    volumes:
+      # dashboard 只讀本地 DB，不掛 config/.env（對外開 port 的容器不持有憑證）
+      - ./data_prod.db:/app/data_prod.db
+    ports:
+      # 只綁 localhost；要開放內網再改成 "8060:8060"
+      - "127.0.0.1:8060:8060"
+    environment:
+      - TZ=Asia/Taipei
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8060", "lite_dashboard:server"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8060"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# 使用說明（詳見 README.md）:
+# 1. docker load -i goldenai-lite_vX.Y.Z.tar
+# 2. 複製 .env.example 到 .env、config.yaml.example 到 config.yaml 並填入設定
+# 3. 憑證（.pfx、google_token.json）放進 ./credentials/
+# 4. 建立空白資料庫檔: touch data_prod.db
+# 5. 啟動: docker compose up -d
+# 6. 看排程日誌: docker compose logs -f lite-scheduler ；或看 ./logs/
