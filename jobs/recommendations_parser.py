@@ -24,7 +24,7 @@ class RecommendationsParser:
     def __init__(self, task_name, config_path="config.yaml", base_log_directory="logs"):
         self.task_name = task_name
         self.timestamp = datetime.now(ZoneInfo("Asia/Taipei"))
-        
+
         self.logger_manager = LoggerManager(
             base_log_directory=base_log_directory,
             current_datetime=self.timestamp,
@@ -40,7 +40,7 @@ class RecommendationsParser:
         self.max_retries = self.llm_config.get('max_retries', 3)
 
         prompt_file_path = self.llm_config.get('prompt_file_path')
-            
+
         try:
             with open(prompt_file_path, 'r', encoding='utf-8') as f:
                 self.prompt_template = f.read()
@@ -111,19 +111,19 @@ class RecommendationsParser:
         dao = RecommendationDAO(frequency=self.task_name)
         existing_records = dao.load()
         existing_dates = {record.date for record in existing_records}
-        
+
         candidates = {}
-        
+
         files = os.listdir(self.input_folder)
         for f in files:
-            if not f.endswith(".md"): 
+            if not f.endswith(".md"):
                 continue
 
             f_date = self._extract_date(f)
-            
+
             if not f_date or f_date in existing_dates:
                 continue
-            
+
             # 比較同日期的檔案，只保留時間較晚的 (較新的)
             if f_date not in candidates:
                 candidates[f_date] = f
@@ -133,7 +133,7 @@ class RecommendationsParser:
                     candidates[f_date] = f
 
         sorted_dates = sorted(candidates.keys())
-        
+
         if not sorted_dates:
             # weekly 與 monthly 上游都是每週更新，週日跑到這裡代表清單缺席
             logger.info("No new dates to process.")
