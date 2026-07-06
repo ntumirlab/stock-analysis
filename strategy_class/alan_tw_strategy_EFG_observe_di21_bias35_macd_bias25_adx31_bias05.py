@@ -2,7 +2,8 @@
 Alan TW Strategy EFG Observe DI21 Bias35 MACD Bias25 ADX31 Bias05
 
 基底同 AlanTWStrategyEFGObserveDI21Bias35MACDBias25，新增 OR 分支：
-    ADX > 31 時，用小乖離 -0.5% 快速鎖利
+    ADX > 31（強趨勢）時，用小乖離 -0.5% 快速鎖利；
+    盤整期（低 ADX）維持 -3.5% 大乖離門檻，避免洗掉潛力股
 
 完整出場條件：
     3日線↓ AND DIF↓ AND (
@@ -17,7 +18,7 @@ from finlab import data
 from .alan_tw_strategy_EFG_observe import AlanTWStrategyEFGObserve
 
 
-class AlanTWStrategyEFGObserveDI21Bias35MACDBias25ADX31(AlanTWStrategyEFGObserve):
+class AlanTWStrategyEFGObserveDI21Bias35MACDBias25ADX31Bias05(AlanTWStrategyEFGObserve):
 
     def get_strategy_name(self):
         return "EFG_Observe_新出場_乖離3.5%_DI21_MACD乖離2.5%_ADX31乖離0.5%"
