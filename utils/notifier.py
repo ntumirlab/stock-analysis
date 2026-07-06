@@ -1,7 +1,8 @@
 """
-通知系統模組 - Telegram 錯誤通知
+通知系統模組 - Telegram 通知
 
-僅在系統發生錯誤時發送 Telegram 通知，避免訊息過於頻繁。
+三個等級：send_success（✅ 下單摘要、清單入庫）、send_warning（⚠️ 非致命異常，
+如週日沒新清單）、send_error（🚨 job 掛掉）。無事件的日子保持安靜。
 採用可擴展架構，未來可輕鬆新增其他通知渠道。
 
 Author: Stock Analysis System
@@ -64,9 +65,9 @@ class TelegramNotifier:
 
 class NotificationManager:
     """
-    通知管理器 - 僅支援錯誤通知
+    通知管理器
 
-    統一管理錯誤通知的發送，目前支援 Telegram。
+    統一管理通知的發送（success / warning / error 三個等級），目前支援 Telegram。
     客戶可透過 config.yaml 關閉通知功能。
     """
 
@@ -94,6 +95,66 @@ class NotificationManager:
             else:
                 self.logger.warning("Telegram 設定不完整 (bot_token 或 chat_id 未設定)，通知功能將被停用")
                 self.enabled = False
+
+    def _send_notice(
+        self,
+        emoji: str,
+        title: str,
+        task_name: str,
+        body: str,
+        user_name: Optional[str] = None,
+        broker_name: Optional[str] = None
+    ) -> bool:
+        """組合通用版面（標題/時間/任務/用戶/券商 + 內文）並發送"""
+        if not self.is_enabled():
+            return False
+
+        timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
+
+        message = f"{emoji} *{title}*\n\n"
+        message += f"📅 *時間*: `{timestamp}`\n"
+        message += f"📋 *任務*: {task_name}\n"
+
+        if user_name:
+            message += f"👤 *用戶*: {user_name}\n"
+        if broker_name:
+            message += f"📊 *券商*: {broker_name}\n"
+
+        message += f"\n{body}"
+
+        return self.telegram.send_message(message)
+
+    def send_success(
+        self,
+        task_name: str,
+        body: str,
+        user_name: Optional[str] = None,
+        broker_name: Optional[str] = None
+    ) -> bool:
+        """
+        發送成功/資訊通知（如下單摘要、清單解析入庫）
+
+        Args:
+            task_name: 任務名稱（如 "早盤下單摘要"、"清單解析 (weekly)"）
+            body: 已格式化的內文（見 core/notification_formats.py）
+            user_name: 使用者名稱（可選）
+            broker_name: 券商名稱（可選）
+        """
+        return self._send_notice("✅", "股票系統通知", task_name, body, user_name, broker_name)
+
+    def send_warning(
+        self,
+        task_name: str,
+        body: str,
+        user_name: Optional[str] = None,
+        broker_name: Optional[str] = None
+    ) -> bool:
+        """
+        發送警告通知（非致命異常，如週日沒有新清單、清單解析失敗）
+
+        參數同 send_success。
+        """
+        return self._send_notice("⚠️", "股票系統警告", task_name, body, user_name, broker_name)
 
     def send_error(
         self,

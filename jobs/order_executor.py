@@ -14,6 +14,7 @@ from utils.notifier import create_notification_manager
 from finlab.portfolio import Portfolio, PortfolioSyncManager
 from dao import OrderDAO, AccountDAO
 from utils.stock_mapper import StockMapper
+from core.notification_formats import format_order_summary
 
 # 在導入 finlab 後立即應用補丁
 apply_finlab_patches()
@@ -58,6 +59,7 @@ class OrderExecutor:
         self.order_dao = OrderDAO()
         self.account_dao = AccountDAO()
         self.stock_mapper = StockMapper()
+        self.notifier = create_notification_manager(self.config_loader.config.get('notification', {}), logger)
 
     def run_strategy_and_sync(self):
         strategy_class_name = self.config_loader.get_user_constant("strategy_class_name")
@@ -122,6 +124,14 @@ class OrderExecutor:
             account_name = self.user_name+"_"+self.broker_name
             account_id = self.account_dao.get_account_id(account_name, broker_name=self.broker_name, user_name=self.user_name)
             self.order_dao.insert_order_logs(order_logs, account_id, self.order_timestamp, view_only=self.view_only)
+
+            # 下單摘要通知（send_message 內部吞例外，通知失敗不影響下單流程）
+            self.notifier.send_success(
+                task_name="早盤下單摘要",
+                body=format_order_summary(order_logs, view_only=self.view_only),
+                user_name=self.user_name,
+                broker_name=self.broker_name,
+            )
 
 
     def _handle_alerting_stocks_reservation(self):

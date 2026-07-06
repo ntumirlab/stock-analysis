@@ -8,6 +8,11 @@ from google.genai import types
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from core.recommendation_parsing import extract_recommendation_date, parse_recommendation_response
+from core.notification_formats import (
+    format_no_new_recommendations,
+    format_parse_failures,
+    format_parse_success,
+)
 from dao.recommendation_dao import RecommendationDAO
 from utils.config_loader import ConfigLoader
 from utils.logger_manager import LoggerManager
@@ -57,6 +62,9 @@ class RecommendationsParser:
         if not self.api_key:
             raise EnvironmentError("Missing environment variable: GOOGLE_API_KEY")
         self.client = genai.Client(api_key=self.api_key)
+
+        self.notifier = create_notification_manager(
+            self.config_loader.config.get('notification', {}), logger)
 
     def _extract_date(self, filename):
         return extract_recommendation_date(filename, self.task_name)
@@ -127,11 +135,17 @@ class RecommendationsParser:
         sorted_dates = sorted(candidates.keys())
         
         if not sorted_dates:
+            # weekly 與 monthly 上游都是每週更新，週日跑到這裡代表清單缺席
             logger.info("No new dates to process.")
+            self.notifier.send_warning(
+                task_name=f"清單解析 ({self.task_name})",
+                body=format_no_new_recommendations(self.task_name),
+            )
         else:
             logger.info(f"Found {len(sorted_dates)} new dates to process: {sorted_dates}")
 
-            saved_count = 0
+            saved_records = []
+            failed_dates = []
             for f_date in sorted_dates:
                 f_name = candidates[f_date]
                 logger.info(f"Parsing new file for {f_date}: {f_name}")
@@ -142,11 +156,25 @@ class RecommendationsParser:
 
                     if record:
                         dao.add_record(record)
-                        saved_count += 1
+                        saved_records.append(record)
                         logger.info(f"Saved {len(record.stocks)} stocks for {f_date}")
                         time.sleep(self.api_rate_sleep)
+                    else:
+                        failed_dates.append(f_date)
 
-            logger.info(f"Updated {saved_count}/{len(sorted_dates)} new records to database")
+            logger.info(f"Updated {len(saved_records)}/{len(sorted_dates)} new records to database")
+
+            if saved_records:
+                self.notifier.send_success(
+                    task_name=f"清單解析 ({self.task_name})",
+                    body=format_parse_success(self.task_name, saved_records),
+                )
+            if failed_dates:
+                # _call_gemini 重試耗盡回 None 不拋例外，此前是靜默失敗
+                self.notifier.send_warning(
+                    task_name=f"清單解析 ({self.task_name})",
+                    body=format_parse_failures(self.task_name, failed_dates),
+                )
 
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
