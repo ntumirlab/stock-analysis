@@ -2,6 +2,8 @@ from finlab import data
 from finlab.markets.tw import TWMarket
 import pandas as pd
 
+from core.price_frames import mix_open_close
+
 class TargetWeekdayTWMarket(TWMarket):
     def __init__(self, buy_weekday=None, backtest_date=None):
         super().__init__()
@@ -73,22 +75,17 @@ class TargetWeekdayTWMarket(TWMarket):
                     return self._truncate(avg_price)
 
             # 買入日使用開盤價，其餘使用收盤價
+            # （開盤/收盤兩資料集收盤後非同步更新，混合邏輯需先對齊，見 core/price_frames.py）
             if trade_at_price == 'open_close_mix':
                 if self.buy_weekday is None:
                     raise Exception("使用 'open_close_mix' 時，必須在初始化 MarketInfo 時提供 buy_weekday")
                 if adj:
                     adj_open = data.get('etl:adj_open')
                     adj_close = data.get('etl:adj_close')
-                    buy_days = adj_open.index.dayofweek == self.buy_weekday
-                    adj_open_close_mix = adj_close.copy()
-                    adj_open_close_mix.loc[buy_days] = adj_open.loc[buy_days]
-                    return self._truncate(adj_open_close_mix)
+                    return self._truncate(mix_open_close(adj_open, adj_close, self.buy_weekday))
                 else:
                     open_ = data.get('price:開盤價')
                     close = data.get('price:收盤價')
-                    buy_days = open_.index.dayofweek == self.buy_weekday
-                    open_close_mix = close.copy()
-                    open_close_mix.loc[buy_days] = open_.loc[buy_days]
-                    return self._truncate(open_close_mix)
+                    return self._truncate(mix_open_close(open_, close, self.buy_weekday))
 
         raise Exception(f'**ERROR: trade_at_price is not allowed (accepted types: pd.DataFrame, pd.Series, str).')
