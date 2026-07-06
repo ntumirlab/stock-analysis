@@ -13,7 +13,7 @@ class BalanceDAO:
     
     def _create_table(self):
         """建立 balance_history 資料表，記錄帳戶餘額資訊"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS balance_history (
@@ -63,7 +63,7 @@ class BalanceDAO:
             
         batch_ts_str = fetch_timestamp.strftime("%Y-%m-%d %H:%M:%S")
         
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -101,7 +101,7 @@ class BalanceDAO:
         Returns:
             list: 餘額歷史記錄列表
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row  # 使結果以字典形式返回
         cursor = conn.cursor()
         
@@ -139,7 +139,7 @@ class BalanceDAO:
         Returns:
             dict: 最新餘額記錄，如果沒有則返回None
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -175,7 +175,7 @@ class BalanceDAO:
         Returns:
             dict: 包含每月首日和末日餘額的字典，格式為 {年份: {月份: {"start": 值, "end": 值}}}
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         

@@ -6,14 +6,18 @@
 + 策略開發與回測
     + 利用 FinLab 的即時資料進行股票策略設計與歷史回測。
 + 多用戶與多券商支援
-    + 支援多使用者，並可根據需求設定不同券商（如玉山、永豐），相關參數可於 config.yaml 中調整。
-+ 自動化下單
-    + crontab排程自動執行交易，透過玉山富果 API、Shioaji永豐API 進行下單。
-+ 批次任務與 Dashboard
-    + Cronjob 1 - fetech.sh 帳務資料抓取: 獲取成交明細、庫存明細、銀行餘額、交割款 → 紀錄 → 資料庫
-    + Cronjob 2 - backtest.sh 回測獨立報表: FinLab 資料 → 策略回測 → 產生html報告 → File Browser(root/assets/)
-    + Cronjob 3 - order.sh 下單流程: FinLab 資料 → 策略回測 → 下單（調整持倉） → 紀錄 → 資料庫
-    + Web Dashboard: 展示下單資訊、帳戶資金水位變化圖、每月實際回報率圖以及 FinLab 回測報告。
+    + 支援多使用者，下單走永豐 Shioaji API，相關參數可於 config.yaml 中調整。
+      （玉山富果為 legacy 路徑：finlab 2.x 依賴的 esun_trade 套件未公開發行，目前停用）
++ GoldenAI 推薦清單管線
+    + 每週日深夜：`drive_fetcher` 從 Google Drive 抓取推薦報告 → `recommendations_parser` 以 Gemini 解析入庫
+    + 每天 07:30：`recommendations_publisher` 將解析結果以 JSON 發布回 Google Drive（供下游系統使用）
++ 批次任務與 Dashboard（排程見 `docker/crontab`，直接呼叫 `python -m jobs.*`）
+    + 每天 08:10 - `order_executor` 下單: 推薦清單 → 滾動 tranche 持倉計算 → 下單 → 紀錄 → 資料庫
+    + 每天 20:30 - `scheduler` 帳務抓取: 庫存明細、銀行餘額、交割款 → 資料庫
+    + 每晚 21:50 起 - `backtest_executor` 各策略回測: 產生報告 → assets/ 與資料庫
+    + Web Dashboard: 帳戶頁（:5000，下單紀錄／庫存／資金水位）、GoldenAI 回測儀表板（:8051）
++ Telegram 通知
+    + 任務失敗（🚨）、下單摘要（✅）、週日清單解析結果與缺席警告（⚠️）
 
 <img width="1915" height="1077" alt="image" src="https://github.com/user-attachments/assets/9bf3fc18-3ab3-4662-b18f-9f3f04259341" />
 
@@ -72,7 +76,7 @@
 
 **1. 下載專案**
 ```bash
-git clone https://github.com/JunTingLin/stock-analysis.git
+git clone https://github.com/ntumirlab/stock-analysis.git
 cd stock-analysis
 ```
 
@@ -83,7 +87,7 @@ cp .env.example .env
 nano .env
 
 # 參考 .env.example 了解所有環境變數
-# 參考 config/config.yaml 了解配置結構
+# 參考 config.yaml（根目錄）了解配置結構
 ```
 
 **3. 啟動服務**

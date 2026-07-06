@@ -6,10 +6,14 @@ import traceback
 import keyring
 import finlab
 from finlab.online.sinopac_account import SinopacAccount
-from fugle_trade.util import setup_keyring
 
-# finlab 2.x 的 Fugle 模組依賴未公開發行的 esun_trade 套件，無法安裝；
-# fugle 為 legacy 路徑（正式排程僅 shioaji），import 失敗時僅停用 fugle 分支
+# fugle 為 legacy 路徑（正式排程僅 shioaji）：fugle_trade 與 finlab 2.x 的
+# Fugle 模組（依賴未公開發行的 esun_trade）都可能不在環境中，import 失敗
+# 僅停用 fugle 分支，不得影響 shioaji 下單路徑
+try:
+    from fugle_trade.util import setup_keyring
+except ImportError:
+    setup_keyring = None
 try:
     from finlab.online.fugle_account import FugleAccount
 except ImportError:
@@ -33,8 +37,8 @@ class Authenticator:
         logger.info("Successfully logged into FinLab")
 
     def _login_fugle(self):
-        if FugleAccount is None:
-            raise RuntimeError("finlab 2.x 不再支援 Fugle（esun_trade 套件未公開發行），無法登入 fugle 帳戶")
+        if FugleAccount is None or setup_keyring is None:
+            raise RuntimeError("環境缺少 Fugle 相關套件（fugle_trade / esun_trade），無法登入 fugle 帳戶")
         if not self.config_loader:
             raise RuntimeError("ConfigLoader is required for Authenticator. Pass an instance when constructing.")
         required_vars = [

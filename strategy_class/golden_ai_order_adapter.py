@@ -12,6 +12,8 @@ from core.trading_cycles import (
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
+from core.notification_formats import format_universe_missing
+from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,10 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
     週期以 cycle_start_date（錨點）純日期運算往後鋪排，與市場資料、
     下單紀錄無關；假日的買賣訊號交給 finlab 對齊到下一個交易日（與回測一致）。
     """
+
+    # 同一次執行會建多個 tranche adapter（清單相同），用 class 層級去重
+    # 避免同一批缺漏股重複通知
+    _warned_universe_keys = set()
 
     def __init__(self, frequency='weekly', hold_weeks=1, cycle_start_date=None,
                  config_path="config.yaml", backtest_date=None):
@@ -36,6 +42,9 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
         self.cycle_start_date = pd.Timestamp(cycle_start_date).normalize()
         self.hold_weeks = hold_weeks
         self.ranks = list(range(self.rank_start, self.rank_end + 1))
+        self.notifier = create_notification_manager(
+            self.config_loader.config.get('notification', {}), logger)
+        self._latest_selected_ids = []
 
     def _compute_cycles(self, until):
         return compute_cycles(self.cycle_start_date, self.buy_weekday,
@@ -55,6 +64,21 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
                 universe = universe[universe.index <= self.backtest_date]
 
             today = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
+
+            # live 護欄：清單選中的股票若不在 universe（finlab 股價表），
+            # _create_df 的欄位對齊會把它靜默歸零、不會買進——要看得見
+            missing = [sid for sid in self._latest_selected_ids
+                       if sid not in universe.columns]
+            if missing:
+                logger.warning(f"推薦清單股票不在 finlab 股價表，將無法買進: {missing}")
+                warn_key = (str(today.date()), tuple(missing))
+                if warn_key not in GoldenAIOrderAdapter._warned_universe_keys:
+                    GoldenAIOrderAdapter._warned_universe_keys.add(warn_key)
+                    self.notifier.send_warning(
+                        task_name="下單清單檢查",
+                        body=format_universe_missing(missing),
+                    )
+
             # 延伸到今天：早上跑的時候市場資料只到前一交易日，
             # 不延伸的話最新週日清單與今日進場訊號都會被裁掉
             end_date = max(universe.index.max(), today)
@@ -188,8 +212,10 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
             selected = [all_stocks[r - 1] for r in self.ranks if r <= len(all_stocks)]
             stocks_info = ', '.join(f"{s.id}({s.name or '?'})" for s in selected)
             logger.info(f"最新推薦清單 ({latest_rec.date}): [{stocks_info}]")
+            self._latest_selected_ids = [str(s.id) for s in selected]
         else:
             logger.warning("DB 無推薦清單")
+            self._latest_selected_ids = []
 
         today = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
         self._check_recommendation_freshness(latest_rec, today)

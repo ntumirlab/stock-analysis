@@ -61,6 +61,16 @@ def format_parse_failures(task_name: str, failed_dates: List[str]) -> str:
     )
 
 
+def format_universe_missing(missing_ids: List[str]) -> str:
+    """推薦清單股票不在 finlab 股價表（position 對齊時會被靜默排除）的警告內文。"""
+    ids = "、".join(str(sid) for sid in missing_ids)
+    return (
+        f"推薦清單中有 {len(missing_ids)} 檔不在 finlab 股價資料範圍，"
+        f"將無法買進（position 對齊時被排除）：{ids}\n"
+        f"可能原因：新上市、代號有誤、資料未更新。"
+    )
+
+
 def format_no_new_recommendations(task_name: str) -> str:
     """週日執行卻沒有新清單檔案的警告內文（weekly 與 monthly 上游均每週更新）。"""
     return (

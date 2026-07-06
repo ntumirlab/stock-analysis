@@ -83,20 +83,42 @@ class ShioajiReservationHandler(ReservationHandlerBase):
     - 兩者皆與借券無關
     """
 
+    # finlab security_categories 的 market 欄位 → shioaji exchange
+    _MARKET_TO_EXCHANGE = {'sii': 'TSE', 'otc': 'OTC', 'rotc': 'OES'}
+
     def __init__(self, account: SinopacAccount):
         super().__init__(account)
+
+    def _lookup_exchange(self, stock_id):
+        """查股票所屬交易所；查不到時退回 TSE（原本的寫死行為，不會更糟）"""
+        try:
+            from finlab import data
+            categories = data.get('security_categories')
+            row = categories[categories['stock_id'].astype(str) == str(stock_id)]
+            if not row.empty:
+                market = row.iloc[0].get('market')
+                exchange = self._MARKET_TO_EXCHANGE.get(market)
+                if exchange:
+                    return exchange
+            logger.warning(f"{stock_id} 查無市場別，圈存合約預設 TSE")
+        except Exception as e:
+            logger.warning(f"查詢 {stock_id} 市場別失敗，圈存合約預設 TSE: {e}")
+        return 'TSE'
+
+    def _build_contract(self, stock_id):
+        """建立圈存用合約（login 時 fetch_contract=False，需手動組）"""
+        return sj.contracts.Contract(
+            security_type='STK',
+            code=stock_id,
+            exchange=self._lookup_exchange(stock_id)
+        )
 
     def _reserve_for_buy(self, stock_info):
         """買入警示股：圈存資金（預收款項）"""
         stock_id = stock_info['stock_id']
         quantity = stock_info['quantity']
 
-        # 建立合約（login 時 fetch_contract=False）
-        contract = sj.contracts.Contract(
-            security_type='STK',
-            code=stock_id,
-            exchange='TSE'
-        )
+        contract = self._build_contract(stock_id)
 
         # 計算股數與預估價格
         shares = int(round(abs(quantity) * 1000))
@@ -124,12 +146,7 @@ class ShioajiReservationHandler(ReservationHandlerBase):
         stock_id = stock_info['stock_id']
         quantity = stock_info['quantity']
 
-        # 建立合約（login 時 fetch_contract=False）
-        contract = sj.contracts.Contract(
-            security_type='STK',
-            code=stock_id,
-            exchange='TSE'
-        )
+        contract = self._build_contract(stock_id)
 
         # 計算股數
         shares = int(round(abs(quantity) * 1000))

@@ -10,7 +10,7 @@ class OrderDAO:
     
     def _create_table(self):
         """建立 order_history 資料表，記錄下單紀錄並以 account_id 作為外鍵"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS order_history (
@@ -43,7 +43,7 @@ class OrderDAO:
             order_timestamp (datetime.datetime): 批次時間，用於標記這次下單作業。
             view_only (bool): 是否為模擬下單 (True) 或實際下單 (False)
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         if order_timestamp is None:
             raise ValueError("order_timestamp cannot be None")
@@ -86,7 +86,7 @@ class OrderDAO:
         根據 account_id 與 query_date 撈取當天的訂單資料。
         query_date 為 datetime.date 物件
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row  # 使結果以字典形式返回
         cursor = conn.cursor()
         
@@ -112,7 +112,7 @@ class OrderDAO:
     
     def get_available_years(self, account_id):
         """取得指定帳戶所有可用的年份"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT strftime('%Y', order_timestamp) as year
@@ -126,7 +126,7 @@ class OrderDAO:
 
     def get_available_months(self, account_id, year):
         """取得指定帳戶和年份所有可用的月份"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT strftime('%m', order_timestamp) as month
@@ -140,7 +140,7 @@ class OrderDAO:
 
     def get_available_days(self, account_id, year, month):
         """取得指定帳戶、年份和月份所有可用的日期"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT strftime('%d', order_timestamp) as day
