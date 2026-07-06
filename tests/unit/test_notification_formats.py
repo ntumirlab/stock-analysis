@@ -5,6 +5,7 @@ from core.notification_formats import (
     format_order_summary,
     format_parse_failures,
     format_parse_success,
+    format_universe_missing,
     shares_from_lots,
 )
 from dao.recommendation_dao import RecommendationRecord, Stock
@@ -68,3 +69,10 @@ def test_no_new_recommendations_content():
     body = format_no_new_recommendations("monthly")
     assert "monthly" in body
     assert "沒有發現新的推薦清單" in body
+
+
+def test_universe_missing_content():
+    body = format_universe_missing(["6669", "2383"])
+    assert "2 檔" in body
+    assert "6669、2383" in body
+    assert "無法買進" in body
