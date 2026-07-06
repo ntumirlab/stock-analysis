@@ -38,9 +38,8 @@ def format_order_summary(order_logs: List[Dict], view_only: bool) -> str:
     )
 
 
-def format_parse_success(task_name: str, records: Iterable) -> str:
-    """清單解析成功的內文。records 為 RecommendationRecord（duck typing：.date / .stocks[.id/.name]）。"""
-    records = list(records)
+def _format_record_lines(records: List) -> str:
+    """逐份清單列出日期與個股（記錄格式同 RecommendationRecord：.date / .stocks[.id/.name]）。"""
     parts = []
     for record in records:
         stocks = "、".join(
@@ -48,8 +47,29 @@ def format_parse_success(task_name: str, records: Iterable) -> str:
             for stock in record.stocks
         )
         parts.append(f"*{record.date}*（{len(record.stocks)} 檔）:\n{stocks}")
+    return "\n\n".join(parts)
 
-    return f"{task_name} 清單解析入庫 {len(records)} 份\n\n" + "\n\n".join(parts)
+
+def format_parse_success(task_name: str, records: Iterable) -> str:
+    """清單解析成功的內文。records 為 RecommendationRecord（duck typing：.date / .stocks[.id/.name]）。"""
+    records = list(records)
+    return f"{task_name} 清單解析入庫 {len(records)} 份\n\n" + _format_record_lines(records)
+
+
+def format_fetch_success(task_name: str, records: Iterable) -> str:
+    """Lite 端從 Drive 同步清單入庫成功的內文。records 同 format_parse_success。"""
+    records = list(records)
+    return f"{task_name} 清單同步入庫 {len(records)} 份\n\n" + _format_record_lines(records)
+
+
+def format_fetch_failures(task_name: str, failed_dates: List[str]) -> str:
+    """Lite 端下載的發布 JSON 驗證失敗（整份拒收）的內文。"""
+    return (
+        f"{task_name} 清單有 {len(failed_dates)} 份驗證失敗（整份拒收）: "
+        f"{', '.join(failed_dates)}\n"
+        f"未入庫日期若含當週清單，下單會被 freshness 檢查擋下；"
+        f"請查 log 並檢查 Drive 發布資料夾的檔案內容。"
+    )
 
 
 def format_parse_failures(task_name: str, failed_dates: List[str]) -> str:

@@ -1,6 +1,8 @@
 """core/notification_formats 的單元測試：下單摘要與清單解析結果的訊息組字。"""
 
 from core.notification_formats import (
+    format_fetch_failures,
+    format_fetch_success,
     format_no_new_recommendations,
     format_order_summary,
     format_parse_failures,
@@ -56,6 +58,25 @@ def test_parse_success_content():
     assert "3017 奇鋐" in body
     assert "、2330" in body  # name 缺時只顯示代號
     assert "*2026-07-12*（1 檔）" in body
+
+
+def test_fetch_success_content():
+    records = [
+        RecommendationRecord(date="2026-07-05", stocks=[
+            Stock(id="3017", sentiment="STRONG_BUY", name="奇鋐"),
+        ]),
+    ]
+    body = format_fetch_success("weekly", records)
+    assert "weekly 清單同步入庫 1 份" in body
+    assert "*2026-07-05*（1 檔）" in body
+    assert "3017 奇鋐" in body
+
+
+def test_fetch_failures_content():
+    body = format_fetch_failures("weekly", ["2026-06-28", "2026-07-05"])
+    assert "2 份驗證失敗" in body
+    assert "2026-06-28" in body
+    assert "freshness" in body
 
 
 def test_parse_failures_content():
