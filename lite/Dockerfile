@@ -44,7 +44,21 @@ COPY lite/strategy_class_init.py /app/strategy_class/__init__.py
 COPY lite_dashboard.py /app/
 
 # IP 守門：strategy_class/ 出現白名單以外的檔案就讓 build 失敗
-RUN [ "$(ls /app/strategy_class | sort)" = "$(printf '__init__.py\ngolden_ai_order_adapter.py\ngolden_ai_tw_strategy_base.py')" ]
+RUN test "$(ls /app/strategy_class | sort)" = "$(printf '__init__.py\ngolden_ai_order_adapter.py\ngolden_ai_tw_strategy_base.py')"
+
+# IP 守門：實驗室端模組（回測、報告解析/清單發布、主 dashboard）不得混入 image
+RUN for f in jobs/backtest_executor.py jobs/recommendations_parser.py \
+        jobs/recommendations_publisher.py jobs/drive_fetcher.py \
+        core/recommendation_parsing.py core/report_rewrap.py dashboard.py; do \
+        test ! -e "/app/$f" || exit 1; \
+    done
+
+# 白名單完整性檢查：把排程與 dashboard 會執行的模組全部 import 一次，
+# 白名單 COPY 漏了任何被依賴的檔案，在 build 期即失敗（而非廠商機的 cron 才爆）。
+# import 的副作用檔（lite_dashboard 建空 DB、shioaji 建空 log）同一層 rm 掉不留進 image
+RUN /opt/conda/envs/stock-analysis/bin/python -c "import jobs.order_executor, jobs.scheduler, \
+        jobs.recommendations_fetcher, jobs.inventory_fetcher, jobs.balance_fetcher, lite_dashboard" && \
+    rm -f /app/data_prod.db /app/shioaji.log
 
 # crontab 烘進 image（排程不開放廠商端修改；改排程 = 發新版）
 COPY lite/crontab /etc/cron.d/lite-cron

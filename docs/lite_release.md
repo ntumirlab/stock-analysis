@@ -26,13 +26,13 @@ docker save -o goldenai-lite_v1.0.0.tar goldenai-lite:v1.0.0
 ## 發版前 checklist
 
 1. `pytest tests/unit` 全綠（CI 亦會擋）。
-2. **IP 驗證**（build 內建守門，人工再確認一次）：
+2. **IP 驗證**：build 內建三道守門（strategy_class 白名單、實驗室端模組黑名單、
+   排程/dashboard 模組 import 完整性），**build 成功即通過**。要人工抽查可跑：
 
    ```bash
-   docker run --rm goldenai-lite:vX.Y.Z ls strategy_class
-   # 只允許三個檔：__init__.py、golden_ai_order_adapter.py、golden_ai_tw_strategy_base.py
-   docker run --rm goldenai-lite:vX.Y.Z bash -c "ls /app; ls jobs core dao"
-   # 確認沒有 backtest_executor、recommendations_parser/publisher、drive_fetcher、dashboard.py
+   docker run --rm goldenai-lite:vX.Y.Z bash -c "ls strategy_class; ls jobs core dao"
+   # strategy_class 只允許三個檔；jobs 不得有 backtest_executor、
+   # recommendations_parser/publisher、drive_fetcher；/app 不得有 dashboard.py
    ```
 
 3. 煙霧測試：照 `lite/README.md` 在乾淨目錄起 compose，手動跑一次
