@@ -9,7 +9,7 @@ env:
 # Telegram 通知
 notification:
   enabled: true
-  title_prefix: "[Lite] "   # 通知標題前綴，區分 Lite 與實驗室系統的訊息
+  title_prefix: "[Lite] "   # 通知標題前綴，區分 Lite 與開發方系統的訊息
   telegram:
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "${TELEGRAM_CHAT_ID}"
@@ -33,12 +33,12 @@ users:
         invest_ratio: 0.7          # 總投入比例上限（按當日總資產計），其餘留現金
         excluded_stocks: []        # 不想買的股票代號清單，如 ["2330"]
 
-# 推薦清單來源（Google Drive 發布資料夾，由實驗室提供 folder id）
+# 推薦清單來源（Google Drive 發布資料夾，由開發方提供 folder id）
 recommendation_tasks:
   weekly:
     fetch_folder_id: "${WEEKLY_FETCH_FOLDER_ID}"
 
-# Golden AI 策略參數（與實驗室端一致，不建議修改）
+# Golden AI 策略參數（與開發方一致，不建議修改）
 golden_ai:
   weekly:
     buy_weekday: 1         # 買入日：週一 ~ 週五 (1-5)

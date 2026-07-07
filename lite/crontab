@@ -6,7 +6,7 @@
 TZ=Asia/Taipei
 
 # 每天 07:50 - 從 Google Drive 同步推薦清單到本地 DB
-# （實驗室端 07:30 發布，留 20 分鐘緩衝；週一撲空會使當日下單被 freshness 檢查擋下）
+# （開發方 07:30 發布，留 20 分鐘緩衝；週一撲空會使當日下單被 freshness 檢查擋下）
 50 7 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.recommendations_fetcher >> /app/logs/recommendations_fetcher.log 2>&1
 
 # 週一到週五 08:10 - 下單（hold_weeks=1 時實際動作為週一買、週五賣，由 config 決定）
