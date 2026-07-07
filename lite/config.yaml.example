@@ -9,6 +9,7 @@ env:
 # Telegram 通知
 notification:
   enabled: true
+  title_prefix: "[Lite] "   # 通知標題前綴，區分 Lite 與實驗室系統的訊息
   telegram:
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "${TELEGRAM_CHAT_ID}"

@@ -81,6 +81,8 @@ class NotificationManager:
         """
         self.logger = logger or logging.getLogger(__name__)
         self.enabled = config.get('enabled', False)
+        # 選配的標題前綴（如 "[Lite] "）：區分不同部署（Lite / 正式機）發出的訊息
+        self.title_prefix = config.get('title_prefix', '')
 
         # 初始化 Telegram
         self.telegram = None
@@ -111,7 +113,7 @@ class NotificationManager:
 
         timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
 
-        message = f"{emoji} *{title}*\n\n"
+        message = f"{emoji} *{self.title_prefix}{title}*\n\n"
         message += f"📅 *時間*: `{timestamp}`\n"
         message += f"📋 *任務*: {task_name}\n"
 
@@ -192,7 +194,7 @@ class NotificationManager:
         # 格式化錯誤訊息
         timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
 
-        message = "🚨 *股票系統錯誤通知*\n\n"
+        message = f"🚨 *{self.title_prefix}股票系統錯誤通知*\n\n"
         message += f"📅 *時間*: `{timestamp}`\n"
         message += f"📋 *任務*: {task_name}\n"
 
