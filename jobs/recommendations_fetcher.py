@@ -1,5 +1,4 @@
 import os
-import argparse
 import logging
 import traceback
 from datetime import datetime
@@ -128,9 +127,6 @@ class RecommendationsFetcher:
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root_dir)
-
-    parser = argparse.ArgumentParser(description="Fetch published recommendation JSON from Google Drive into local DB")
-    args = parser.parse_args()
 
     # 初始化通知管理器
     config_loader = ConfigLoader(os.path.join(root_dir, "config.yaml"))
