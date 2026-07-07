@@ -17,7 +17,7 @@ from utils.notifier import create_notification_manager
 logger = logging.getLogger(__name__)
 
 # Lite 端只讀取發布資料夾。readonly 是 full drive 的子集，token 授權
-# 涵蓋 readonly 以上（如實驗室 token 的 full drive）都能用。
+# 涵蓋 readonly 以上（如開發方 token 的 full drive）都能用。
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 
