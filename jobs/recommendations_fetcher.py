@@ -6,8 +6,9 @@ from zoneinfo import ZoneInfo
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from core.notification_formats import format_fetch_failures, format_fetch_success
-from core.recommendation_fetching import fetch_missing_records
+from core.recommendation_fetching import FileUnavailableError, fetch_missing_records
 from core.recommendation_publishing import is_folder_id_configured
 from dao.recommendation_dao import RecommendationDAO
 from utils.config_loader import ConfigLoader
@@ -59,7 +60,11 @@ class RecommendationsFetcher:
                         token.write(creds.to_json())
                     logger.info("Token refreshed and saved.")
                 except Exception as e:
-                    raise RuntimeError(f"Token refresh failed: {e}. Please run get_token.py locally.")
+                    raise RuntimeError(
+                        f"Token refresh failed: {e}. "
+                        "Google Drive token 已失效，請將此訊息回報開發方，"
+                        "取得新的 google_token.json 後放回 credentials/ 資料夾。"
+                    )
             else:
                 raise FileNotFoundError(f"Valid token not found at '{token_path}'.")
 
@@ -95,10 +100,18 @@ class RecommendationsFetcher:
         return files
 
     def _download_text(self, file_id):
-        content = self.service.files().get_media(
-            fileId=file_id,
-            supportsAllDrives=True
-        ).execute()
+        try:
+            content = self.service.files().get_media(
+                fileId=file_id,
+                supportsAllDrives=True
+            ).execute()
+        except HttpError as e:
+            # 403/404 = 這個檔案本身不可下載（Drive 原生文件、權限被改、已被移走），
+            # 轉成 FileUnavailableError 讓 core 單檔隔離，不擋其他日期入庫；
+            # 其他狀態碼（401/5xx）多為全域問題，維持上拋讓整輪失敗發 🚨
+            if e.resp.status in (403, 404):
+                raise FileUnavailableError(str(e)) from e
+            raise
         return content.decode('utf-8')
 
     def _fetch_task(self, task_name, folder_id):

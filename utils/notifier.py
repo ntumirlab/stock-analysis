@@ -81,8 +81,9 @@ class NotificationManager:
         """
         self.logger = logger or logging.getLogger(__name__)
         self.enabled = config.get('enabled', False)
-        # 選配的標題前綴（如 "[Lite] "）：區分不同部署（Lite / 正式機）發出的訊息
-        self.title_prefix = config.get('title_prefix', '')
+        # 選配的標題前綴（如 "[Lite] "）：區分不同部署（Lite / 正式機）發出的訊息。
+        # 用 or '' 而非 get 預設值：key 存在但值留空（YAML null）也要回到無前綴
+        self.title_prefix = config.get('title_prefix') or ''
 
         # 初始化 Telegram
         self.telegram = None

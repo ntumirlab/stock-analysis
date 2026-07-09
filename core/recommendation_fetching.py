@@ -7,6 +7,7 @@ goldenai-reclist.v1 JSON 在寫入本地 DB 前的 schema 驗證、以及「哪�
 
 import json
 import logging
+import math
 from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -18,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 class PayloadValidationError(ValueError):
     """發布 JSON 不符 schema（版本、欄位、priority 順序）——整份拒收不入庫。"""
+
+
+class FileUnavailableError(Exception):
+    """單一檔案下載不可用（權限、已移走、非二進位檔）——單檔隔離，不擋其他日期。
+
+    由呼叫端的 download_text 拋出（core 不依賴 Drive SDK 的例外型別）。
+    """
 
 
 def date_from_publish_filename(filename: str, frequency: str) -> Optional[str]:
@@ -58,10 +66,13 @@ _REQUIRED_STOCK_FIELDS = (
 
 def _require_optional_number(stock: dict, field: str, position: int) -> None:
     value = stock[field]
-    # bool 是 int 的子類別，須明確排除（true 不是合法的價格）
-    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+    if value is None:
+        return
+    # bool 是 int 的子類別，須明確排除（true 不是合法的價格）；
+    # json.loads 會把非標準的 NaN/Infinity 常數解析成 float，一併拒收
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise PayloadValidationError(
-            f"stocks[{position}].{field} must be a number or null, got {value!r}"
+            f"stocks[{position}].{field} must be a finite number or null, got {value!r}"
         )
 
 
@@ -159,10 +170,11 @@ def fetch_missing_records(remote_files: Dict[str, str],
     dao 為該 frequency 的 RecommendationDAO。抽在 core 讓單元測試不必
     import jobs 套件（jobs/__init__ 頂層會拉 finlab，CI 環境沒有）。
 
-    逐日下載→驗證→入庫（每日各自 atomic）；單一檔案的資料問題（schema
-    走樣、非 UTF-8）記入失敗清單後繼續處理其他日期——歷史壞檔不得擋住
-    當週清單入庫。下載等基礎設施錯誤則直接上拋。
-    回傳 (本次新入庫的 records, 驗證失敗的日期)。
+    逐日下載→驗證→入庫（每日各自 atomic）；單一檔案的問題（schema 走樣、
+    非 UTF-8、單檔下載不可用 FileUnavailableError）記入失敗清單後繼續處理
+    其他日期——歷史壞檔不得擋住當週清單入庫。全域性的基礎設施錯誤
+    （認證失效、list 失敗等）則直接上拋。
+    回傳 (本次新入庫的 records, 拒收的日期)。
     """
     db_dates = {record.date for record in dao.load()}
 
@@ -185,7 +197,7 @@ def fetch_missing_records(remote_files: Dict[str, str],
     for date in missing:
         try:
             record = parse_publish_payload(download_text(remote_dates[date]), task_name, date)
-        except (PayloadValidationError, UnicodeDecodeError) as e:
+        except (PayloadValidationError, UnicodeDecodeError, FileUnavailableError) as e:
             logger.error(f"{task_name} {date}: payload rejected — {e}")
             failed_dates.append(date)
             continue

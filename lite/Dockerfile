@@ -55,9 +55,11 @@ RUN for f in jobs/backtest_executor.py jobs/recommendations_parser.py \
 
 # 白名單完整性檢查：把排程與 dashboard 會執行的模組全部 import 一次，
 # 白名單 COPY 漏了任何被依賴的檔案，在 build 期即失敗（而非 client 機的 cron 才爆）。
+# 下單路徑的 adapter 是 lazy import（order_executor.load_strategies 內），須明列才會被檢查。
 # import 的副作用檔（lite_dashboard 建空 DB、shioaji 建空 log）同一層 rm 掉不留進 image
 RUN /opt/conda/envs/stock-analysis/bin/python -c "import jobs.order_executor, jobs.scheduler, \
-        jobs.recommendations_fetcher, jobs.inventory_fetcher, jobs.balance_fetcher, lite_dashboard" && \
+        jobs.recommendations_fetcher, jobs.inventory_fetcher, jobs.balance_fetcher, \
+        strategy_class.golden_ai_order_adapter, lite_dashboard" && \
     rm -f /app/data_prod.db /app/shioaji.log
 
 # crontab 烘進 image（排程不開放 client 端修改；改排程 = 發新版）

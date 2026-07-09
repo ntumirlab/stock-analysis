@@ -51,4 +51,3 @@ golden_ai:
     global_tp: null        # 全域停利比例，若不用則設為 null
     trade_at_price: 'open_close_mix'  # 成交價
     lookback_months: 3     # 回測期間：幾個月
-    num_workers: 8         # 平行 worker 數 (1 = sequential)

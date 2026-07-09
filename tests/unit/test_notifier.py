@@ -43,3 +43,14 @@ def test_titles_unchanged_without_prefix():
         "⚠️ *股票系統警告*",
         "🚨 *股票系統錯誤通知*",
     ]
+
+
+def test_null_prefix_treated_as_no_prefix():
+    # Lite 範本自帶 title_prefix key；client 把值清空（YAML null）時
+    # 必須回到無前綴，不得把 None 渲染進標題
+    titles = _send_all_levels(_manager({'title_prefix': None}))
+    assert titles == [
+        "✅ *股票系統通知*",
+        "⚠️ *股票系統警告*",
+        "🚨 *股票系統錯誤通知*",
+    ]

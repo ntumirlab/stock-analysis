@@ -5,6 +5,7 @@ import json
 import pytest
 
 from core.recommendation_fetching import (
+    FileUnavailableError,
     PayloadValidationError,
     date_from_publish_filename,
     dates_missing_from_db,
@@ -128,6 +129,13 @@ def test_rejects_empty_stocks():
         parse_publish_payload(json.dumps(payload), "weekly", "2026-07-05")
 
 
+def test_rejects_non_object_stock_entry():
+    payload = _payload_dict()
+    payload["stocks"][0] = "2330"
+    with pytest.raises(PayloadValidationError, match="not an object"):
+        parse_publish_payload(json.dumps(payload), "weekly", "2026-07-05")
+
+
 def test_rejects_missing_stock_field():
     payload = _payload_dict()
     del payload["stocks"][0]["stop_loss"]
@@ -166,6 +174,20 @@ def test_rejects_boolean_price_and_priority():
     payload = _payload_dict()
     payload["stocks"][0]["priority"] = True  # True == 1，仍須拒收
     with pytest.raises(PayloadValidationError, match="priority"):
+        parse_publish_payload(json.dumps(payload), "weekly", "2026-07-05")
+
+
+def test_rejects_non_finite_prices():
+    # json 的非標準 NaN/Infinity 常數會被 json.loads 解析成 float，
+    # publisher 端的 json.dumps（allow_nan 預設 True）也能原樣輸出——必須拒收
+    payload = _payload_dict()
+    payload["stocks"][0]["target_price"] = float("nan")
+    with pytest.raises(PayloadValidationError, match="target_price"):
+        parse_publish_payload(json.dumps(payload), "weekly", "2026-07-05")
+
+    payload = _payload_dict()
+    payload["stocks"][0]["stop_loss"] = float("inf")
+    with pytest.raises(PayloadValidationError, match="stop_loss"):
         parse_publish_payload(json.dumps(payload), "weekly", "2026-07-05")
 
 
@@ -283,6 +305,26 @@ def test_non_utf8_file_isolated_like_bad_payload(dao):
 
     assert [record.date for record in fetched] == ["2026-07-05"]
     assert failed == ["2026-06-28"]
+
+
+def test_unavailable_file_isolated_like_bad_payload(dao):
+    # 單檔下載不可用（fetcher 端把 403/404 轉成 FileUnavailableError）
+    # 也必須走「單檔拒收、其他照入庫」的隔離，不得中斷整輪擋住當週清單
+    def download_text(file_id):
+        if file_id == "id-1":
+            raise FileUnavailableError("403 fileNotDownloadable")
+        return _payload_text("2026-07-05")
+
+    remote_files = {
+        publish_filename("weekly", "2026-06-28"): "id-1",
+        publish_filename("weekly", "2026-07-05"): "id-2",
+    }
+
+    fetched, failed = fetch_missing_records(remote_files, download_text, dao, "weekly")
+
+    assert [record.date for record in fetched] == ["2026-07-05"]
+    assert failed == ["2026-06-28"]
+    assert dao.get_by_date("2026-07-05") is not None
 
 
 def test_earlier_good_dates_survive_later_bad_one(dao):
