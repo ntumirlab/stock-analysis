@@ -10,17 +10,23 @@ class RecommendationListTab:
     不需要 callback。
     """
 
-    def __init__(self, recommendation_dao):
-        self.recommendation_dao = recommendation_dao
+    def __init__(self, sections):
+        """sections: [(區塊標題, RecommendationDAO), ...]，每組各渲染最新一期。"""
+        self.sections = sections
 
     def get_layout(self):
-        record = self.recommendation_dao.get_latest()
+        return html.Div([
+            self._render_section(label, dao.get_latest())
+            for label, dao in self.sections
+        ])
 
+    @staticmethod
+    def _render_section(label, record):
         if record is None:
-            return html.Div(
+            return html.Div([
+                html.H3(label, className='mb-3'),
                 html.P("尚無推薦清單資料（等待每日 07:50 的清單同步）", className="text-muted"),
-                style={'margin': '20px'},
-            )
+            ], style={'margin': '20px'})
 
         def fmt_price(value):
             return f"{value:g}" if value is not None else "—"
@@ -42,7 +48,7 @@ class RecommendationListTab:
         ])
 
         return html.Div([
-            html.H3(f"推薦清單（{record.date}，共 {len(record.stocks)} 檔）", className='mb-3'),
+            html.H3(f"{label}（{record.date}，共 {len(record.stocks)} 檔）", className='mb-3'),
             dbc.Table([header, body], bordered=True, hover=True, striped=True),
         ], style={'margin': '20px'})
 

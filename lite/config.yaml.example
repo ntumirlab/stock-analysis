@@ -34,9 +34,12 @@ users:
         excluded_stocks: []        # 不想買的股票代號清單，如 ["2330"]
 
 # 推薦清單來源（Google Drive 發布資料夾，由開發方提供 folder id）
+# 對應的環境變數留空即不同步該清單
 recommendation_tasks:
   weekly:
     fetch_folder_id: "${WEEKLY_FETCH_FOLDER_ID}"
+  monthly:
+    fetch_folder_id: "${MONTHLY_FETCH_FOLDER_ID}"
 
 # Golden AI 策略參數（與開發方一致，不建議修改）
 golden_ai:

@@ -25,7 +25,10 @@ def create_app():
     order_history_tab = OrderHistoryTab(OrderService())
     inventory_history_tab = InventoryHistoryTab(InventoryService())
     balance_history_tab = BalanceHistoryTab(BalanceService())
-    recommendation_tab = RecommendationListTab(RecommendationDAO(frequency="weekly"))
+    recommendation_tab = RecommendationListTab([
+        ("週推薦清單", RecommendationDAO(frequency="weekly")),
+        ("月推薦清單", RecommendationDAO(frequency="monthly")),
+    ])
 
     app = dash.Dash(
         __name__,
