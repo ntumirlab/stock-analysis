@@ -1,4 +1,4 @@
-# GoldenAI Lite 發版流程（內部文件）
+# GoldenAI Lite 發版流程
 
 交付物 = prebuilt image tar + `lite/` 內的範本與 README。client 端不拿 repo。
 
@@ -39,7 +39,6 @@ token）都在 host volume，換版不受影響；rollback＝tag 改回舊版。
    # strategy_class 只允許三個檔；jobs 不得有 backtest_executor、
    # recommendations_parser/publisher、drive_fetcher；/app 不得有 dashboard.py
    ```
-
 3. 煙霧測試：照 `lite/README.md` 在乾淨目錄起 compose，手動跑一次
    `jobs.recommendations_fetcher`，Dashboard 開得起來、能看到清單。
 4. 帶 finlab 升版的發版：先以**舊的 finlab_db 狀態**跑一次新 image
