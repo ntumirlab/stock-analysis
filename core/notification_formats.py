@@ -19,7 +19,8 @@ def format_order_summary(order_logs: List[Dict], view_only: bool) -> str:
     """
     title = f"📋 *委託 {len(order_logs)} 筆*"
     if view_only:
-        title += "　🧪 模擬 (view\\_only)"
+        # 反引號而非 \ 跳脫：legacy Markdown 的 \ 會原樣顯示且 _ 照樣生效
+        title += "　🧪 模擬 (`view_only`)"
 
     lines = []
     for order in order_logs:

@@ -116,12 +116,14 @@ class NotificationManager:
 
         message = f"{emoji} *{self.title_prefix}{title}*\n\n"
         message += f"📅 *時間*: `{timestamp}`\n"
-        message += f"📋 *任務*: {task_name}\n"
+        # 動態欄位以反引號包住：legacy Markdown 不支援 \ 跳脫，
+        # 值含 _ / * 時會與訊息其他符號配對成斜體段（inline code 內不解析）
+        message += f"📋 *任務*: `{task_name}`\n"
 
         if user_name:
-            message += f"👤 *用戶*: {user_name}\n"
+            message += f"👤 *用戶*: `{user_name}`\n"
         if broker_name:
-            message += f"📊 *券商*: {broker_name}\n"
+            message += f"📊 *券商*: `{broker_name}`\n"
 
         message += f"\n{body}"
 
@@ -197,12 +199,13 @@ class NotificationManager:
 
         message = f"🚨 *{self.title_prefix}股票系統錯誤通知*\n\n"
         message += f"📅 *時間*: `{timestamp}`\n"
-        message += f"📋 *任務*: {task_name}\n"
+        # 動態欄位包反引號的理由同 _send_notice
+        message += f"📋 *任務*: `{task_name}`\n"
 
         if user_name:
-            message += f"👤 *用戶*: {user_name}\n"
+            message += f"👤 *用戶*: `{user_name}`\n"
         if broker_name:
-            message += f"📊 *券商*: {broker_name}\n"
+            message += f"📊 *券商*: `{broker_name}`\n"
 
         message += f"❌ *狀態*: 失敗\n\n"
         message += f"⚠️ *錯誤訊息*:\n```\n{error_message}\n```"
