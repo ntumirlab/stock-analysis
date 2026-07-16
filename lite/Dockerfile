@@ -27,7 +27,8 @@ COPY --from=builder /opt/conda/envs/stock-analysis /opt/conda/envs/stock-analysi
 # 程式碼採白名單逐路徑 COPY（而非 COPY . + 排除法）：
 # 沒列出的檔案（Alan/PeterWu/Oscar 等策略）物理上不存在於 image
 COPY jobs/__init__.py jobs/scheduler.py jobs/inventory_fetcher.py jobs/balance_fetcher.py \
-     jobs/order_executor.py jobs/recommendations_fetcher.py /app/jobs/
+     jobs/order_executor.py jobs/recommendations_fetcher.py \
+     jobs/shioaji_activation_test.py /app/jobs/
 COPY core/__init__.py core/trading_cycles.py core/notification_formats.py \
      core/recommendation_fetching.py core/recommendation_publishing.py core/price_frames.py /app/core/
 COPY dao/__init__.py dao/order_dao.py dao/account_dao.py dao/inventory_dao.py \
@@ -59,6 +60,7 @@ RUN for f in jobs/backtest_executor.py jobs/recommendations_parser.py \
 # import 的副作用檔（lite_dashboard 建空 DB、shioaji 建空 log）同一層 rm 掉不留進 image
 RUN /opt/conda/envs/stock-analysis/bin/python -c "import jobs.order_executor, jobs.scheduler, \
         jobs.recommendations_fetcher, jobs.inventory_fetcher, jobs.balance_fetcher, \
+        jobs.shioaji_activation_test, \
         strategy_class.golden_ai_order_adapter, lite_dashboard" && \
     rm -f /app/data_prod.db /app/shioaji.log
 
