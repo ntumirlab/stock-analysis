@@ -65,6 +65,9 @@ GoldenAI Lite 是自動下單系統，安裝完成後自動運作，平常不需
 2. 點檔案總管上方的網址列，輸入 `powershell`，按 Enter，會開啟指令視窗
 3. 手冊中灰底框內的文字即指令：整行複製、在視窗內按右鍵貼上、按 Enter 執行
 
+> ⚠️ 請勿使用「命令提示字元（CMD）」，本手冊指令僅適用 PowerShell。
+> 依上述方法開啟的即是 PowerShell（提示字元以 `PS` 開頭）。
+
 建議先開啟副檔名顯示，避免認錯檔案：
 檔案總管「檢視」→「顯示」→ 勾選「副檔名」。
 
@@ -185,13 +188,14 @@ goldenai-lite/
 
 在系統資料夾的指令視窗依序執行：
 
-1. 載入系統主程式（首次與每次更新版本時執行）：
+1. 載入系統主程式（首次與每次更新版本時執行；指令中的檔名請對照
+   實際收到的 tar 檔名修改，版本號可能不同）：
 
    ```powershell
    docker load -i goldenai-lite_v1.0.0.tar
    ```
 
-   **預期輸出：**
+   **預期輸出**（版本號同檔名）：
 
    ```
    Loaded image: goldenai-lite:v1.0.0
@@ -252,7 +256,9 @@ goldenai-lite/
    ```
 
    成功時 Telegram 通知群組會收到 ✅ 開頭、標題含 `[Lite]` 的通知。
-   （清單已是最新時再次執行不會有通知，屬正常。）
+   安裝後**首次執行必定會有通知**；未收到即為設定有誤，請檢查 `.env` 的
+   Telegram 欄位與資料夾 ID 是否正確。
+   （日後清單已是最新時，再次執行不會有通知，屬正常。）
 
 4. **Dashboard 正常**：瀏覽器開啟 <http://localhost:8060>，
    「推薦清單」分頁應顯示最新的週清單與月清單
@@ -313,6 +319,13 @@ goldenai-lite/
 2. 服務是否在執行：`docker compose ps` 兩行 STATUS 均應為 `Up`，
    否則執行 `docker compose up -d` 重新啟動
 3. `.env` 的 Telegram 兩個欄位是否與開發方提供的值一致（可請開發方核對）
+
+**只有 `goldenai-lite-scheduler` 反覆重啟（dashboard 正常）**
+
+1. 通常為 `config.yaml` 填寫有誤：格式壞掉（常見為全形引號、引號不成對）、
+   使用者名稱含英文、數字、底線以外的字元，或設定檔未建立
+2. 執行 `docker compose logs lite-scheduler`，最後幾行會顯示錯誤原因；
+   依訊息修正 `config.yaml` 存檔後，執行 `docker compose up -d`
 
 **啟動後服務反覆重啟，或日誌出現 `unable to open database file`**
 
