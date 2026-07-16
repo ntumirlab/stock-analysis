@@ -1,0 +1,19 @@
+# GoldenAI Lite 排程（烘進 image，改排程請發新版 image）
+# 格式: 分 時 日 月 週 指令
+# --user_name 的佔位符由容器啟動時代入（Dockerfile CMD 讀 config.yaml 的 users key）
+
+# cron 啟動的 job 拿不到 docker-compose 的 TZ 環境變數（cron 給 job 乾淨環境），
+# 沒有這行的話 job 內的 log 時間戳會顯示 UTC。排程時間不受此行影響（daemon 已是台北時區）。
+TZ=Asia/Taipei
+
+# 每天 07:50 - 從 Google Drive 同步推薦清單到本地 DB
+# （開發方 07:30 發布，留 20 分鐘緩衝；週一撲空會使當日下單被 freshness 檢查擋下）
+50 7 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.recommendations_fetcher >> /app/logs/recommendations_fetcher.log 2>&1
+
+# 週一到週五 08:10 - 下單（hold_weeks=1 時實際動作為週一買、週五賣，由 config 決定）
+10 8 * * 1-5 cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.order_executor --user_name={{USER_NAME}} --broker_name=shioaji >> /app/logs/order.log 2>&1
+
+# 每天 20:30 - 抓取當日持股和帳戶資訊
+30 20 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.scheduler --user_name={{USER_NAME}} --broker_name=shioaji >> /app/logs/fetch.log 2>&1
+
+# 空行必須保留 (cron 要求)

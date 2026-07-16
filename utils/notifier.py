@@ -81,6 +81,9 @@ class NotificationManager:
         """
         self.logger = logger or logging.getLogger(__name__)
         self.enabled = config.get('enabled', False)
+        # 選配的標題前綴（如 "[Lite] "）：區分不同部署（Lite / 正式機）發出的訊息。
+        # 用 or '' 而非 get 預設值：key 存在但值留空（YAML null）也要回到無前綴
+        self.title_prefix = config.get('title_prefix') or ''
 
         # 初始化 Telegram
         self.telegram = None
@@ -111,14 +114,16 @@ class NotificationManager:
 
         timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
 
-        message = f"{emoji} *{title}*\n\n"
+        message = f"{emoji} *{self.title_prefix}{title}*\n\n"
         message += f"📅 *時間*: `{timestamp}`\n"
-        message += f"📋 *任務*: {task_name}\n"
+        # 動態欄位以反引號包住：legacy Markdown 不支援 \ 跳脫，
+        # 值含 _ / * 時會與訊息其他符號配對成斜體段（inline code 內不解析）
+        message += f"📋 *任務*: `{task_name}`\n"
 
         if user_name:
-            message += f"👤 *用戶*: {user_name}\n"
+            message += f"👤 *用戶*: `{user_name}`\n"
         if broker_name:
-            message += f"📊 *券商*: {broker_name}\n"
+            message += f"📊 *券商*: `{broker_name}`\n"
 
         message += f"\n{body}"
 
@@ -192,14 +197,15 @@ class NotificationManager:
         # 格式化錯誤訊息
         timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S")
 
-        message = "🚨 *股票系統錯誤通知*\n\n"
+        message = f"🚨 *{self.title_prefix}股票系統錯誤通知*\n\n"
         message += f"📅 *時間*: `{timestamp}`\n"
-        message += f"📋 *任務*: {task_name}\n"
+        # 動態欄位包反引號的理由同 _send_notice
+        message += f"📋 *任務*: `{task_name}`\n"
 
         if user_name:
-            message += f"👤 *用戶*: {user_name}\n"
+            message += f"👤 *用戶*: `{user_name}`\n"
         if broker_name:
-            message += f"📊 *券商*: {broker_name}\n"
+            message += f"📊 *券商*: `{broker_name}`\n"
 
         message += f"❌ *狀態*: 失敗\n\n"
         message += f"⚠️ *錯誤訊息*:\n```\n{error_message}\n```"
