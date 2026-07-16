@@ -77,7 +77,7 @@ GoldenAI Lite 是自動下單系統，安裝完成後自動運作，平常不需
 
 Docker 是執行本系統的基礎軟體（免費）。
 
-1. 至 [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/) 下載 Windows 版並安裝，全部使用預設選項（可能要求重新開機）
+1. 至 [Docker Desktop 官方下載頁](https://www.docker.com/products/docker-desktop/)下載 Windows 版並安裝，全部使用預設選項（可能要求重新開機）
 2. 開啟 Docker Desktop，首次詢問登入可按 Skip 跳過
 3. 設定開機自動啟動：右上角齒輪（Settings）→ General → 勾選「Start Docker Desktop when you sign in to your computer」
 4. 左下角狀態顯示綠色（Engine running）即安裝完成
@@ -368,18 +368,17 @@ goldenai-lite/
 
 ## 附錄 A：永豐金證券 API 憑證申請
 
-前置條件：已有永豐金證券帳戶並開通電子交易。以下均在永豐「新理財網」（[https://www.sinotrade.com.tw](https://www.sinotrade.com.tw)）登入後操作，為一次性設定。
+前置條件：已有永豐金證券帳戶並開通電子交易。以下均在永豐[「新理財網」](https://www.sinotrade.com.tw)登入後操作，為一次性設定。
 
 > ⚠️ 第 1～3 步於系統安裝前完成，此時 `.env` 尚未建立，
 > 過程中取得的五項資料請先抄存於安全處（Secret Key 只顯示一次），
 > 於步驟 3 填寫 `.env` 時使用。
 > 第 4 步需使用已安裝的系統，請於**系統安裝完成後**執行。
 
-1. **簽署 API 條款**：至簽署中心「證券 API 簽署」頁完成簽署（僅需簽署證券，期貨不需要）：
-   [https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/](https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/)
+1. **簽署 API 條款**：至簽署中心[「證券 API 簽署」頁](https://www.sinotrade.com.tw/newweb/signCenter/S_openAPI/)完成簽署（僅需簽署證券，期貨不需要）
 
    - 注意：線上簽署完畢後 API 服務尚未完整啟用，仍須完成第 4 步的功能測試。
-2. **申請 API Key**：至「API 管理頁面」[https://www.sinotrade.com.tw/newweb/PythonAPIKey/](https://www.sinotrade.com.tw/newweb/PythonAPIKey/)，完成雙因子驗證（手機或信箱）後新增 API Key：
+2. **申請 API Key**：至[「API 管理頁面」](https://www.sinotrade.com.tw/newweb/PythonAPIKey/)完成雙因子驗證（手機或信箱）後新增 API Key：
 
    - 權限依頁面勾選（帳務、交易；「正式環境」需通過第 4 步測試審核才可使用）
    - 效期自行設定，請記下到期日，到期前需重新申請並更新 `.env`
