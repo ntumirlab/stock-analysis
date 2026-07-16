@@ -79,5 +79,8 @@ RUN echo "source activate stock-analysis" > ~/.bashrc
 # lite dashboard 端口
 EXPOSE 8060
 
-# 預設啟動排程（dashboard service 在 compose 以 command 覆寫）
-CMD ["bash", "-c", "crontab /etc/cron.d/lite-cron && cron -f"]
+# 預設啟動排程（dashboard service 在 compose 以 command 覆寫）。
+# 啟動時讀 config.yaml 的 users key（名稱由 client 自訂）代入 crontab 的 {{USER_NAME}}；
+# config 缺漏、使用者不是恰好一位、或名稱不合法時啟動即失敗（compose ps 立即可見），
+# 不留到排程時段才在 log 裡爆
+CMD ["bash", "-c", "user_name=$(python -c \"import re, yaml; us = list(yaml.safe_load(open('/app/config.yaml'))['users']); assert len(us) == 1, f'config.yaml 的 users 底下必須恰好一位使用者: {us}'; n = str(us[0]); assert re.fullmatch(r'[A-Za-z0-9_]+', n), f'使用者名稱僅限英文、數字、底線: {n}'; print(n)\") && sed \"s/{{USER_NAME}}/$user_name/g\" /etc/cron.d/lite-cron | crontab - && cron -f"]

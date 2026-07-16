@@ -15,8 +15,9 @@ notification:
     chat_id: "${TELEGRAM_CHAT_ID}"
 
 users:
-  # 注意：david 這個 key 與 image 內建排程綁定（--user_name=david），請勿改名
-  david:
+  # 僅支援一位使用者。名稱（此層 key）可自訂，限英文、數字、底線；
+  # 開始交易後請勿再更改：持倉帳本檔名與歷史紀錄都以此名稱歸檔
+  username:
     shioaji:
       env:
         SHIOAJI_API_KEY: "${SHIOAJI_API_KEY}"
