@@ -268,6 +268,8 @@ stock-analysis/
 | 服務名稱 | 用途 | 端口 |
 |---------|------|------|
 | `stock-analysis-app` | Dashboard 網頁介面 | 5000 |
+| `golden-ai-backtest-dashboard` | GoldenAI 回測報告 | 8051 |
+| `tw-market-regime-dashboard` | 台股多空轉折模型 | 8052 |
 | `stock-scheduler` | 定時排程執行器 | - |
 
 ### Volume 掛載說明
