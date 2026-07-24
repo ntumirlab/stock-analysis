@@ -59,6 +59,22 @@ services:
       - stock-network
     command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8051", "golden_ai_backtest_dashboard:server"]
 
+  tw-market-regime-dashboard:
+    platform: linux/amd64
+    build: .
+    container_name: tw-market-regime-dashboard
+    restart: unless-stopped
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./finlab_db:/root/finlab_db
+    environment:
+      - TZ=Asia/Taipei
+    ports:
+      - "8052:8052"
+    networks:
+      - stock-network
+    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8052", "--timeout", "120", "tw_market_regime_dashboard:server"]
+
   stock-scheduler:
     platform: linux/amd64
     build: .
