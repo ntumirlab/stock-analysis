@@ -13,6 +13,9 @@ import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
+load_dotenv('.env')
+
 import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
@@ -424,9 +427,9 @@ def update_chart(store_json, period):
         hoverlabel=dict(bgcolor='white', font_size=12),
     )
 
-    # 計算非交易日（週末 + 假日），用 rangebreaks 隱藏空隙
-    all_days = pd.date_range(dates.min(), dates.max(), freq='D')
-    non_trading = all_days.difference(dates)
+    # 隱藏非交易日：bounds 排除週末，values 只列舉 weekday 假日（颱風假等）
+    bdays = pd.date_range(dates.min(), dates.max(), freq='B')
+    holidays = bdays.difference(dates)
 
     _axis_style = dict(
         showgrid=True, gridcolor=_COLOR['border'],
@@ -436,7 +439,10 @@ def update_chart(store_json, period):
     )
     fig.update_xaxes(
         **_axis_style,
-        rangebreaks=[dict(values=[d.strftime('%Y-%m-%d') for d in non_trading])],
+        rangebreaks=[
+            dict(bounds=['sat', 'mon']),
+            dict(values=[d.strftime('%Y-%m-%d') for d in holidays]),
+        ],
     )
     fig.update_yaxes(**_axis_style)
 
@@ -452,7 +458,7 @@ def update_chart(store_json, period):
     kpi_score   = _kpi_card('當前分數', score_sign,
                             subtitle='範圍 -9 ~ +9（均線 + DMI + MACD + KD）')
     kpi_signal  = _kpi_card('訊號', f'{emoji} {sig_text}',
-                            subtitle='> 0 做多 ｜ ≤ -1 觀望 ｜ < -1 出場')
+                            subtitle='> 0 做多 ｜ -1 ≤ 分數 ≤ 0 觀望 ｜ < -1 出場')
     kpi_updated = _kpi_card('資料更新', updated)
 
     return fig, kpi_score, kpi_signal, kpi_updated
