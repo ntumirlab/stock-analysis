@@ -350,8 +350,10 @@ def update_chart(store_json, period):
     store   = json.loads(store_json)
     ohlc_df = pd.DataFrame(store['ohlc']).set_index('date')
     ohlc_df.index = pd.to_datetime(ohlc_df.index)
+    ohlc_df = ohlc_df.sort_index()
     score_df = pd.DataFrame(store['score']).set_index('date')
     score_df.index = pd.to_datetime(score_df.index)
+    score_df = score_df.sort_index()
     updated = store.get('updated', '—')
 
     # Date filter
