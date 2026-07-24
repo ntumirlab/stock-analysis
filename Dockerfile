@@ -48,7 +48,7 @@ SHELL ["/bin/bash", "-c"]
 RUN echo "source activate stock-analysis" > ~/.bashrc
 
 # 暴露 Flask 端口
-EXPOSE 5000
+EXPOSE 5000 8051 8052
 
 # 預設啟動 dashboard
 CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "dashboard:server"]
