@@ -160,6 +160,13 @@ def _build_store(market: str) -> dict:
     }
 
 
+# ── FinLab login（每個 worker process 只執行一次）─────────────────────────────
+
+_FINLAB_TOKEN = os.environ.get('FINLAB_API_TOKEN', '')
+if not _FINLAB_TOKEN:
+    raise RuntimeError('FINLAB_API_TOKEN is not set. Check your .env file.')
+finlab.login(_FINLAB_TOKEN)
+
 # ── Dash app ───────────────────────────────────────────────────────────────────
 
 app = dash.Dash(
@@ -181,8 +188,7 @@ def _signal_badge(score_val: int) -> tuple[str, str, str]:
     return '⚪', '觀望', 'secondary'
 
 
-def _kpi_card(label: str, value, subtitle: str = '',
-              badge_color: str = 'secondary') -> dbc.Card:
+def _kpi_card(label: str, value, subtitle: str = '') -> dbc.Card:
     children = [
         html.Div(label, style={
             'fontSize': '12px', 'color': _COLOR['text_muted'],
@@ -315,7 +321,6 @@ app.layout = html.Div([
 def load_data(market, _n_clicks):
     """載入 FinLab 資料並計算分數，存入 dcc.Store。"""
     try:
-        finlab.login(os.environ.get('FINLAB_API_TOKEN', ''))
         store = _build_store(market)
         updated = store['updated']
         return json.dumps(store), f'更新：{updated}'
@@ -452,7 +457,7 @@ def update_chart(store_json, period):
 
     # ── KPI cards ──────────────────────────────────────────────────────────
     last_score = int(scores.iloc[-1]) if len(scores) > 0 else 0
-    emoji, sig_text, _badge = _signal_badge(last_score)
+    emoji, sig_text, _ = _signal_badge(last_score)
 
     score_sign = f'+{last_score}' if last_score > 0 else str(last_score)
     kpi_score   = _kpi_card('當前分數', score_sign,
