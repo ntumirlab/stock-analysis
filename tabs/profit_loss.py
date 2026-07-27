@@ -219,10 +219,8 @@ class ProfitLossTab:
             realized = self.profit_loss_service.get_realized_records(
                 selected_account, date_range[0], date_range[1]
             )
-            unrealized = self.profit_loss_service.get_unrealized_records(
-                selected_account,
-                self.profit_loss_service.inventory_dao.get_latest_inventory_date(selected_account)
-            ) if selected_account else []
+            # 不帶日期＝取最新快照；未實現沒有區間概念，不受上方日期選擇影響
+            unrealized = self.profit_loss_service.get_unrealized_records(selected_account)
 
             return [_round_row(row) for row in realized], [_round_row(row) for row in unrealized]
 

@@ -48,16 +48,27 @@ class ProfitLossService:
             record['cost_basis'] = _realized_cost_basis(record)
         return records
 
-    def get_unrealized_records(self, account_id, query_date):
+    def get_unrealized_records(self, account_id, query_date=None):
         """取得指定日期的未實現損益（現有持股）。
 
         成本均價只存在 inventory_history 的 raw_data JSON 內，因此這裡直接
         走 DAO 而非 InventoryService（後者會濾掉 raw_data）。
 
+        Args:
+            account_id (int): 帳戶ID
+            query_date (datetime.date, optional): 取哪天的持股快照，
+                未給則取最新一筆；帳戶完全沒有快照時回空清單
+                （防呆放在這層，呼叫端不必各自處理 None）
+
         Returns:
             list[dict]: 含 stock_id / stock_name / quantity / last_price /
                 cost_price / pnl / cost_basis / pr_ratio
         """
+        if query_date is None:
+            query_date = self.inventory_dao.get_latest_inventory_date(account_id)
+        if query_date is None:
+            return []
+
         inventories = self.inventory_dao.get_inventories_by_account_and_date(
             account_id, query_date
         )
@@ -108,14 +119,8 @@ class ProfitLossService:
             dict: {'realized': {...}, 'unrealized': {...}, 'total': {...}}
                   每個區塊含 pnl / cost / ratio / count
         """
-        if inventory_date is None:
-            inventory_date = self.inventory_dao.get_latest_inventory_date(account_id)
-
         realized = self.get_realized_records(account_id, start_date, end_date)
-        unrealized = (
-            self.get_unrealized_records(account_id, inventory_date)
-            if inventory_date else []
-        )
+        unrealized = self.get_unrealized_records(account_id, inventory_date)
 
         realized_pnl = sum(r.get('pnl') or 0 for r in realized)
         realized_cost = sum(r.get('cost_basis') or 0 for r in realized)

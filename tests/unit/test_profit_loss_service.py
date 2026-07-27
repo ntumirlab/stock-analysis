@@ -150,6 +150,16 @@ def test_duplicate_snapshot_same_day_counted_once(service, daos):
     assert summary["unrealized"]["pnl"] == -300.0
 
 
+def test_account_without_any_snapshot_returns_empty_not_crash(service):
+    # 回歸鎖：帳戶完全沒有庫存快照時，取最新日期會得到 None。防呆若只做在
+    # get_summary，損益分頁的表格 callback 會 AttributeError 整頁掛掉
+    assert service.get_unrealized_records(1) == []
+    assert service.get_unrealized_records(1, None) == []
+
+    summary = service.get_summary(1, START, END)
+    assert summary["unrealized"]["count"] == 0
+
+
 def test_cumulative_series_is_chronological(service, daos):
     pnl_dao, _ = daos
     pnl_dao.insert_profit_loss(1, [
