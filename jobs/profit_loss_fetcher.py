@@ -139,6 +139,9 @@ class ShioajiProfitLossFetcher(ProfitLossFetcherBase):
 
             stock_id = record_dict.get('code')
             raw_quantity = float(record_dict.get('quantity', 0) or 0)
+            # cond 是 enum，str() 會存成 "StockOrderCond.Cash"；取 .value 才是 "Cash"
+            cond = record_dict.get('cond')
+            cond_value = getattr(cond, 'value', cond)
 
             processed_items.append({
                 'trade_date': normalize_trade_date(record_dict.get('date')),
@@ -148,7 +151,7 @@ class ShioajiProfitLossFetcher(ProfitLossFetcherBase):
                 'price': float(record_dict.get('price', 0) or 0),
                 'pnl': float(record_dict.get('pnl', 0) or 0),
                 'pr_ratio': float(record_dict.get('pr_ratio', 0) or 0),
-                'cond': str(record_dict.get('cond', '')),
+                'cond': '' if cond_value is None else str(cond_value),
                 'dseq': str(record_dict.get('dseq', '')),
                 'seqno': str(record_dict.get('seqno', '')),
                 'raw_data': record_dict,
