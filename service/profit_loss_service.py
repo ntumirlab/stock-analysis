@@ -15,20 +15,21 @@ def _safe_ratio(pnl, cost):
 
 
 def _realized_cost_basis(record):
-    """推算單筆已實現損益的投入成本。
+    """推算單筆已實現損益的投入成本 ＝ 賣出價金 − 損益。
 
-    優先用券商自己的報酬率回推（pnl / pr_ratio），這樣彙總後的比率與券商
-    單筆顯示的口徑一致；pr_ratio 為 0（或券商未提供）時退回 price × 股數，
-    此時不含手續費與交易稅，屬近似值。
+    券商的 price 是成交價（平倉時即賣出價），乘上股數得到賣出價金；
+    再減掉已實現損益就是這批股票的成本。三個欄位在 shioaji 的
+    StockProfitLoss 都是必填，缺漏會在解析階段就失敗，不會是 None。
+
+    刻意不用 pr_ratio 回推：其刻度（百分比 4.32 或小數 0.0432）未經實盤確認，
+    賭錯會讓成本差 100 倍。這裡的算式只用加減乘除，沒有刻度問題。
     """
     pnl = record.get('pnl') or 0
-    pr_ratio = record.get('pr_ratio') or 0
-    if pr_ratio:
-        return abs(pnl / (pr_ratio / 100))
-
     price = record.get('price') or 0
     shares = (record.get('quantity') or 0) * 1000
-    return price * shares
+
+    cost = price * shares - pnl
+    return cost if cost > 0 else 0
 
 
 class ProfitLossService:
@@ -39,13 +40,17 @@ class ProfitLossService:
     def get_realized_records(self, account_id, start_date, end_date):
         """取得期間內的已實現損益明細，每筆補上推算的成本與報酬率。
 
+        報酬率一律自行以「損益 ÷ 成本」計算，不直接顯示券商的 pr_ratio——
+        後者的刻度未確認，原值仍留在 DB 供日後比對。
+
         Returns:
             list[dict]: 含 trade_date / stock_id / stock_name / quantity /
-                price / pnl / pr_ratio / cost_basis
+                price / pnl / pr_ratio（券商原值）/ cost_basis / ratio（自算）
         """
         records = self.profit_loss_dao.get_profit_loss(account_id, start_date, end_date)
         for record in records:
             record['cost_basis'] = _realized_cost_basis(record)
+            record['ratio'] = _safe_ratio(record.get('pnl') or 0, record['cost_basis'])
         return records
 
     def get_unrealized_records(self, account_id, query_date=None):
@@ -62,7 +67,7 @@ class ProfitLossService:
 
         Returns:
             list[dict]: 含 stock_id / stock_name / quantity / last_price /
-                cost_price / pnl / cost_basis / pr_ratio
+                cost_price / pnl / cost_basis / ratio
         """
         if query_date is None:
             query_date = self.inventory_dao.get_latest_inventory_date(account_id)
@@ -100,7 +105,7 @@ class ProfitLossService:
                 'cost_price': float(cost_price),
                 'pnl': pnl,
                 'cost_basis': cost_basis,
-                'pr_ratio': _safe_ratio(pnl, cost_basis),
+                'ratio': _safe_ratio(pnl, cost_basis),
             })
 
         return records

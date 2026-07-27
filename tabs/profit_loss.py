@@ -64,9 +64,9 @@ class ProfitLossTab:
         start_date = end_date - datetime.timedelta(days=90)
 
         pnl_style = [
-            {'if': {'filter_query': '{pnl} > 0', 'column_id': ['pnl', 'pr_ratio']},
+            {'if': {'filter_query': '{pnl} > 0', 'column_id': ['pnl', 'ratio']},
              'color': PROFIT_COLOR},
-            {'if': {'filter_query': '{pnl} < 0', 'column_id': ['pnl', 'pr_ratio']},
+            {'if': {'filter_query': '{pnl} < 0', 'column_id': ['pnl', 'ratio']},
              'color': LOSS_COLOR},
         ]
 
@@ -106,7 +106,7 @@ class ProfitLossTab:
                         {'name': '數量(張)', 'id': 'quantity'},
                         {'name': '成交價', 'id': 'price'},
                         {'name': '損益', 'id': 'pnl'},
-                        {'name': '報酬率(%)', 'id': 'pr_ratio'},
+                        {'name': '報酬率(%)', 'id': 'ratio'},
                     ],
                     data=[],
                     page_size=15,
@@ -127,7 +127,7 @@ class ProfitLossTab:
                         {'name': '成本均價', 'id': 'cost_price'},
                         {'name': '最新價格', 'id': 'last_price'},
                         {'name': '損益', 'id': 'pnl'},
-                        {'name': '報酬率(%)', 'id': 'pr_ratio'},
+                        {'name': '報酬率(%)', 'id': 'ratio'},
                     ],
                     data=[],
                     page_size=15,
@@ -243,7 +243,7 @@ def _round_row(row):
     for key in ('quantity', 'price', 'cost_price', 'last_price'):
         if rounded.get(key) is not None:
             rounded[key] = round(float(rounded[key]), 3)
-    for key in ('pnl', 'pr_ratio'):
+    for key in ('pnl', 'ratio'):
         if rounded.get(key) is not None:
             rounded[key] = round(float(rounded[key]), 2)
     return rounded

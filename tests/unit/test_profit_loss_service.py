@@ -38,7 +38,7 @@ def _realized(**overrides):
         "quantity": 0.002,
         "price": 1450.0,
         "pnl": 100.0,
-        "pr_ratio": 5.0,       # → 成本 2000
+        "pr_ratio": 5.0,       # 券商原值，只入庫不參與計算
         "cond": "Cash",
         "dseq": "A1",
         "seqno": "S1",
@@ -61,30 +61,47 @@ def _holding(**overrides):
     return item
 
 
-def test_realized_ratio_uses_broker_pr_ratio_for_cost(service, daos):
+def test_realized_cost_is_proceeds_minus_pnl(service, daos):
+    # 賣出價金 1450 × 2 股 = 2900，減掉損益 100 得成本 2800。
+    # 刻意不用券商的 pr_ratio 回推：其刻度（4.32 或 0.0432）未經實盤確認，
+    # 賭錯會讓成本差 100 倍；這裡的算式沒有刻度問題
     pnl_dao, _ = daos
     pnl_dao.insert_profit_loss(1, [_realized()], fetch_timestamp=REALIZED_TS)
 
     summary = service.get_summary(1, START, END)
 
     assert summary["realized"]["pnl"] == 100.0
-    assert summary["realized"]["cost"] == pytest.approx(2000.0)
-    assert summary["realized"]["ratio"] == pytest.approx(5.0)
+    assert summary["realized"]["cost"] == pytest.approx(2800.0)
+    assert summary["realized"]["ratio"] == pytest.approx(100.0 / 2800.0 * 100)
     assert summary["realized"]["count"] == 1
 
 
-def test_realized_cost_falls_back_to_price_times_shares(service, daos):
-    # pr_ratio 為 0（券商未提供）時退回 price × 股數，屬不含費用的近似值
+def test_realized_ratio_ignores_broker_pr_ratio_scale(service, daos):
+    # 同一筆資料，券商 pr_ratio 給百分比或小數都不影響我們算出的成本與報酬率
+    pnl_dao, _ = daos
+    pnl_dao.insert_profit_loss(1, [_realized(pr_ratio=3.57, dseq="A1")],
+                               fetch_timestamp=REALIZED_TS)
+    pnl_dao.insert_profit_loss(1, [_realized(pr_ratio=0.0357, dseq="A2")],
+                               fetch_timestamp=REALIZED_TS)
+
+    records = service.get_realized_records(1, START, END)
+
+    assert len(records) == 2
+    assert {round(r["cost_basis"], 2) for r in records} == {2800.0}
+    assert {round(r["ratio"], 4) for r in records} == {round(100.0 / 2800.0 * 100, 4)}
+
+
+def test_realized_loss_cost_includes_the_loss(service, daos):
+    # 虧損時成本大於賣出價金：2900 賣出、虧 300 → 成本 3200
     pnl_dao, _ = daos
     pnl_dao.insert_profit_loss(
-        1, [_realized(pr_ratio=0.0, price=50.0, quantity=1.0, pnl=500.0)],
-        fetch_timestamp=REALIZED_TS
+        1, [_realized(pnl=-300.0)], fetch_timestamp=REALIZED_TS
     )
 
     summary = service.get_summary(1, START, END)
 
-    assert summary["realized"]["cost"] == pytest.approx(50.0 * 1000)
-    assert summary["realized"]["ratio"] == pytest.approx(1.0)
+    assert summary["realized"]["cost"] == pytest.approx(3200.0)
+    assert summary["realized"]["ratio"] == pytest.approx(-300.0 / 3200.0 * 100)
 
 
 def test_unrealized_ratio_uses_cost_price_from_raw_data(service, daos):
@@ -105,9 +122,10 @@ def test_total_combines_both_sides(service, daos):
 
     summary = service.get_summary(1, START, END)
 
+    # 已實現成本 2800（賣出價金 2900 − 損益 100）＋ 未實現成本 3600
     assert summary["total"]["pnl"] == pytest.approx(-200.0)
-    assert summary["total"]["cost"] == pytest.approx(5600.0)
-    assert summary["total"]["ratio"] == pytest.approx(-200.0 / 5600.0 * 100)
+    assert summary["total"]["cost"] == pytest.approx(6400.0)
+    assert summary["total"]["ratio"] == pytest.approx(-200.0 / 6400.0 * 100)
 
 
 def test_zero_cost_yields_none_ratio_not_zero(service):
