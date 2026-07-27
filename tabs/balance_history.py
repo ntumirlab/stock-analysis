@@ -9,7 +9,7 @@ import numpy as np
 class BalanceHistoryTab:
     def __init__(self, balance_service):
         self.balance_service = balance_service
-        
+
     def get_layout(self):
         """返回帳戶資金標籤的版面配置"""
         # 計算默認日期範圍：過去一年
@@ -41,9 +41,12 @@ class BalanceHistoryTab:
                 dcc.Graph(id='balance-trend-graph')
             ], style={'margin': '20px'}),
             
-            # 月度回報率熱力圖
+            # 月度資產變化率熱力圖
+            # 分母是月初總資產、分子是月末減月初，出入金會被算進去，故不能稱為報酬率。
+            # 真報酬率需以「已實現＋未實現損益 ÷ 投入成本」計算，待累積足夠損益資料後再做
             html.Div([
-                html.H3("月度報酬率熱力圖", className='mb-3'),
+                html.H3("月度資產變化率", className='mb-3'),
+                html.Small("含出入金影響，非投資報酬率", className="text-muted"),
                 dcc.Graph(id='monthly-return-heatmap')
             ], style={'margin': '20px'})
         ])
@@ -88,15 +91,19 @@ class BalanceHistoryTab:
                 dbc.Col([
                     dbc.Card([
                         dbc.CardBody([
-                            html.H5("調整後銀行餘額", className="card-title"),
-                            html.H3(f"${latest_balance['adjusted_bank_balance']:,.2f}", className="card-text text-info")
+                            html.H5("可動用現金", className="card-title"),
+                            html.H3(f"${latest_balance['adjusted_bank_balance']:,.2f}", className="card-text text-info"),
+                            # 未交割款是銀行餘額與可動用現金的唯一差額，不顯示的話
+                            # 兩張卡片的落差會沒有交代
+                            html.Small(f"含未交割款 ${latest_balance['settlements']:,.0f}",
+                                       className="text-muted")
                         ])
                     ])
                 ], width=3),
                 dbc.Col([
                     dbc.Card([
                         dbc.CardBody([
-                            html.H5("市值", className="card-title"),
+                            html.H5("持股市值", className="card-title"),
                             html.H3(f"${latest_balance['market_value']:,.2f}", className="card-text text-success")
                         ])
                     ])
@@ -167,7 +174,7 @@ class BalanceHistoryTab:
                 x=df['date'], 
                 y=df['adjusted_bank_balance'],
                 mode='lines+markers',
-                name='調整後銀行餘額',
+                name='可動用現金',
                 line=dict(color='#36a2eb', width=2)
             ))
             
@@ -175,7 +182,7 @@ class BalanceHistoryTab:
                 x=df['date'], 
                 y=df['market_value'],
                 mode='lines+markers',
-                name='市值',
+                name='持股市值',
                 line=dict(color='#4bc0c0', width=2)
             ))
             
@@ -216,11 +223,11 @@ class BalanceHistoryTab:
             heatmap_data, years, max_return, min_return = self.balance_service.get_monthly_return_data(
                 selected_account
             )
-            
+
             if not heatmap_data:
                 fig = go.Figure()
                 fig.update_layout(
-                    title="無足夠數據計算月度報酬率",
+                    title="無足夠數據計算月度資產變化率",
                     xaxis_title="月份",
                     yaxis_title="年份"
                 )
@@ -246,7 +253,7 @@ class BalanceHistoryTab:
             for year in all_years:
                 row_data = []
                 for month in all_months:
-                    # 查找對應的報酬率
+                    # 查找對應的變化率
                     value = None
                     for item in heatmap_data:
                         if item['year'] == year and item['month'] == month:
@@ -280,7 +287,7 @@ class BalanceHistoryTab:
                 y=all_years,
                 colorscale='RdBu_r',
                 showscale=True,
-                colorbar={"title": "報酬率 (%)"},
+                colorbar={"title": "變化率 (%)"},
                 # 確保數據範圍適當
                 zmid=0,  # 中間點設為0
                 zmin=min(min_return, -0.1),  # 確保有一定範圍
@@ -294,7 +301,7 @@ class BalanceHistoryTab:
             
             # 更新佈局
             fig.update_layout(
-                title="月度報酬率熱力圖",
+                title="月度資產變化率（含出入金）",
                 xaxis_title="月份",
                 yaxis_title="年份",
                 xaxis=dict(

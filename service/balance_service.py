@@ -62,8 +62,12 @@ class BalanceService:
     
     def get_monthly_return_data(self, account_id, start_year=None, end_year=None):
         """
-        計算月度回報率數據，用於熱力圖
-        
+        計算月度資產變化率，用於熱力圖
+
+        注意：分母是月初總資產，出入金會被計入變化率，因此這不是投資報酬率
+        （UI 標題已據此改為「月度資產變化率」）。要不受出入金影響的報酬率，
+        見 ProfitLossService.get_summary，其分母為實際投入成本。
+
         Args:
             account_id (int): 帳戶ID
             start_year (int, optional): 開始年份，默認為當前年份減3
