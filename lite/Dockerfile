@@ -27,12 +27,14 @@ COPY --from=builder /opt/conda/envs/stock-analysis /opt/conda/envs/stock-analysi
 # 程式碼採白名單逐路徑 COPY（而非 COPY . + 排除法）：
 # 沒列出的檔案（Alan/PeterWu/Oscar 等策略）物理上不存在於 image
 COPY jobs/__init__.py jobs/scheduler.py jobs/inventory_fetcher.py jobs/balance_fetcher.py \
-     jobs/order_executor.py jobs/recommendations_fetcher.py \
+     jobs/order_executor.py jobs/recommendations_fetcher.py jobs/profit_loss_fetcher.py \
      jobs/shioaji_activation_test.py /app/jobs/
 COPY core/__init__.py core/trading_cycles.py core/notification_formats.py \
-     core/recommendation_fetching.py core/recommendation_publishing.py core/price_frames.py /app/core/
+     core/recommendation_fetching.py core/recommendation_publishing.py core/price_frames.py \
+     core/profit_loss_range.py /app/core/
 COPY dao/__init__.py dao/order_dao.py dao/account_dao.py dao/inventory_dao.py \
-     dao/balance_dao.py dao/recommendation_dao.py dao/golden_ai_backtest_metrics_dao.py /app/dao/
+     dao/balance_dao.py dao/recommendation_dao.py dao/golden_ai_backtest_metrics_dao.py \
+     dao/profit_loss_dao.py /app/dao/
 COPY utils/ /app/utils/
 COPY service/ /app/service/
 COPY tabs/ /app/tabs/

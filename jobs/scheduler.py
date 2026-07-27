@@ -43,6 +43,8 @@ class Scheduler:
         # 已實現損益放最後：庫存與餘額是每日必須留存的快照（錯過就補不回來），
         # 已實現損益則可事後以任意區間重抓，故讓它承擔失敗風險而非反過來。
         # 這裡不吞例外——失敗會往上冒到 __main__ 的錯誤通知，而前兩項已入庫。
+        # 注意：本模組同時進 Lite image（見 lite/Dockerfile 白名單），
+        # 在此新增 import 前務必確認該檔案也在白名單內，否則 client 端 build 會失敗
         profit_loss_fetcher = ProfitLossFetcher.create(
             self.user_name, self.broker_name, self.account, self.fetch_timestamp
         )
