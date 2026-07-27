@@ -5,6 +5,7 @@ import traceback
 from zoneinfo import ZoneInfo
 from jobs.balance_fetcher import BalanceFetcherBase
 from jobs.inventory_fetcher import InventoryFetcher
+from jobs.profit_loss_fetcher import ProfitLossFetcher
 from utils.authentication import Authenticator
 from utils.config_loader import ConfigLoader
 from utils.logger_manager import LoggerManager
@@ -38,6 +39,15 @@ class Scheduler:
         inventory_data = inventory_fetcher.fetch_and_save()
         balance_fetcher = BalanceFetcherBase(self.user_name, self.broker_name, self.account, self.fetch_timestamp)
         balance_data = balance_fetcher.fetch_and_save()
+
+        # 已實現損益放最後：庫存與餘額是每日必須留存的快照（錯過就補不回來），
+        # 已實現損益則可事後以任意區間重抓，故讓它承擔失敗風險而非反過來。
+        # 這裡不吞例外——失敗會往上冒到 __main__ 的錯誤通知，而前兩項已入庫。
+        profit_loss_fetcher = ProfitLossFetcher.create(
+            self.user_name, self.broker_name, self.account, self.fetch_timestamp
+        )
+        if profit_loss_fetcher is not None:
+            profit_loss_fetcher.fetch_and_save()
 
 
 if __name__ == "__main__":
