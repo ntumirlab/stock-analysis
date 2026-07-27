@@ -160,9 +160,6 @@ class ShioajiProfitLossFetcher(ProfitLossFetcherBase):
         logger.info(f"Processed {len(processed_items)} realized profit/loss records from Shioaji")
         return processed_items
 
-    def get_broker_name(self):
-        return "shioaji"
-
 
 class ProfitLossFetcher:
     """用於建立合適的抓取器實例的工廠類"""
@@ -240,22 +237,27 @@ if __name__ == "__main__":
             save=not args.dry_run,
         )
 
-        # 逐筆列出，供兩種 unit 的結果並排比對：raw 是券商原始數量，
-        # qty(張) 是換算後入庫的值
+        # 逐筆列出，供兩種 unit 的結果並排比對。
+        # pr_ratio 印原值不加 %：這支工具正是用來確認券商回傳長什麼樣，
+        # 若先假設它是百分比，0.0357 會被顯示成 0.04% 而誤導判讀。
+        # dseq/seqno 是判斷 unit 究竟是過濾器還是計量單位的依據——
+        # 兩種 unit 的集合相同即為計量單位，完全不相交則為過濾器。
         print(f"\n=== unit={args.unit} | {len(records)} records "
               f"| {'DRY RUN (not saved)' if args.dry_run else 'saved'} ===")
-        print(f"{'date':<12}{'code':<8}{'raw':>10}{'qty(張)':>12}"
-              f"{'price':>10}{'pnl':>12}{'pr_ratio':>10}")
+        print(f"{'date':<12}{'code':<8}{'raw_qty':>10}{'qty(張)':>12}"
+              f"{'price':>10}{'pnl':>12}{'pr_ratio(raw)':>15}{'dseq':>12}{'seqno':>12}")
         for record in sorted(records, key=lambda r: (r['trade_date'] or '', r['stock_id'] or '')):
             raw_quantity = (record.get('raw_data') or {}).get('quantity')
             print(f"{record['trade_date'] or '?':<12}{record['stock_id'] or '?':<8}"
                   f"{str(raw_quantity):>10}{record['quantity']:>12.3f}"
                   f"{record['price']:>10.2f}{record['pnl']:>12.2f}"
-                  f"{record['pr_ratio']:>9.2f}%")
+                  f"{record['pr_ratio']:>15}{record['dseq']:>12}{record['seqno']:>12}")
 
         total_pnl = sum(r['pnl'] for r in records)
         codes = sorted({r['stock_id'] for r in records})
+        trade_keys = sorted({(r['dseq'], r['seqno']) for r in records})
         print(f"\ntotal pnl = {total_pnl:.2f} | codes = {codes}")
+        print(f"trade keys (dseq, seqno) = {trade_keys}")
         logger.info(f"Fetched {len(records)} records, total realized pnl = {total_pnl:.2f}")
     except Exception as e:
         logger.exception(e)

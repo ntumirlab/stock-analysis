@@ -1,20 +1,9 @@
-from dash import dcc, html, Input, Output, callback
-import dash_bootstrap_components as dbc
+from dash import dcc, html, Input, Output
 import plotly.graph_objects as go
-import plotly.express as px
 import datetime
 import pandas as pd
-import numpy as np
 
-def _summary_card(title, amount, color_class):
-    """帳戶資金摘要的單張卡片：標題＋金額兩行，五張結構一致才不會高度參差。"""
-    return dbc.Card([
-        dbc.CardBody([
-            html.H5(title, className="card-title"),
-            html.H3(f"${amount:,.2f}", className=f"card-text {color_class}")
-        ])
-    ])
-
+from tabs.components import card_grid, summary_card
 
 class BalanceHistoryTab:
     def __init__(self, balance_service):
@@ -92,25 +81,20 @@ class BalanceHistoryTab:
                 fetch_date = "未知日期"
                 
             # 創建摘要卡片
-            # 五張卡片結構一致（標題＋金額），任何一張都不加註解行——多一行會讓
-            # 該張卡片變高、整排參差。未交割款獨立成卡，銀行餘額 ＋ 未交割款 ＝
-            # 可動用現金 的關係因此看得出來，不必靠文字說明。
-            #
-            # 版面用 CSS Grid 而非 dbc.Row/Col：1fr 的定義是「扣掉 gap 之後平分剩餘
-            # 空間」，所以五張卡片加間距恆等於容器寬度，不會把整頁推出左右捲軸
-            # （Bootstrap 欄位的負邊距與 min-width:auto 在五欄時會超出 100%）。
-            # minmax 的下限讓卡片窄到放不下時自動換行，而不是硬擠。
-            summary_cards = html.Div([
-                _summary_card("銀行餘額", latest_balance['bank_balance'], "text-primary"),
-                _summary_card("未交割款", latest_balance['settlements'], "text-secondary"),
-                _summary_card("可動用現金", latest_balance['adjusted_bank_balance'], "text-info"),
-                _summary_card("持股市值", latest_balance['market_value'], "text-success"),
-                _summary_card("總資產", latest_balance['total_assets'], "text-dark"),
-            ], style={
-                'display': 'grid',
-                'gridTemplateColumns': 'repeat(auto-fit, minmax(200px, 1fr))',
-                'gap': '1rem',
-            })
+            # 未交割款獨立成卡，銀行餘額 ＋ 未交割款 ＝ 可動用現金 的關係因此
+            # 看得出來，不必靠文字說明（也就不會有某張卡多一行導致整排參差）
+            summary_cards = card_grid([
+                summary_card("銀行餘額", f"${latest_balance['bank_balance']:,.2f}",
+                             value_class="card-text text-primary"),
+                summary_card("未交割款", f"${latest_balance['settlements']:,.2f}",
+                             value_class="card-text text-secondary"),
+                summary_card("可動用現金", f"${latest_balance['adjusted_bank_balance']:,.2f}",
+                             value_class="card-text text-info"),
+                summary_card("持股市值", f"${latest_balance['market_value']:,.2f}",
+                             value_class="card-text text-success"),
+                summary_card("總資產", f"${latest_balance['total_assets']:,.2f}",
+                             value_class="card-text text-dark"),
+            ])
             
             return html.Div([
                 html.P(f"最新資料日期：{fetch_date}", className="text-muted mb-3"),

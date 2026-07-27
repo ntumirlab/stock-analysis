@@ -1,7 +1,8 @@
 from dash import dcc, html, dash_table, Input, Output
-import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import datetime
+
+from tabs.components import card_grid, summary_card
 
 # 台股慣例：紅漲綠跌（與美股相反）
 PROFIT_COLOR = '#d62728'
@@ -40,18 +41,15 @@ def _format_pnl_with_ratio(pnl, ratio):
     return f"{money} ({_format_ratio(ratio)})"
 
 
-def _summary_card(title, block, hint):
+def _pnl_card(title, block, hint):
+    """損益摘要卡片：金額與報酬率併成一行，下方小字補充筆數或成本。"""
     pnl = block['pnl']
-    return dbc.Col([
-        dbc.Card([
-            dbc.CardBody([
-                html.H5(title, className="card-title"),
-                html.H3(_format_pnl_with_ratio(pnl, block['ratio']),
-                        style={'color': _pnl_color(pnl)}),
-                html.Small(hint, className="text-muted"),
-            ])
-        ])
-    ], width=4)
+    return summary_card(
+        title,
+        _format_pnl_with_ratio(pnl, block['ratio']),
+        value_style={'color': _pnl_color(pnl)},
+        hint=hint,
+    )
 
 
 class ProfitLossTab:
@@ -156,13 +154,13 @@ class ProfitLossTab:
                 selected_account, date_range[0], date_range[1]
             )
 
-            return dbc.Row([
-                _summary_card("已實現損益", summary['realized'],
-                              f"{summary['realized']['count']} 筆平倉"),
-                _summary_card("未實現損益", summary['unrealized'],
-                              f"{summary['unrealized']['count']} 檔持股"),
-                _summary_card("合計", summary['total'],
-                              f"投入成本 {_format_money(summary['total']['cost'])}"),
+            return card_grid([
+                _pnl_card("已實現損益", summary['realized'],
+                          f"{summary['realized']['count']} 筆平倉"),
+                _pnl_card("未實現損益", summary['unrealized'],
+                          f"{summary['unrealized']['count']} 檔持股"),
+                _pnl_card("合計", summary['total'],
+                          f"投入成本 {_format_money(summary['total']['cost'])}"),
             ])
 
         @app.callback(

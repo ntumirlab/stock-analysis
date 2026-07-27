@@ -32,6 +32,22 @@ def _realized_cost_basis(record):
     return cost if cost > 0 else 0
 
 
+def _aggregate(records):
+    """把一批損益明細彙總成 {pnl, cost, ratio, count}。
+
+    已實現與未實現的成本來源不同（前者由賣出價金回推、後者用成本均價），
+    但兩者都已在明細上算好 cost_basis，因此彙總邏輯只有這一份。
+    """
+    pnl = sum(record.get('pnl') or 0 for record in records)
+    cost = sum(record.get('cost_basis') or 0 for record in records)
+    return {
+        'pnl': pnl,
+        'cost': cost,
+        'ratio': _safe_ratio(pnl, cost),
+        'count': len(records),
+    }
+
+
 class ProfitLossService:
     def __init__(self, db_path="data_prod.db"):
         self.profit_loss_dao = ProfitLossDAO(db_path)
@@ -127,33 +143,10 @@ class ProfitLossService:
         realized = self.get_realized_records(account_id, start_date, end_date)
         unrealized = self.get_unrealized_records(account_id, inventory_date)
 
-        realized_pnl = sum(r.get('pnl') or 0 for r in realized)
-        realized_cost = sum(r.get('cost_basis') or 0 for r in realized)
-        unrealized_pnl = sum(r.get('pnl') or 0 for r in unrealized)
-        unrealized_cost = sum(r.get('cost_basis') or 0 for r in unrealized)
-
-        total_pnl = realized_pnl + unrealized_pnl
-        total_cost = realized_cost + unrealized_cost
-
         return {
-            'realized': {
-                'pnl': realized_pnl,
-                'cost': realized_cost,
-                'ratio': _safe_ratio(realized_pnl, realized_cost),
-                'count': len(realized),
-            },
-            'unrealized': {
-                'pnl': unrealized_pnl,
-                'cost': unrealized_cost,
-                'ratio': _safe_ratio(unrealized_pnl, unrealized_cost),
-                'count': len(unrealized),
-            },
-            'total': {
-                'pnl': total_pnl,
-                'cost': total_cost,
-                'ratio': _safe_ratio(total_pnl, total_cost),
-                'count': len(realized) + len(unrealized),
-            },
+            'realized': _aggregate(realized),
+            'unrealized': _aggregate(unrealized),
+            'total': _aggregate(realized + unrealized),
         }
 
     def get_cumulative_realized(self, account_id, start_date, end_date):
