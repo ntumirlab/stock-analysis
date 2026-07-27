@@ -24,17 +24,34 @@ class ProfitLossFetcherBase:
         self.account_dao = AccountDAO()
         self.stock_mapper = StockMapper()
 
-    def fetch_and_save(self, begin_date=None, end_date=None):
+    def fetch_and_save(self, begin_date=None, end_date=None, save=True):
+        """抓取並寫入已實現損益。
+
+        Args:
+            begin_date (datetime.date, optional): 起始日，未給則自 DB 現況推算
+            end_date (datetime.date, optional): 結束日，未給則為今天
+            save (bool): False 時只抓取與轉換、不寫入 DB。用於比對不同 unit
+                的涵蓋範圍——兩種 unit 抓到的是同一批交易，唯一鍵相同，
+                若都寫入則第二次會被索引擋掉、比不出差異還污染正式資料
+
+        Returns:
+            list[dict]: 處理後的已實現損益資料
+        """
         account_id = self._get_account_id()
         begin_date, end_date = self.resolve_date_range(account_id, begin_date, end_date)
 
         raw_data = self.fetch_raw_data(begin_date, end_date)
         processed_data = self.process_data(raw_data)
-        self.profit_loss_dao.insert_profit_loss(
-            account_id,
-            processed_data,
-            fetch_timestamp=self.fetch_timestamp,
-        )
+
+        if save:
+            self.profit_loss_dao.insert_profit_loss(
+                account_id,
+                processed_data,
+                fetch_timestamp=self.fetch_timestamp,
+            )
+        else:
+            logger.info("Dry run: %d records fetched, nothing written", len(processed_data))
+
         return processed_data
 
     def _get_account_id(self):
@@ -82,6 +99,9 @@ class ShioajiProfitLossFetcher(ProfitLossFetcherBase):
         # 實盤走零股，與 inventory_fetcher 的 list_positions 取用同一種 unit；
         # Common/Share 是否會改變回傳的涵蓋範圍需以實際帳戶核對（見 --unit 參數）
         self.unit = unit or sj.constant.Unit.Share
+        # 券商回傳的數量單位隨 unit 而異（Share＝股、Common＝張），入庫一律轉成張。
+        # 寫死除以 1000 會讓 Common 的數量差一千倍，故除數綁定 unit
+        self.quantity_divisor = 1000 if self.unit == sj.constant.Unit.Share else 1
 
     def fetch_raw_data(self, begin_date, end_date):
         logger.info("Fetching realized profit/loss from Shioaji API")
@@ -100,7 +120,8 @@ class ShioajiProfitLossFetcher(ProfitLossFetcherBase):
         date --> trade_date
         code --> stock_id
         (無) --> stock_name（使用 StockMapper 查詢）
-        quantity (股) --> quantity (張，除以1000，與 inventory_history 同慣例)
+        quantity (Share 模式為股 / Common 模式為張) --> quantity (一律轉成張，
+            與 inventory_history 同慣例；換算除數見 self.quantity_divisor)
         price --> price
         pnl --> pnl
         pr_ratio --> pr_ratio (%)
@@ -117,13 +138,13 @@ class ShioajiProfitLossFetcher(ProfitLossFetcherBase):
             record_dict = record.__dict__
 
             stock_id = record_dict.get('code')
-            shares = float(record_dict.get('quantity', 0) or 0)
+            raw_quantity = float(record_dict.get('quantity', 0) or 0)
 
             processed_items.append({
                 'trade_date': normalize_trade_date(record_dict.get('date')),
                 'stock_id': stock_id,
                 'stock_name': self.stock_mapper.map(stock_id),
-                'quantity': shares / 1000,
+                'quantity': raw_quantity / self.quantity_divisor,
                 'price': float(record_dict.get('price', 0) or 0),
                 'pnl': float(record_dict.get('pnl', 0) or 0),
                 'pr_ratio': float(record_dict.get('pr_ratio', 0) or 0),
@@ -177,6 +198,9 @@ if __name__ == "__main__":
     parser.add_argument("--end_date", help="Backfill end date, YYYY-MM-DD")
     parser.add_argument("--unit", choices=["share", "common"], default="share",
                         help="Shioaji query unit; use to compare odd-lot vs board-lot coverage")
+    parser.add_argument("--dry_run", action="store_true",
+                        help="Fetch and print without writing to the database; "
+                             "use this when comparing units so neither result is persisted")
 
     args = parser.parse_args()
 
@@ -210,8 +234,25 @@ if __name__ == "__main__":
         records = fetcher.fetch_and_save(
             begin_date=_parse_date(args.begin_date),
             end_date=_parse_date(args.end_date),
+            save=not args.dry_run,
         )
+
+        # 逐筆列出，供兩種 unit 的結果並排比對：raw 是券商原始數量，
+        # qty(張) 是換算後入庫的值
+        print(f"\n=== unit={args.unit} | {len(records)} records "
+              f"| {'DRY RUN (not saved)' if args.dry_run else 'saved'} ===")
+        print(f"{'date':<12}{'code':<8}{'raw':>10}{'qty(張)':>12}"
+              f"{'price':>10}{'pnl':>12}{'pr_ratio':>10}")
+        for record in sorted(records, key=lambda r: (r['trade_date'] or '', r['stock_id'] or '')):
+            raw_quantity = (record.get('raw_data') or {}).get('quantity')
+            print(f"{record['trade_date'] or '?':<12}{record['stock_id'] or '?':<8}"
+                  f"{str(raw_quantity):>10}{record['quantity']:>12.3f}"
+                  f"{record['price']:>10.2f}{record['pnl']:>12.2f}"
+                  f"{record['pr_ratio']:>9.2f}%")
+
         total_pnl = sum(r['pnl'] for r in records)
+        codes = sorted({r['stock_id'] for r in records})
+        print(f"\ntotal pnl = {total_pnl:.2f} | codes = {codes}")
         logger.info(f"Fetched {len(records)} records, total realized pnl = {total_pnl:.2f}")
     except Exception as e:
         logger.exception(e)
