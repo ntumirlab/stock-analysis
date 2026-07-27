@@ -13,9 +13,11 @@ from service.account_service import AccountService
 from service.inventory_service import InventoryService
 from service.order_service import OrderService
 from service.balance_service import BalanceService
+from service.profit_loss_service import ProfitLossService
 from tabs.order_history import OrderHistoryTab
 from tabs.inventory_history import InventoryHistoryTab
 from tabs.balance_history import BalanceHistoryTab
+from tabs.profit_loss import ProfitLossTab
 from tabs.recommendation_list import RecommendationListTab
 
 
@@ -25,6 +27,7 @@ def create_app():
     order_history_tab = OrderHistoryTab(OrderService())
     inventory_history_tab = InventoryHistoryTab(InventoryService())
     balance_history_tab = BalanceHistoryTab(BalanceService())
+    profit_loss_tab = ProfitLossTab(ProfitLossService())
     recommendation_tab = RecommendationListTab([
         ("週推薦清單", RecommendationDAO(frequency="weekly")),
         ("月推薦清單", RecommendationDAO(frequency="monthly")),
@@ -65,6 +68,9 @@ def create_app():
                 dcc.Tab(label='帳戶資金', value='tab-balance-history', children=[
                     balance_history_tab.get_layout()
                 ]),
+                dcc.Tab(label='損益', value='tab-profit-loss', children=[
+                    profit_loss_tab.get_layout()
+                ]),
                 dcc.Tab(label='推薦清單', value='tab-recommendations', children=[
                     recommendation_tab.get_layout()
                 ]),
@@ -76,6 +82,7 @@ def create_app():
     order_history_tab.register_callbacks(app)
     inventory_history_tab.register_callbacks(app)
     balance_history_tab.register_callbacks(app)
+    profit_loss_tab.register_callbacks(app)
     recommendation_tab.register_callbacks(app)
 
     return app

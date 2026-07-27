@@ -82,6 +82,27 @@ class InventoryDAO:
         logger.info(f"Inserted {len(inventory_data)} inventory_history records for account_id {account_id}")
 
 
+    def get_latest_inventory_date(self, account_id):
+        """取得該帳戶最近一筆庫存快照的日期。
+
+        未實現損益本質上是「現在」的狀態，沒有區間可言；查詢端若直接用今天，
+        會在 20:30 抓取前撲空，故一律以實際存在的最新快照為準。
+
+        Returns:
+            datetime.date | None: 無資料時回 None
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT MAX(date(fetch_timestamp)) FROM inventory_history WHERE account_id = ?
+        """, (account_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or not row[0]:
+            return None
+        return datetime.strptime(row[0], "%Y-%m-%d").date()
+
     def get_inventories_by_account_and_date(self, account_id, query_date):
         """
         根據帳戶ID和日期獲取該帳戶當天的庫存記錄
