@@ -6,6 +6,16 @@ import datetime
 import pandas as pd
 import numpy as np
 
+def _summary_card(title, amount, color_class):
+    """帳戶資金摘要的單張卡片：標題＋金額兩行，五張結構一致才不會高度參差。"""
+    return dbc.Card([
+        dbc.CardBody([
+            html.H5(title, className="card-title"),
+            html.H3(f"${amount:,.2f}", className=f"card-text {color_class}")
+        ])
+    ])
+
+
 class BalanceHistoryTab:
     def __init__(self, balance_service):
         self.balance_service = balance_service
@@ -33,7 +43,10 @@ class BalanceHistoryTab:
                     html.H3("帳戶資金摘要", className='mb-3'),
                     html.Div(id='balance-summary', className='summary-box')
                 ], style={'margin': '20px'})
-            ], className='row'),
+            ]),
+            # 此處原為 className='row'，但兩個子元素都不是 col。Bootstrap 的 .row 是
+            # display:flex，子元素會變成寬度依內容而定的 flex item——摘要區塊因此撐成
+            # 卡片的自然總寬而非容器寬度，把整頁推出左右捲軸。改回一般區塊排版
             
             # 資金水位趨勢圖
             html.Div([
@@ -79,44 +92,25 @@ class BalanceHistoryTab:
                 fetch_date = "未知日期"
                 
             # 創建摘要卡片
-            summary_cards = dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H5("銀行餘額", className="card-title"),
-                            html.H3(f"${latest_balance['bank_balance']:,.2f}", className="card-text text-primary")
-                        ])
-                    ])
-                ], width=3),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H5("可動用現金", className="card-title"),
-                            html.H3(f"${latest_balance['adjusted_bank_balance']:,.2f}", className="card-text text-info"),
-                            # 未交割款是銀行餘額與可動用現金的唯一差額，不顯示的話
-                            # 兩張卡片的落差會沒有交代
-                            html.Small(f"含未交割款 ${latest_balance['settlements']:,.0f}",
-                                       className="text-muted")
-                        ])
-                    ])
-                ], width=3),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H5("持股市值", className="card-title"),
-                            html.H3(f"${latest_balance['market_value']:,.2f}", className="card-text text-success")
-                        ])
-                    ])
-                ], width=3),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H5("總資產", className="card-title"),
-                            html.H3(f"${latest_balance['total_assets']:,.2f}", className="card-text text-dark")
-                        ])
-                    ])
-                ], width=3)
-            ])
+            # 五張卡片結構一致（標題＋金額），任何一張都不加註解行——多一行會讓
+            # 該張卡片變高、整排參差。未交割款獨立成卡，銀行餘額 ＋ 未交割款 ＝
+            # 可動用現金 的關係因此看得出來，不必靠文字說明。
+            #
+            # 版面用 CSS Grid 而非 dbc.Row/Col：1fr 的定義是「扣掉 gap 之後平分剩餘
+            # 空間」，所以五張卡片加間距恆等於容器寬度，不會把整頁推出左右捲軸
+            # （Bootstrap 欄位的負邊距與 min-width:auto 在五欄時會超出 100%）。
+            # minmax 的下限讓卡片窄到放不下時自動換行，而不是硬擠。
+            summary_cards = html.Div([
+                _summary_card("銀行餘額", latest_balance['bank_balance'], "text-primary"),
+                _summary_card("未交割款", latest_balance['settlements'], "text-secondary"),
+                _summary_card("可動用現金", latest_balance['adjusted_bank_balance'], "text-info"),
+                _summary_card("持股市值", latest_balance['market_value'], "text-success"),
+                _summary_card("總資產", latest_balance['total_assets'], "text-dark"),
+            ], style={
+                'display': 'grid',
+                'gridTemplateColumns': 'repeat(auto-fit, minmax(200px, 1fr))',
+                'gap': '1rem',
+            })
             
             return html.Div([
                 html.P(f"最新資料日期：{fetch_date}", className="text-muted mb-3"),
