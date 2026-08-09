@@ -24,7 +24,7 @@
 ```
 ┌─────────────────────────────────────────────┐
 │  第 1 層: .env (敏感資訊 - ⚠️ 不提交到 Git)  │
-│  ├─ FINLAB_REFRESH_TOKEN=... (見 2.3)      │
+│  ├─ FINLAB_REFRESH_TOKEN/SESSION_ID/API_KEY│
 │  ├─ GOOGLE_API_KEY=AIzaSyDGFlM8...         │
 │  └─ SHIOAJI_CERT_PASSWORD=A123456789       │
 └────────────────┬────────────────────────────┘

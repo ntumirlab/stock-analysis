@@ -53,6 +53,13 @@ def login_finlab(api_token: str | None = None) -> None:
             f"產生 {' / '.join(SESSION_ENV_VARS)}，或設定 FINLAB_API_TOKEN"
         )
 
-    finlab.login(token)
     # 套件內標示 api_token 於 2026/08/01 後移除（官網未提期限），目前仍可用
+    try:
+        finlab.login(token)
+    except (TypeError, AttributeError) as e:
+        raise EnvironmentError(
+            "finlab 已不接受 api_token 登入，請改用 session 環境變數："
+            "在已登入的機器執行 `python -m finlab token >> .env` 產生 "
+            f"{' / '.join(SESSION_ENV_VARS)}"
+        ) from e
     logger.warning("FinLab 使用已棄用的 api_token 登入，請改設 session 環境變數")
