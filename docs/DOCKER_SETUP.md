@@ -5,6 +5,7 @@
 ---
 
 ## 📋 目錄
+
 - [前置需求](#前置需求)
 - [快速開始](#快速開始)
 - [配置說明](#配置說明)
@@ -36,7 +37,7 @@
 │  │  ├─ FINLAB_API_TOKEN: "${FINLAB_API_TOKEN}" │
 │  │  └─ ...                                  │
 │  └─ users:                                  │
-│     └─ junting:                             │
+│     └─ username:                             │
 │        └─ shioaji:                          │
 │           └─ env:                           │
 │              └─ SHIOAJI_CERT_PASSWORD: "${SHIOAJI_CERT_PASSWORD}" │
@@ -52,12 +53,14 @@
 ```
 
 **流程說明:**
+
 1. **Docker 啟動** → 掛載 `.env` 檔案
 2. **ConfigLoader 初始化** → 讀取 `.env` 到環境變數
 3. **應用程式啟動** → ConfigLoader 解析 `config.yaml` 中的 `${VAR_NAME}` 引用
 4. **獲得最終配置** → `.env` 優先於 `config.yaml` 中的預設值
 
 **安全優勢:**
+
 - ✅ `.env` 包含實際敏感值,已在 `.gitignore` 中,永不提交
 - ✅ `config.yaml` 只有 `${VAR_NAME}` 引用,可安全提交
 - ✅ 開發和生產環境共用同一 `config.yaml`,只需調整 `.env`
@@ -69,10 +72,11 @@
 
 ### 1. 安裝 Docker Desktop
 
-| 作業系統 | 下載連結 |
-|---------|---------|
+
+| 作業系統        | 下載連結                                                          |
+| --------------- | ----------------------------------------------------------------- |
 | **Windows/Mac** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| **Linux** | 執行以下指令: |
+| **Linux**       | 執行以下指令:                                                     |
 
 ```bash
 # Linux 安裝 Docker
@@ -95,9 +99,10 @@ docker compose version
 
 準備永豐金證券的憑證檔案:
 
-| 券商 | 憑證格式 | 取得方式 |
-|------|---------|---------|
-| **永豐金證券 (Shioaji)** | `.pfx` | [金鑰與憑證申請](https://sinotrade.github.io/zh/tutor/prepare/token/) |
+
+| 券商                     | 憑證格式 | 取得方式                                                              |
+| ------------------------ | -------- | --------------------------------------------------------------------- |
+| **永豐金證券 (Shioaji)** | `.pfx`   | [金鑰與憑證申請](https://sinotrade.github.io/zh/tutor/prepare/token/) |
 
 ---
 
@@ -107,7 +112,7 @@ docker compose version
 
 ```bash
 # 使用 Git 下載
-git clone https://github.com/JunTingLin/stock-analysis.git
+git clone https://github.com/ntumirlab/stock-analysis.git
 cd stock-analysis
 
 ```
@@ -135,6 +140,7 @@ nano .env
 `config.yaml` 只存放非敏感的配置,所有敏感值都以 `${VAR_NAME}` 格式引用自 `.env`。
 
 請參考 `config/config.yaml` 檔案了解配置結構。主要設定包括:
+
 - `env`: 全域環境變數參考
 - `users`: 使用者和券商設定
 - `llm_settings`: LLM 模型配置
@@ -152,15 +158,16 @@ nano .env
 python -m finlab token >> .env
 ```
 
-會附加 `FINLAB_REFRESH_TOKEN`、`FINLAB_SESSION_ID`、`FINLAB_API_KEY` 三個變數到 `.env`；
-容器已掛載 `.env`（唯讀），不需要額外設定。
+會附加 `FINLAB_REFRESH_TOKEN`、`FINLAB_SESSION_ID`、`FINLAB_API_KEY` 三個變數到 `.env`；容器已掛載 `.env`（唯讀），不需要額外設定。
+
+`python -m finlab login` 不要求該機器具備瀏覽器：執行後會印出授權網址
+（`If browser does not open, visit: ...`），複製到任一台**已登入 finlab.finance** 的瀏覽器開啟並完成授權即可，原機器會輪詢取得結果。該網址有效期限 300 秒，逾時須重新執行以取得新網址。未先登入網站時該頁僅顯示 session 編號、不會出現授權按鈕。
 
 **⚠️ 重要提醒:**
 
-1. 不要在產生憑證的機器上執行 `python -m finlab logout`，會讓容器一併認證失敗
+1. 不要在產生憑證的機器上執行 `python -m finlab logout`，會讓容器一併認證失敗（改密碼會使該帳號所有機器的 session 一併失效）
 2. 容器出現認證失敗時，重跑 `python -m finlab token` 更新 `.env` 三個值
-3. `FINLAB_API_TOKEN` 為 fallback，仍可用；但套件內標示 2026/08/01 後移除
-   （`finlab/__init__.py` 的 `_DEPRECATION_DEADLINE`，官網未提期限），不宜長期依賴
+3. `FINLAB_API_TOKEN` 保留為備援：session 憑證失效時會自動退回該路徑，服務不中斷。套件標示的移除期限 2026/08/01 已過（`finlab/__init__.py` 的 `_DEPRECATION_DEADLINE`，官網未提期限），不宜長期依賴
 
 #### 2.4 放入憑證檔案
 
@@ -186,13 +193,14 @@ config/credentials/
 ```
 
 **⚠️ 重要提醒:**
+
 1. 憑證檔名須與 `.env` 中的 `SHIOAJI_CERT_PATH` 一致
-   - 例如: `.env` 設 `SHIOAJI_CERT_PATH=./config/credentials/junting_Sinopac.pfx` 
-   - 則實際檔案應為 `config/credentials/junting_Sinopac.pfx`
 
+   - 例如: `.env` 設 `SHIOAJI_CERT_PATH=./config/credentials/Sinopac.pfx`
+   - 則實際檔案應為 `config/credentials/Sinopac.pfx`
 2. `.env` 中的路徑使用本地路徑 (`./config/credentials/...`)
-   - Docker 容器內自動轉換為 `/app/config/credentials/...`
 
+   - Docker 容器內自動轉換為 `/app/config/credentials/...`
 3. 憑證檔案必須從 [永豐金證券官網](https://sinopac.com.tw) 申請取得
 
 #### 2.5 驗證配置 ✓
@@ -218,6 +226,7 @@ docker compose ps
 ```
 
 **預期輸出:**
+
 ```
 NAME                 IMAGE                  STATUS        PORTS
 stock-analysis-app   stock-analysis:latest  Up (healthy)  0.0.0.0:5000->5000/tcp
@@ -226,6 +235,44 @@ stock-scheduler      stock-analysis:latest  Up
 
 - **Dashboard主頁**: http://localhost:5000
 - **回測報告瀏覽**: http://localhost:5000/assets/
+
+#### 步驟 3.1: 驗證 FinLab 認證 ✓
+
+`python -m finlab status` **不適用於容器**：docker-compose 以檔案形式掛載 `.env`
+（非 `env_file:`），該指令為獨立行程、不會載入 `.env`，因此必定顯示 `Not logged in.`，
+此結果不代表認證失敗。
+
+以實際登入路徑驗證：
+
+```bash
+docker compose exec stock-analysis python -c "
+import logging; logging.basicConfig(level=logging.INFO)
+from utils.config_loader import ConfigLoader
+from utils.authentication import Authenticator
+Authenticator(ConfigLoader()).login_finlab()
+"
+```
+
+依輸出判讀:
+
+
+| 輸出                                                             | 意義                                             |
+| ---------------------------------------------------------------- | ------------------------------------------------ |
+| `INFO ... Successfully logged into FinLab (session credentials)` | 使用 session 憑證，正常                          |
+| `WARNING ... 使用已棄用的 api_token 登入`                        | session 憑證未生效，已自動退回`FINLAB_API_TOKEN` |
+| `EnvironmentError`                                               | 兩種憑證皆未讀到，檢查`.env` 內容與掛載          |
+
+確認來源為環境變數（非機器上的 `credentials.json`）:
+
+```bash
+docker compose exec stock-analysis python -c "
+from dotenv import load_dotenv; load_dotenv('/app/.env')
+from finlab.auth import get_session
+print('source =', get_session().get('source'))
+"
+```
+
+應顯示 `source = env`。
 
 ---
 
@@ -284,27 +331,30 @@ stock-analysis/
 
 ### 服務說明
 
-| 服務名稱 | 用途 | 端口 |
-|---------|------|------|
-| `stock-analysis-app` | Dashboard 網頁介面 | 5000 |
-| `golden-ai-backtest-dashboard` | GoldenAI 回測報告 | 8051 |
-| `tw-market-regime-dashboard` | 台股多空轉折模型 | 8052 |
-| `stock-scheduler` | 定時排程執行器 | - |
+
+| 服務名稱                       | 用途               | 端口 |
+| ------------------------------ | ------------------ | ---- |
+| `stock-analysis-app`           | Dashboard 網頁介面 | 5000 |
+| `golden-ai-backtest-dashboard` | GoldenAI 回測報告  | 8051 |
+| `tw-market-regime-dashboard`   | 台股多空轉折模型   | 8052 |
+| `stock-scheduler`              | 定時排程執行器     | -    |
 
 ### Volume 掛載說明
 
-| 本地路徑 | 容器路徑 | 用途 | 模式 |
-|---------|---------|------|------|
-| `./.env` | `/app/.env` | 環境變數 (必需) | 只讀 `:ro` |
-| `./config/` | `/app/config/` | 配置檔和憑證 (含 token 更新) | 讀寫 |
-| `./config.yaml` | `/app/config.yaml` | 主配置檔 (模板) | 只讀 `:ro` |
-| `./logs/` | `/app/logs/` | 日誌輸出 | 讀寫 |
-| `./data_prod.db` | `/app/data_prod.db` | SQLite 資料庫 | 讀寫 |
-| `./assets/` | `/app/assets/` | 回測報告 HTML 與推薦清單輸出 | 讀寫 |
-| `./finlab_db/` | `/root/finlab_db/` | FinLab 資料快取 | 讀寫 |
-| `./docker/crontab` | `/etc/cron.d/stock-cron` | 排程設定 (僅 scheduler) | 只讀 `:ro` |
+
+| 本地路徑           | 容器路徑                 | 用途                         | 模式      |
+| ------------------ | ------------------------ | ---------------------------- | --------- |
+| `./.env`           | `/app/.env`              | 環境變數 (必需)              | 只讀`:ro` |
+| `./config/`        | `/app/config/`           | 配置檔和憑證 (含 token 更新) | 讀寫      |
+| `./config.yaml`    | `/app/config.yaml`       | 主配置檔 (模板)              | 只讀`:ro` |
+| `./logs/`          | `/app/logs/`             | 日誌輸出                     | 讀寫      |
+| `./data_prod.db`   | `/app/data_prod.db`      | SQLite 資料庫                | 讀寫      |
+| `./assets/`        | `/app/assets/`           | 回測報告 HTML 與推薦清單輸出 | 讀寫      |
+| `./finlab_db/`     | `/root/finlab_db/`       | FinLab 資料快取              | 讀寫      |
+| `./docker/crontab` | `/etc/cron.d/stock-cron` | 排程設定 (僅 scheduler)      | 只讀`:ro` |
 
 **重要說明:**
+
 - **`.env` 必需**: 包含所有敏感資訊 (API Keys、憑證密碼等)
 - **`config.yaml` 只是模板**: 現在只包含 `${VAR_NAME}` 參考,實際值從 `.env` 讀取
 - **ConfigLoader 自動解析**: 啟動時會自動讀取 `.env` 並解析 YAML 中的 `${VAR_NAME}` 模式
@@ -320,19 +370,20 @@ stock-analysis/
 
 ```bash
 # 1. 每天 20:30 - 抓取當日持股和帳戶資訊
-30 20 * * * cd /app && python -m jobs.scheduler --user_name=junting --broker_name=shioaji
+30 20 * * * cd /app && python -m jobs.scheduler --user_name=username --broker_name=shioaji
 
 # 2. 每天 20:00 - 執行回測
 0 20 * * * cd /app && python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyACE
 
 # 3. 每天 08:00 - 早盤下單
-0 8 * * * cd /app && python -m jobs.order_executor --user_name=junting --broker_name=shioaji
+0 8 * * * cd /app && python -m jobs.order_executor --user_name=username --broker_name=shioaji
 
-# 4. 每天 13:00 - 尾盤下單 (加價 1%)
-0 13 * * * cd /app && python -m jobs.order_executor --user_name=junting --broker_name=shioaji --extra_bid_pct=0.01
+# 4. 每天 13:00 - 尾盤下單
+0 13 * * * cd /app && python -m jobs.order_executor --user_name=username --broker_name=shioaji
 ```
 
 **排程中的參數值來源:**
+
 - `--user_name`, `--broker_name`: 來自 `config.yaml` 的 `users` 節點
 - `--strategy_class_name`: 來自 `config.yaml` 中使用者的 `constant.strategy_class_name`
 - 所有敏感資訊 (API Key、憑證密碼): 從 `.env` 自動讀取，無需在 crontab 中指定
@@ -341,44 +392,50 @@ stock-analysis/
 
 #### `jobs.scheduler` - 抓取帳務資料
 
-| 參數 | 必需 | 預設值 | 說明 |
-|------|------|--------|------|
-| `--user_name` | ✅ | 無 | 使用者名稱 (需與 `config.yaml` 一致) |
-| `--broker_name` | ✅ | 無 | 券商名稱 (`shioaji`) |
+
+| 參數            | 必需 | 預設值 | 說明                                |
+| --------------- | ---- | ------ | ----------------------------------- |
+| `--user_name`   | ✅   | 無     | 使用者名稱 (需與`config.yaml` 一致) |
+| `--broker_name` | ✅   | 無     | 券商名稱 (`shioaji`)                |
 
 **範例:**
+
 ```bash
-python -m jobs.scheduler --user_name=alan --broker_name=shioaji
+python -m jobs.scheduler --user_name=username --broker_name=shioaji
 ```
 
 #### `jobs.backtest_executor` - 執行回測
 
-| 參數 | 必需 | 預設值 | 說明 |
-|------|------|--------|------|
-| `--strategy_class_name` | ✅ | 無 | 策略類別名稱 (見 [附錄 A](#附錄-a-可用的策略類別)) |
+
+| 參數                    | 必需 | 預設值 | 說明                                              |
+| ----------------------- | ---- | ------ | ------------------------------------------------- |
+| `--strategy_class_name` | ✅   | 無     | 策略類別名稱 (見[附錄 A](#附錄-a-可用的策略類別)) |
 
 **範例:**
+
 ```bash
 python -m jobs.backtest_executor --strategy_class_name=PrisonRabbitStrategy
 ```
 
 #### `jobs.order_executor` - 執行下單
 
-| 參數 | 必需 | 預設值 | 說明 |
-|------|------|--------|------|
-| `--user_name` | ✅ | 無 | 使用者名稱 (需與 `config.yaml` 一致) |
-| `--broker_name` | ✅ | 無 | 券商名稱 (`shioaji`) |
-| `--view_only` | ❌ | `false` | 僅查看模式,不實際下單 |
+
+| 參數            | 必需 | 預設值  | 說明                                |
+| --------------- | ---- | ------- | ----------------------------------- |
+| `--user_name`   | ✅   | 無      | 使用者名稱 (需與`config.yaml` 一致) |
+| `--broker_name` | ✅   | 無      | 券商名稱 (`shioaji`)                |
+| `--view_only`   | ❌   | `false` | 僅查看模式,不實際下單               |
 
 註：下單一律為市價單（漲停價限價模擬），舊版的 `--extra_bid_pct` 參數已移除。
 
 **範例:**
+
 ```bash
 # 一般下單
-python -m jobs.order_executor --user_name=kiri --broker_name=shioaji
+python -m jobs.order_executor --user_name=username --broker_name=shioaji
 
 # 只看不下單 (測試模式)
-python -m jobs.order_executor --user_name=kiri --broker_name=shioaji --view_only
+python -m jobs.order_executor --user_name=username --broker_name=shioaji --view_only
 ```
 
 ---
@@ -430,7 +487,7 @@ tail -f logs/backtest.log
 ```bash
 # 手動執行下單 (測試模式)
 docker exec -it stock-scheduler python -m jobs.order_executor \
-  --user_name=kiri \
+  --user_name=username \
   --broker_name=shioaji \
   --view_only
 
@@ -440,7 +497,7 @@ docker exec -it stock-scheduler python -m jobs.backtest_executor \
 
 # 手動抓取帳務資料
 docker exec -it stock-scheduler python -m jobs.scheduler \
-  --user_name=kiri \
+  --user_name=username \
   --broker_name=shioaji
 
 # 手動發布推薦清單 JSON 到 Drive
@@ -488,25 +545,25 @@ docker system prune -a
 
 ---
 
-
 ## 附錄
 
 ### 附錄 A: 可用的策略類別
 
 在 `config.yaml` 的 `strategy_class_name` 欄位可使用以下策略:
 
-| 策略類別名稱 | 檔案位置 | 說明 | 來源 |
-|-------------|---------|------|------|
-| `AlanTWStrategyACE` | [alan_tw_strategy_ACE.py](strategy_class/alan_tw_strategy_ACE.py) | Alan 策略 (A\|C\|E) | 自訂 |
-| `PeterWuStrategy` | [peterwu_tw_strategy.py](strategy_class/peterwu_tw_strategy.py) | Peter Wu 策略 | 自訂 |
-| `RAndDManagementStrategy` | [r_and_d_management_strategy.py](strategy_class/r_and_d_management_strategy.py) | 研發管理大亂鬥 | FinLab 官方 |
-| `RevenuePriceStrategy` | [tibetanmastiff_tw_strategy.py](strategy_class/tibetanmastiff_tw_strategy.py) | 藏敖策略 | FinLab 官方 |
+
+| 策略類別名稱              | 檔案位置                                                                        | 說明                | 來源        |
+| ------------------------- | ------------------------------------------------------------------------------- | ------------------- | ----------- |
+| `AlanTWStrategyACE`       | [alan_tw_strategy_ACE.py](strategy_class/alan_tw_strategy_ACE.py)               | Alan 策略 (A\|C\|E) | 自訂        |
+| `PeterWuStrategy`         | [peterwu_tw_strategy.py](strategy_class/peterwu_tw_strategy.py)                 | Peter Wu 策略       | 自訂        |
+| `RAndDManagementStrategy` | [r_and_d_management_strategy.py](strategy_class/r_and_d_management_strategy.py) | 研發管理大亂鬥      | FinLab 官方 |
+| `RevenuePriceStrategy`    | [tibetanmastiff_tw_strategy.py](strategy_class/tibetanmastiff_tw_strategy.py)   | 藏敖策略            | FinLab 官方 |
 
 **範例配置:**
 
 ```yaml
 users:
-  junting:
+  username:
     shioaji:
       constant:
         strategy_class_name: "AlanTWStrategyACE"  # 使用 Alan 策略 ACE 組合
