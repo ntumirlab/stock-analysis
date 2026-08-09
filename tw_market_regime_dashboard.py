@@ -8,7 +8,6 @@
 URL : http://localhost:8052
 """
 
-import os
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -22,10 +21,11 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-import finlab
 from finlab import data
 import talib
 from talib import abstract
+
+from utils.finlab_auth import login_finlab
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -162,10 +162,7 @@ def _build_store(market: str) -> dict:
 
 # ── FinLab login（每個 worker process 只執行一次）─────────────────────────────
 
-_FINLAB_TOKEN = os.environ.get('FINLAB_API_TOKEN', '')
-if not _FINLAB_TOKEN:
-    raise RuntimeError('FINLAB_API_TOKEN is not set. Check your .env file.')
-finlab.login(_FINLAB_TOKEN)
+login_finlab()
 
 # ── Dash app ───────────────────────────────────────────────────────────────────
 

@@ -4,7 +4,6 @@ import sys
 import logging
 import traceback
 import keyring
-import finlab
 from finlab.online.sinopac_account import SinopacAccount
 
 # fugle 為 legacy 路徑（正式排程僅 shioaji）：fugle_trade 與 finlab 2.x 的
@@ -19,6 +18,7 @@ try:
 except ImportError:
     FugleAccount = None
 from utils.config_loader import ConfigLoader
+from utils.finlab_auth import login_finlab as finlab_login
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,7 @@ class Authenticator:
     def login_finlab(self):
         if not self.config_loader:
             raise RuntimeError("ConfigLoader is required for Authenticator. Pass an instance when constructing.")
-        token = self.config_loader.get_env_var("FINLAB_API_TOKEN")
-        if not token:
-            raise EnvironmentError("Missing environment variable: FINLAB_API_TOKEN")
-        
-        finlab.login(token)
-        logger.info("Successfully logged into FinLab")
+        finlab_login(self.config_loader.get_env_var("FINLAB_API_TOKEN"))
 
     def _login_fugle(self):
         if FugleAccount is None or setup_keyring is None:
