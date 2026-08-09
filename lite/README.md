@@ -42,7 +42,7 @@ GoldenAI Lite 是自動下單系統，安裝完成後自動運作，平常不需
 | ----------------------------------------------------------- | ------------------------------------------ |
 | `goldenai-lite_v1.0.0.tar`                                  | 系統主程式（版本號可能不同）               |
 | `docker-compose.yml`、`config.yaml.example`、`.env.example` | 設定檔與範本                               |
-| FinLab API Token                                            | 填入設定檔                                 |
+| FinLab 認證（4 組數值）                                     | 填入設定檔                                 |
 | Google Drive 資料夾 ID                                      | 填入設定檔（週清單必要；月清單選用）       |
 | `google_token.json`                                         | Google Drive 憑證檔（開發方協助取得）      |
 | Telegram bot token 與群組 chat id                           | 填入設定檔；通知發送到開發方建立的專用群組 |
@@ -147,7 +147,10 @@ goldenai-lite/
 | 欄位                      | 內容                                    | 來源                                 |
 | ------------------------- | --------------------------------------- | ------------------------------------ |
 | `GOLDENAI_LITE_TAG`       | 版本號（如`v1.0.0`），須與 tar 檔名一致 | 已預填（更新版本時才需修改）         |
-| `FINLAB_API_TOKEN`        | FinLab token                            | 開發方提供                           |
+| `FINLAB_REFRESH_TOKEN`    | FinLab 認證（4 組數值之一）             | 開發方提供                           |
+| `FINLAB_SESSION_ID`       | FinLab 認證（4 組數值之一）             | 開發方提供                           |
+| `FINLAB_API_KEY`          | FinLab 認證（4 組數值之一）             | 開發方提供                           |
+| `FINLAB_API_TOKEN`        | FinLab 認證（4 組數值之一）             | 開發方提供                           |
 | `WEEKLY_FETCH_FOLDER_ID`  | 週清單的 Google Drive 資料夾 ID         | 開發方提供                           |
 | `MONTHLY_FETCH_FOLDER_ID` | 月清單的 Google Drive 資料夾 ID         | 開發方提供；選填，留空則不同步月清單 |
 | `GOOGLE_TOKEN_PATH`       | Google 憑證檔路徑                       | 已預填，不用改                       |
@@ -351,6 +354,12 @@ goldenai-lite/
 
 1. 清理會把系統主程式自 Docker 中移除，服務將無法啟動（設定檔與下單紀錄存於系統資料夾，不受影響）
 2. 依步驟 4 重新執行 `docker load` 與 `docker compose up -d` 即可復原。平時**請勿使用** Docker Desktop 介面的清理功能
+
+**通知或日誌顯示 FinLab 認證失敗**
+
+1. 開啟 `.env`，確認 `FINLAB_` 開頭的四個欄位皆已填寫，且值的前後無多餘空白或換行
+2. 修正後存檔，執行 `docker compose up -d`
+3. 四個欄位均正確仍持續失敗時，請回報開發方更新認證值——此項無法自行排除
 
 **收到 🚨 錯誤通知**
 
