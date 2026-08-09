@@ -21,6 +21,8 @@ order.log
 
 # env and credential files
 .env
+.env.*
+!.env.example
 credentials/
 
 # Environment and setup files

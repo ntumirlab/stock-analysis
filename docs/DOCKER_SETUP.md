@@ -24,7 +24,7 @@
 ```
 ┌─────────────────────────────────────────────┐
 │  第 1 層: .env (敏感資訊 - ⚠️ 不提交到 Git)  │
-│  ├─ FINLAB_API_TOKEN=PG323UEltzZ...        │
+│  ├─ FINLAB_REFRESH_TOKEN/SESSION_ID/API_KEY│
 │  ├─ GOOGLE_API_KEY=AIzaSyDGFlM8...         │
 │  └─ SHIOAJI_CERT_PASSWORD=A123456789       │
 └────────────────┬────────────────────────────┘
@@ -143,7 +143,26 @@ nano .env
 
 **重要:** `.env` 已在 `.gitignore` 中,不會被提交到版本控制。
 
-#### 2.3 放入憑證檔案
+#### 2.3 取得 FinLab 認證
+
+容器無法使用 `~/.finlab/credentials.json`（該檔綁定產生它的機器），改用環境變數。
+在已完成 `python -m finlab login` 的機器上執行：
+
+```bash
+python -m finlab token >> .env
+```
+
+會附加 `FINLAB_REFRESH_TOKEN`、`FINLAB_SESSION_ID`、`FINLAB_API_KEY` 三個變數到 `.env`；
+容器已掛載 `.env`（唯讀），不需要額外設定。
+
+**⚠️ 重要提醒:**
+
+1. 不要在產生憑證的機器上執行 `python -m finlab logout`，會讓容器一併認證失敗
+2. 容器出現認證失敗時，重跑 `python -m finlab token` 更新 `.env` 三個值
+3. `FINLAB_API_TOKEN` 為 fallback，仍可用；但套件內標示 2026/08/01 後移除
+   （`finlab/__init__.py` 的 `_DEPRECATION_DEADLINE`，官網未提期限），不宜長期依賴
+
+#### 2.4 放入憑證檔案
 
 在 `config/credentials/` 目錄放入憑證檔案:
 
@@ -176,11 +195,11 @@ config/credentials/
 
 3. 憑證檔案必須從 [永豐金證券官網](https://sinopac.com.tw) 申請取得
 
-#### 2.4 驗證配置 ✓
+#### 2.5 驗證配置 ✓
 
 ```bash
 # 驗證 .env 中的環境變數是否存在
-grep -E "^(FINLAB_API_TOKEN|SHIOAJI_API_KEY|SHIOAJI_SECRET_KEY)=" .env
+grep -E "^(FINLAB_REFRESH_TOKEN|FINLAB_SESSION_ID|FINLAB_API_KEY|SHIOAJI_API_KEY|SHIOAJI_SECRET_KEY)=" .env
 
 # 驗證 .env 中是否有空值
 grep "=\s*$" .env
