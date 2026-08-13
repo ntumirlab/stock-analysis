@@ -71,6 +71,31 @@ def test_extract_order_logs_ignores_noise(manager, tmp_path):
     assert manager.extract_order_logs(_write_log(tmp_path, log)) == []
 
 
+# 取自 2026-08-13 實盤 log：finlab 浮點殘差（~1e-18 張）印出的幽靈委託，
+# 換算張/股皆為 0、實際未送單，不應進 order_history 與下單摘要通知
+PHANTOM_ORDER_LOG = """\
+2026-08-13 08:10:21,422 - finlab.online.core.executor - INFO - SELL        2317       X 0.0        @ LOWEST       CASH
+2026-08-13 08:10:21,422 - finlab.online.core.executor - INFO - SELL        2634       X 0.0        @ LOWEST       CASH
+2026-08-13 08:10:21,424 - __main__ - INFO - Portfolio synced
+"""
+
+
+def test_extract_order_logs_skips_zero_share_orders(manager, tmp_path):
+    assert manager.extract_order_logs(_write_log(tmp_path, PHANTOM_ORDER_LOG)) == []
+
+
+def test_extract_order_logs_keeps_one_share_order(manager, tmp_path):
+    """0.001 張 = 1 股是最小的真實委託，不可被幽靈單的過濾一起吃掉。"""
+    log = PHANTOM_ORDER_LOG + (
+        "2026-08-13 08:10:21,423 - finlab.online.core.executor - INFO - "
+        "BUY         2330       X 0.001      @ HIGHEST      CASH\n"
+    )
+    orders = manager.extract_order_logs(_write_log(tmp_path, log))
+    assert len(orders) == 1
+    assert orders[0]["stock_id"] == "2330"
+    assert orders[0]["quantity"] == 0.001
+
+
 # 取自 finlab show_alerting_stocks 的輸出格式（賣出為負值）
 ALERTING_LOG = """\
 2026-07-06 08:10:00,000 - finlab.online.order_executor - INFO - 買入 8101  0.429 張 - 總價約         2672.67
