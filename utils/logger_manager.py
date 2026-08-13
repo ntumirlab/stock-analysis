@@ -38,7 +38,16 @@ class LoggerManager:
         return log_filepath
     
     def extract_order_logs(self, log_filepath):
+        """從 log 抽出 finlab 印出的委託行；換算後不足 1 股的「幽靈單」不列入。
+
+        finlab 合併多策略目標部位時會退化成浮點相加（Position.op 兩邊型別不一致就
+        fallback 成 float），與券商回報的 Decimal 部位相減後留下 ~1e-18 的殘差。
+        finlab 只丟棄「恰好為 0」的委託，殘差因此會被印成一行 `X 0.0` 的委託 log，
+        但它換算張數與股數都是 0、`create_order()` 不會被呼叫，實際沒有送出委託。
+        此處照 finlab 的換算方式濾掉，避免幽靈單進 order_history 與下單摘要通知。
+        """
         order_logs = []
+        skipped = 0
         pattern = re.compile(
             r"(?P<action>BUY|SELL)\s+(?P<stock_id>\S+)\s+X\s+(?P<quantity>[\d\.]+)\s+@\s+(?P<limit_price>[\d\.]+|HIGHEST|LOWEST)"
             r"(?:\s+with extra bid\s+(?P<extra_bid_pct>[\d\.]+)%){0,1}\s+(?P<order_condition>\S+)"
@@ -49,9 +58,14 @@ class LoggerManager:
                 if match:
                     d = match.groupdict()
                     d["quantity"] = float(d["quantity"])
+                    if round(d["quantity"] * 1000) == 0:  # 同 finlab 的股數換算
+                        skipped += 1
+                        continue
                     d["limit_price"] = float(d["limit_price"]) if d["limit_price"] not in ("HIGHEST", "LOWEST") else None
                     d["extra_bid_pct"] = float(d["extra_bid_pct"]) / 100 if d["extra_bid_pct"] is not None else 0.0
                     order_logs.append(d)
+        if skipped:
+            logging.getLogger(__name__).info(f"略過 {skipped} 筆換算後為 0 股的委託 log（finlab 浮點殘差，未實際送單）")
         return order_logs
 
     def extract_alerting_stocks(self, log_filepath):
