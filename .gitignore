@@ -35,3 +35,6 @@ finlab_db
 
 # VSCode settings
 .vscode/.coverage
+
+# 本機策略試驗用，不納入版控
+toy_example/
