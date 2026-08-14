@@ -20,16 +20,31 @@ class AdjustTWMarketInfo(TWMarket):
 
 class AlanTWStrategyBase:
     """
-    Alan TW Strategy 基底類別
-        - get_strategy_configs(): 返回策略參數配置列表
-        - get_strategy_name(): 返回策略名稱
+    Alan TW Strategy 基底類別（發動型）
 
-    Attributes:
-        report: 回測報告物件
-        position: 持倉訊號
-        buy_signal: 買入訊號
-        sell_signal: 賣出訊號
+    子類別需實作 get_strategy_configs() 與 get_strategy_name()。
+
+    可調參數（以類別屬性覆寫）：
+        entry_plus_di_min / entry_minus_di_max: 買進 DMI 門檻，預設 24 / 21
+        sell_type: 出場條件，見 SELL_TYPES
+
+    出場條件（sell_type）：
+        'bare'   3日線↓ AND DIF↓
+        'simple' 3日線↓ AND DIF↓ AND 3日與5日乖離<-0.5%
+        'full'   3日線↓ AND DIF↓ AND (-DI>21
+                     OR 3日與5日乖離<-3.5%
+                     OR (DEA↓ AND 3日與5日乖離<-2.5%)
+                     OR (ADX>31 AND 3日與5日乖離<-0.5%))
     """
+
+    SELL_TYPES = ('bare', 'simple', 'full')
+
+    # 買進 DMI 門檻
+    entry_plus_di_min = 24
+    entry_minus_di_max = 21
+
+    # 出場條件；預設 'bare' 以維持既有策略行為
+    sell_type = 'bare'
 
     def __init__(self):
         """初始化策略參數"""
@@ -194,7 +209,9 @@ class AlanTWStrategyBase:
             plus_di = data.indicator('PLUS_DI', timeperiod=14, adjust_price=True)
             minus_di = data.indicator('MINUS_DI', timeperiod=14, adjust_price=True)
 
-        dmi_buy_condition = (plus_di > 24) & (minus_di < 21)
+        dmi_buy_condition = (
+            (plus_di > self.entry_plus_di_min) & (minus_di < self.entry_minus_di_max)
+        )
 
         # KD指標
         k, d = taiwan_kd_fast(
@@ -244,17 +261,55 @@ class AlanTWStrategyBase:
 
         return operating_margin_increase
 
-    def _build_sell_condition(self):
-        """建立賣出條件"""
+    def _sell_indicators(self):
+        """出場條件共用指標：(ma3, bias_3, bias_5, dif, dea, minus_di, adx)"""
         ma3 = self.adj_close.rolling(3).mean()
+        ma5 = self.adj_close.rolling(5).mean()
 
         with data.universe(market='TSE_OTC'):
-            dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+            dif, dea, _ = data.indicator(
+                'MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+            minus_di = data.indicator('MINUS_DI', timeperiod=14, adjust_price=True)
+            adx = data.indicator('ADX', timeperiod=14, adjust_price=True)
 
-        # 短線出場
-        sell_condition = (ma3 < ma3.shift(1)) & (dif < dif.shift(1))
+        bias_3 = (self.adj_close - ma3) / ma3
+        bias_5 = (self.adj_close - ma5) / ma5
+        return ma3, bias_3, bias_5, dif, dea, minus_di, adx
 
-        return sell_condition
+    def _sell_bare(self):
+        """3日線↓ AND DIF↓"""
+        ma3, _, _, dif, _, _, _ = self._sell_indicators()
+        return (ma3 < ma3.shift(1)) & (dif < dif.shift(1))
+
+    def _sell_simple(self):
+        """簡單出場：3日線↓ AND DIF↓ AND 3日與5日乖離皆 < -0.5%"""
+        ma3, b3, b5, dif, _, _, _ = self._sell_indicators()
+        return (
+            (ma3 < ma3.shift(1)) &
+            (dif < dif.shift(1)) &
+            (b3 < -0.005) & (b5 < -0.005)
+        )
+
+    def _sell_full(self):
+        """完整出場：3日線↓ AND DIF↓ AND 四選一"""
+        ma3, b3, b5, dif, dea, minus_di, adx = self._sell_indicators()
+        return (
+            (ma3 < ma3.shift(1)) &
+            (dif < dif.shift(1)) &
+            (
+                (minus_di > 21) |
+                ((b3 < -0.035) & (b5 < -0.035)) |
+                ((dea < dea.shift(1)) & (b3 < -0.025) & (b5 < -0.025)) |
+                ((adx > 31) & (b3 < -0.005) & (b5 < -0.005))
+            )
+        )
+
+    def _build_sell_condition(self):
+        """依 sell_type 選擇出場條件"""
+        if self.sell_type not in self.SELL_TYPES:
+            raise ValueError(
+                f"sell_type must be one of {self.SELL_TYPES}, got {self.sell_type!r}")
+        return getattr(self, f'_sell_{self.sell_type}')()
 
     def _build_single_strategy_signal(self, config):
         """
@@ -285,7 +340,16 @@ class AlanTWStrategyBase:
         )
         fundamental_condition = self._build_fundamental_buy_condition(config['op_growth'])
 
-        return chip_condition & technical_condition & fundamental_condition
+        signal = chip_condition & technical_condition & fundamental_condition
+
+        # 額外的收盤新高門檻，如 ('extra_new_high': (480, 0.90))
+        extra = config.get('extra_new_high')
+        if extra:
+            days, pct = extra
+            high_n = self.adj_close.rolling(window=days).max()
+            signal = signal & (self.adj_close >= high_n * pct)
+
+        return signal
 
     def get_strategy_configs(self):
         """
