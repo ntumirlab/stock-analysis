@@ -61,7 +61,6 @@ _MARKET_CONFIG = {
 }
 
 # ── Score computation ──────────────────────────────────────────────────────────
-# 與 toy_example/tw_market_regime_s4_lo_ls.py 的 compute_score 相同
 
 def compute_score(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: int) -> pd.Series:
     """均線條件式 S4 評分（-9 ~ +9）。"""
