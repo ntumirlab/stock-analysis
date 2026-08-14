@@ -27,9 +27,11 @@ logger = logging.getLogger(__name__)
 ORDERABLE_STRATEGIES = {
     'TibetanMastiffTWStrategy': ('strategy_class.tibetanmastiff_tw_strategy', 'TibetanMastiffTWStrategy'),
     'PeterWuStrategy': ('strategy_class.peterwu_tw_strategy', 'PeterWuStrategy'),
-    'AlanTWStrategyACE': ('strategy_class.alan_tw_strategy_ACE', 'AlanTWStrategyACE'),
-    'AlanTWStrategyEFGObserve': ('strategy_class.alan_tw_strategy_EFG_observe', 'AlanTWStrategyEFGObserve'),
-    'AlanTWStrategyEFGObserveDI21Bias05': ('strategy_class.alan_tw_strategy_EFG_observe_di21_bias05', 'AlanTWStrategyEFGObserveDI21Bias05'),
+    'AlanTWStrategyEFGSimple': ('strategy_class.alan_tw_strategy_efg_simple', 'AlanTWStrategyEFGSimple'),
+    'AlanTWStrategyEFG95Full': ('strategy_class.alan_tw_strategy_efg95_full', 'AlanTWStrategyEFG95Full'),
+    'AlanTWStrategyACESimple': ('strategy_class.alan_tw_strategy_ace_simple', 'AlanTWStrategyACESimple'),
+    'AlanTWStrategyEFGNotStart': ('strategy_class.alan_tw_strategy_efg_not_start', 'AlanTWStrategyEFGNotStart'),
+    'AlanTWStrategyEFG95ACE': ('strategy_class.alan_tw_strategy_efg95_ace', 'AlanTWStrategyEFG95ACE'),
     'RAndDManagementStrategy': ('strategy_class.r_and_d_management_strategy', 'RAndDManagementStrategy'),
 }
 
