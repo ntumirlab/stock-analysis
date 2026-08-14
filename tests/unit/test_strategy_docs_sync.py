@@ -35,10 +35,14 @@ BASE_DEFAULTS = {
 }
 
 
+def _read(path):
+    with open(path, encoding='utf-8') as fh:
+        return fh.read()
+
+
 def _parse_classes(filename):
     """回傳 {類別名: ClassDef}"""
-    path = os.path.join(STRATEGY_DIR, filename)
-    tree = ast.parse(open(path, encoding='utf-8').read())
+    tree = ast.parse(_read(os.path.join(STRATEGY_DIR, filename)))
     return {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
 
 
@@ -107,7 +111,7 @@ def _collect(py_file, cls_name):
 @pytest.mark.parametrize('md_file,py_file,cls_name', STRATEGIES)
 def test_strategy_doc_matches_code(md_file, py_file, cls_name):
     configs, attrs = _collect(py_file, cls_name)
-    md = _norm(open(os.path.join(DOCS_DIR, md_file), encoding='utf-8').read())
+    md = _norm(_read(os.path.join(DOCS_DIR, md_file)))
 
     missing = []
     for cfg in configs:
@@ -144,7 +148,7 @@ def test_strategy_doc_matches_code(md_file, py_file, cls_name):
 def test_combo_doc_matches_code():
     """組合策略：兩個分量的參數與出場型別"""
     md_file = 'alan_tw_strategy_efg95_ace.md'
-    md = _norm(open(os.path.join(DOCS_DIR, md_file), encoding='utf-8').read())
+    md = _norm(_read(os.path.join(DOCS_DIR, md_file)))
 
     classes = _parse_classes('alan_tw_strategy_efg95_ace.py')
     combo = classes['AlanTWStrategyEFG95ACE']
@@ -174,7 +178,7 @@ def test_combo_doc_matches_code():
         missing.append('兩分量出場已統一，md 不應提到簡單出場')
 
     # 「獨立版 vs 組合版」對照表：逐欄比對，避免兩個值寫反而未被發現
-    raw = open(os.path.join(DOCS_DIR, md_file), encoding='utf-8').read()
+    raw = _read(os.path.join(DOCS_DIR, md_file))
     _, ace_attrs = _collect('alan_tw_strategy_ace_simple.py', 'AlanTWStrategyACESimple')
     combo_attrs = _class_attrs(classes['_ACE_A90C90Full'])
     for key in ('extra_high_pct_a', 'extra_high_pct_c'):

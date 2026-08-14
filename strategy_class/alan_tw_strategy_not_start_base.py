@@ -91,8 +91,13 @@ class AlanTWStrategyNotStartBase(AlanTWStrategyBase):
         configs = self.get_strategy_configs()
         print(f"🚀 開始運行策略 {self.get_strategy_name()}...")
 
-        assert len({c['top_n'] for c in configs}) == 1
-        assert len({c['op_growth'] for c in configs}) == 1
+        # 籌碼面與基本面條件只算一次供各子策略共用，故兩者必須一致；
+        # 用例外而非 assert，避免 python -O 下被移除而靜默產生錯誤訊號
+        for key in ('top_n', 'op_growth'):
+            values = {c[key] for c in configs}
+            if len(values) != 1:
+                raise ValueError(
+                    f'{type(self).__name__}: 各子策略的 {key} 必須相同，實際為 {sorted(values)}')
 
         chip = self._build_chip_buy_condition(top_n=configs[0]['top_n'])
         fundamental = self._build_fundamental_buy_condition(configs[0]['op_growth'])
