@@ -1,4 +1,5 @@
 import os
+import logging
 import tempfile
 import numpy as np
 import pandas as pd
@@ -7,6 +8,8 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase, MultiReportWrapper, _extract_report_json
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
+
+logger = logging.getLogger(__name__)
 
 
 class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
@@ -137,6 +140,11 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 if rj:
                     dao.save_report(timestamp=timestamp, strategy=self.task_name, week=week_name,
                                     ranks=ranks_str, report_json=rj, position_json=pj)
+                else:
+                    logger.warning(
+                        f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "
+                        f"{self.task_name} {week_name} Ranks[{ranks_str}] @ {timestamp}"
+                    )
         else:
             for week_name, report in week_reports.items():
                 tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
@@ -153,6 +161,11 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 if rj:
                     dao.save_report(timestamp=timestamp, strategy=self.task_name, week=week_name,
                                     ranks=ranks_str, report_json=rj, position_json=pj)
+                else:
+                    logger.warning(
+                        f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "
+                        f"{self.task_name} {week_name} Ranks[{ranks_str}] @ {timestamp}"
+                    )
 
 
 if __name__ == '__main__':
