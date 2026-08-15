@@ -1,6 +1,6 @@
 import os
-import re
 import time
+import logging
 import tempfile
 import traceback
 import numpy as np
@@ -13,10 +13,13 @@ from dateutil.relativedelta import relativedelta
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
+from core.report_rewrap import extract_report_data
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
+
+logger = logging.getLogger(__name__)
 
 
 class MultiReportWrapper:
@@ -52,13 +55,17 @@ def _golden_ai_process_worker(args):
 
 
 def _extract_report_json(html_path):
+    """從 finlab 產出的報告 HTML 抽出 reportJson / positionJson。
+
+    以整份 HTML 搜尋（見 core/report_rewrap.py），不依賴資料在第幾行 —
+    finlab 2.x 改版報告前端後行號已位移。
+    """
     with open(html_path, 'r', encoding='utf-8') as f:
-        lines = [f.readline() for _ in range(11)]
-    report_match = re.search(r'const reportJson = (.+)</script>', lines[8])
-    position_match = re.search(r'const positionJson = (.+)</script>', lines[9])
-    if not report_match or not position_match:
+        html = f.read()
+    report_json, position_json = extract_report_data(html)
+    if report_json is None:
         return None, None
-    return report_match.group(1).rstrip('; '), position_match.group(1).rstrip('; ')
+    return report_json.rstrip('; '), position_json.rstrip('; ')
 
 
 class GoldenAITWStrategyBase:
@@ -379,6 +386,11 @@ class GoldenAITWStrategyBase:
         if rj:
             dao.save_report(timestamp=timestamp, strategy=self.task_name, week=None,
                             ranks=ranks_str, report_json=rj, position_json=pj)
+        else:
+            logger.warning(
+                f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "
+                f"{self.task_name} Ranks[{ranks_str}] @ {timestamp}"
+            )
 
     def run_strategy(self, report_dir=None, num_workers=None):
         if num_workers is None:

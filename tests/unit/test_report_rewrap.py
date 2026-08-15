@@ -1,4 +1,4 @@
-from core.report_rewrap import rewrap_report_html
+from core.report_rewrap import extract_report_data, rewrap_report_html
 
 TEMPLATE = (
     '<html><head><title>Web Component Example</title></head><body>\n'
@@ -41,3 +41,17 @@ def test_missing_report_json_only_returns_none():
 
 def test_template_without_placeholders_returns_none():
     assert rewrap_report_html(_finlab_html(), '<html>no placeholder</html>') is None
+
+
+def test_extract_returns_both_json_blobs():
+    assert extract_report_data(_finlab_html()) == ('{"a": 1}', '[{"b": 2}]')
+
+
+def test_extract_missing_data_returns_none_pair():
+    assert extract_report_data('<html>no data scripts</html>') == (None, None)
+
+
+def test_extract_is_independent_of_line_position():
+    """finlab 2.x 把資料挪離第 9/10 行後，抽取仍須成功。"""
+    padded = '\n'.join(['<div>padding</div>'] * 40) + '\n' + _finlab_html()
+    assert extract_report_data(padded) == ('{"a": 1}', '[{"b": 2}]')
