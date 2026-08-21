@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
+from core.backtest_window import snap_cutoff_to_flat_trading_day
 from core.report_rewrap import extract_report_data
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
@@ -206,11 +207,18 @@ class GoldenAITWStrategyBase:
 
         return position.astype(bool), sl_df, tp_df
 
-    def _apply_cutoff(self, final_position):
+    def _apply_cutoff(self, final_position, trading_days=None):
+        """裁到最近 lookback_months，視窗起點對齊到「空手的交易日」。
+
+        直接拿日期硬切會切在持倉中間，finlab 會把進行中的部位當成新進場、生出一筆
+        策略不存在的短天期交易（年化實測可差 20 個百分點）。原因與判準見
+        core/backtest_window.py。trading_days 傳 universe.index。
+        """
         if self.lookback_months is None:
             return final_position
         ref = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
         cutoff = ref - relativedelta(months=self.lookback_months)
+        cutoff = snap_cutoff_to_flat_trading_day(final_position, cutoff, trading_days)
         return final_position[final_position.index >= cutoff]
 
     def _build_sl_tp_exits(self, entries, position, sl_df, tp_df,
@@ -325,7 +333,7 @@ class GoldenAITWStrategyBase:
             exits = FinlabDataFrame(normal_exits | sl_tp_exits)
             final_position = FinlabDataFrame(entries).hold_until(exits)
             final_position = final_position.shift(-1).ffill().fillna(False).astype(bool)
-            final_position = self._apply_cutoff(final_position)
+            final_position = self._apply_cutoff(final_position, universe.index)
 
             if use_touched_exit:
                 return sim(

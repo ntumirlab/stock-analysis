@@ -80,7 +80,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 exits = FinlabDataFrame(normal_exits | sl_tp_exits)
                 final_position = FinlabDataFrame(entries).hold_until(exits)
                 final_position = final_position.shift(-1).ffill().fillna(False).astype(bool)
-                final_position = self._apply_cutoff(final_position)
+                final_position = self._apply_cutoff(final_position, universe.index)
 
                 if use_touched_exit:
                     report = sim(
