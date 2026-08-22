@@ -131,12 +131,22 @@ class TestNodeWindow:
 
 
 class TestIsSettled:
-    def test_settled_once_a_trading_day_follows_the_exit(self):
-        td = _trading_days('2026-07-01', '2026-07-20')
+    def test_settled_when_the_data_reaches_the_exit_day(self):
+        """出場日當天有開市就當天成交，不必等到下一個交易日。"""
+        td = _trading_days('2026-07-01', '2026-07-10')
         assert is_settled('2026-07-10', td) is True
 
-    def test_not_settled_when_the_exit_is_the_last_known_day(self):
-        td = _trading_days('2026-07-01', '2026-07-10')
+    def test_settled_when_a_closed_exit_day_has_been_passed(self):
+        """7/10 休市，成交順延到 7/13——資料走到那天才算數。"""
+        td = _trading_days('2026-07-01', '2026-07-13', holidays=['2026-07-10'])
+        assert is_settled('2026-07-10', td) is True
+
+    def test_not_settled_while_a_closed_exit_day_is_the_edge_of_the_data(self):
+        td = _trading_days('2026-07-01', '2026-07-09', holidays=['2026-07-10'])
+        assert is_settled('2026-07-10', td) is False
+
+    def test_not_settled_when_the_data_stops_before_the_exit(self):
+        td = _trading_days('2026-07-01', '2026-07-09')
         assert is_settled('2026-07-10', td) is False
 
     def test_not_settled_for_a_future_exit(self):

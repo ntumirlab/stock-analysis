@@ -75,13 +75,16 @@ def node_window(position, entry_date, trading_days, exit_date, slack_days: int =
 
 
 def is_settled(exit_date, trading_days) -> bool:
-    """名目出場日之後還有交易日才算結算完畢。
+    """行情資料已經走到名目出場日（或更後面）才算結算完畢。
 
-    只是回填時的便宜預檢：休市會讓實際出場順延，所以真正的判準是 sim 跑完後
-    `trades` 的出場日都不是 NaT，呼叫端仍要檢查。
+    兩種情況都被這個條件涵蓋：出場日有開市時，當天就成交，資料含當天即可；
+    出場日休市時，成交順延到下一個交易日，而那天必然大於名目出場日。
+
+    只是回填時的便宜預檢——真正的判準是 sim 跑完後 `trades` 的出場日都不是 NaT，
+    `check_trades` 仍會擋。
     """
     td = pd.DatetimeIndex(trading_days)
-    return bool((td > pd.Timestamp(exit_date)).any())
+    return bool((td >= pd.Timestamp(exit_date)).any())
 
 
 def node_return(trades) -> float:
