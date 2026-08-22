@@ -84,17 +84,21 @@ class GoldenAIBacktestNodesDAO:
         finally:
             conn.close()
 
-    def exists(self, strategy: str, list_date: str, ranks: str) -> bool:
-        """回填用的快速跳過檢查——省下建構策略與跑 sim 的成本。"""
+    def stored_list_dates(self, strategy: str, ranks: str) -> set:
+        """某策略某組 ranks 已經存過的清單日。
+
+        回填時一組 ranks 查一次，之後在記憶體裡比對。逐節點各查一次的話，全量
+        回填（255 組 × 48 份清單）會開關一萬兩千次連線，其中絕大多數只是為了確認
+        「這個已經有了」。
+        """
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM golden_ai_backtest_nodes "
-                "WHERE strategy = ? AND list_date = ? AND ranks = ? LIMIT 1",
-                (strategy, list_date, ranks),
+            cursor = conn.execute(
+                "SELECT list_date FROM golden_ai_backtest_nodes "
+                "WHERE strategy = ? AND ranks = ?",
+                (strategy, ranks),
             )
-            return cursor.fetchone() is not None
+            return {row[0] for row in cursor}
         finally:
             conn.close()
 

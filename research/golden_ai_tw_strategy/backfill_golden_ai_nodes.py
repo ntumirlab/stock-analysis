@@ -12,6 +12,13 @@
         --strategy weekly --list-date 2026-08-02 2026-08-09 --dry-run
     python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
         --strategy weekly --date-range 2025-09-24 2026-08-09 --all-ranks
+
+每天的排程用 --days，只看最近結算的那幾個：
+    python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
+        --strategy weekly --days --all-ranks
+
+**日期一定要給一個**。少了這道界線，排程若在初始回填之前就啟動，第一晚就會
+從零開始跑完整段歷史（實測全量約 14 小時）。
 """
 
 import argparse
@@ -60,11 +67,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description='GoldenAI 節點回填工具')
     parser.add_argument('--strategy', required=True, choices=list(STRATEGY_CLASS_MAP))
 
+    # 必填：三種都是有界的。沒有「全部」這個選項，排程才不會在初始回填之前
+    # 誤觸整段歷史
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--list-date', nargs='+', metavar='YYYY-MM-DD',
-                       help='清單日（對齊後的週日），可給多個')
+                       help='只補這幾份清單（清單日＝對齊後的週日）')
     group.add_argument('--date-range', nargs=2, metavar=('START', 'END'),
-                       help='這個區間內的所有清單日')
+                       help='只補這個區間內的清單日')
+    group.add_argument('--days', type=int, nargs='?', const=14, metavar='N',
+                       help='只補最近 N 天內結算的節點（不給數字＝14），排程用')
 
     ranks = parser.add_mutually_exclusive_group()
     ranks.add_argument('--ranks', default=FULL_RANKS, metavar='1,2,3',
@@ -189,9 +200,17 @@ def main():
                 list_dates.append(d)
             else:
                 logger.warning(f'{d.date()}: no recommendation list, skipped')
-    else:
+    elif args.date_range:
         lo, hi = (pd.Timestamp(d) for d in args.date_range)
         list_dates = sorted(d for d in available if lo <= d <= hi)
+    else:
+        # 按**出場日**篩而不是清單日：4W 策略今天結算的節點，清單日在四週前。
+        # 視窗要比一天寬——休市會讓成交順延，機器停一天也要補得回來。
+        cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=args.days)
+        list_dates = sorted(
+            d for d in available
+            if node_dates(d, strategy.buy_weekday, strategy.sell_weekday,
+                          hold_weeks)[1] >= cutoff)
     logger.info(f'{len(list_dates)} list dates x {len(rank_combos)} ranks combos')
 
     dao = None if args.dry_run else GoldenAIBacktestNodesDAO(db_path=args.db)
@@ -202,10 +221,12 @@ def main():
         ranks = [int(r) for r in ranks_str.split(',')]
         position_all, _, _ = strategy._create_df(universe, ranks=ranks)
 
+        stored = (dao.stored_list_dates(strategy.task_name, ranks_str)
+                  if dao is not None else set())
+
         for list_date in list_dates:
             key = f'{strategy.task_name} {list_date.date()} Ranks[{ranks_str}]'
-            if dao is not None and dao.exists(
-                    strategy.task_name, list_date.strftime('%Y-%m-%d'), ranks_str):
+            if list_date.strftime('%Y-%m-%d') in stored:
                 skipped += 1
                 continue
 

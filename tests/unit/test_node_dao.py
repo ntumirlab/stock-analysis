@@ -86,12 +86,23 @@ def test_load_filters_and_orders_by_exit_date(dao):
     assert monthly.iloc[0]["week_of_month"] == 1
 
 
-def test_exists_checks_the_node_identity(dao):
+def test_stored_list_dates_is_scoped_to_strategy_and_ranks(dao):
+    dao.save(**NODE)
+    dao.save(**{**NODE, "list_date": "2026-07-12", "exit_date": "2026-07-17"})
+    dao.save(**{**NODE, "ranks": "1,2,3"})
+    dao.save(**{**NODE, "strategy": "monthly"})
+
+    assert dao.stored_list_dates("weekly", "1,2,3,4,5,6,7,8") == {
+        "2026-07-05", "2026-07-12"}
+    assert dao.stored_list_dates("weekly", "1,2,3") == {"2026-07-05"}
+    assert dao.stored_list_dates("monthly", "1,2,3,4,5,6,7,8") == {"2026-07-05"}
+
+
+def test_stored_list_dates_is_empty_for_an_unknown_combination(dao):
     dao.save(**NODE)
 
-    assert dao.exists("weekly", "2026-07-05", "1,2,3,4,5,6,7,8") is True
-    assert dao.exists("weekly", "2026-07-05", "1,2,3") is False
-    assert dao.exists("monthly", "2026-07-05", "1,2,3,4,5,6,7,8") is False
+    assert dao.stored_list_dates("weekly", "4,5,6") == set()
+    assert dao.stored_list_dates("weekly_4w", "1,2,3,4,5,6,7,8") == set()
 
 
 def test_load_on_empty_table_returns_empty_frame(dao):
