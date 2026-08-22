@@ -67,10 +67,14 @@ def is_tradable_list_date(list_date, hold_weeks: int) -> bool:
     return hold_weeks == 1 or nth_sunday_of_month(list_date) <= 4
 
 
-# 視窗終點要在結算日之後再留幾個交易日，讓出場那根 K 不會是 frame 的最後一列。
-# 用交易日而不是日曆天：休市順延已經由 `settle_day`（第一個 >= 名目出場日的交易日）
-# 吸收掉，這裡只需要一點餘裕。
-SLACK_TRADING_DAYS = 2
+# 視窗終點在結算日之後還要留幾個交易日。**0 ＝ 賣出當天就收工**：部位在結算日已經出清，
+# 之後的日子只是平盤，對節點沒有任何資訊，卻會讓結果晚好幾天才看得到——週五賣掉要等到
+# 下週三，而這個檢視存在的意義就是「週五收盤就知道上週結果」。
+#
+# 也不必為「價格資料當下還沒齊」預留餘裕：那種情況 sim 收不掉部位，`check_trades` 會判
+# position still open、節點不寫入、隔晚重試，而重試時 `window_end` 算出來的視窗完全一樣。
+# 失敗模式是安全的，不值得為它讓每一個節點都延後。
+SLACK_TRADING_DAYS = 0
 
 
 def settle_day(exit_date, trading_days):
@@ -81,7 +85,8 @@ def settle_day(exit_date, trading_days):
 
 
 def window_end(exit_date, trading_days, slack_days: int = SLACK_TRADING_DAYS):
-    """視窗終點＝結算日再往後 slack_days 個交易日。資料還沒走到就回 None。
+    """視窗終點＝結算日再往後 slack_days 個交易日（預設 0 ＝ 結算日當天）。
+    資料還沒走到就回 None。
 
     **終點必須是節點自己的函數，不能是「跑的當下資料到哪天」。** finlab 的
     sharpe / sortino / annualReturn 是對整段視窗的日報酬算的，視窗一長一短，同一個
@@ -126,15 +131,15 @@ def is_settled(exit_date, trading_days, slack_days: int = SLACK_TRADING_DAYS) ->
     判準就是 `window_end` 算不算得出來。休市不必特別處理：出場日開市時當天成交，
     休市時順延到下一個交易日，兩種都由「第一個 >= 出場日的交易日」涵蓋。
 
-    **比視窗本身多要一個交易日**：sim 用的價格 frame 是 adj_open 與 adj_close 的交集
-    （見 `core.price_frames.mix_open_close`），這兩個資料集收盤後非同步更新，可能比
-    這裡拿到的 price:收盤價 短一天。視窗終點若正好壓在資料最後一列，那一天的權益就會
-    缺，指標又會跟隔天算的不一樣——與 `window_end` 要防的是同一件事。
+    **不預留餘裕**：sim 用的價格 frame 是 adj_open 與 adj_close 的交集（見
+    `core.price_frames.mix_open_close`），兩者收盤後非同步更新，偶爾比 price:收盤價 短一天。
+    那種情況部位收不掉、`check_trades` 會擋、隔晚重試，視窗仍是同一個——與其讓每個節點
+    都晚幾天，不如讓偶發的那一個重試。
 
     只是回填時的便宜預檢——真正的判準是 sim 跑完後 `trades` 的出場日都不是 NaT，
     `check_trades` 仍會擋。
     """
-    return window_end(exit_date, trading_days, slack_days + 1) is not None
+    return window_end(exit_date, trading_days, slack_days) is not None
 
 
 def node_return(trades) -> float:

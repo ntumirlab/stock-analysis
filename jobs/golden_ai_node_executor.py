@@ -36,8 +36,8 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 
 from core.node_backtest import (
-    HOLD_WEEKS, SLACK_TRADING_DAYS, align_to_sunday, check_trades, is_settled,
-    is_tradable_list_date, node_dates, node_return, node_window, nth_sunday_of_month,
+    HOLD_WEEKS, align_to_sunday, check_trades, is_settled, is_tradable_list_date,
+    node_dates, node_return, node_window, nth_sunday_of_month,
 )
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
@@ -118,7 +118,7 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
     # 那種情況 position 會被裁到資料尾端、index 裡根本沒有那個清單日。
     if not is_settled(exit_date, universe_index):
         # 還沒結算不是錯誤，只是還輪不到它——回填一整段時最後幾期本來就會落在這裡
-        return None, f'pending until {exit_date.date()} + {SLACK_TRADING_DAYS} trading days'
+        return None, f'pending until {exit_date.date()} settles'
     if list_date not in position_all.index:
         return None, f'pending until {exit_date.date()}'
 
