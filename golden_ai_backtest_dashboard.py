@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import dash
-from dash import dcc, html, Input, Output, State, ALL, ctx, dash_table
+from dash import dcc, html, Input, Output, State, ctx, dash_table
 import dash_bootstrap_components as dbc
 from flask import Flask, request
 import plotly.graph_objects as go
@@ -130,6 +130,8 @@ _TABLE_STYLE = {
 
 dao = GoldenAIBacktestMetricsDAO(db_path=_DB_PATH)
 _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
+# 名次選項＝config.yaml 的 rank_start~rank_end；DB 存的是它的完整 powerset（255 組）
+_RANK_CHOICES = list(range(1, 9))
 
 _REC_DAOS = {
     'weekly':    RecommendationDAO(_DB_PATH, frequency='weekly'),
@@ -349,28 +351,6 @@ def _rank_label(ranks_str: str) -> str:
     return f'第 {", ".join(map(str, nums))} 支'
 
 
-def _build_tags(ranks_list: list) -> list:
-    tags = []
-    for ranks in (ranks_list or []):
-        tags.append(html.Div([
-            html.Span(_rank_label(ranks), style={'fontSize': 'clamp(11px, 2.5vw, 13px)', 'marginRight': '4px'}),
-            html.Span(
-                '×',
-                id={'type': 'remove-rank', 'index': ranks},
-                n_clicks=0,
-                style={'cursor': 'pointer', 'fontWeight': '700', 'fontSize': 'clamp(12px, 2.5vw, 14px)', 'lineHeight': '1'},
-            ),
-        ], style={
-            'backgroundColor': _COLOR['accent_bg'],
-            'color': _COLOR['accent'],
-            'borderRadius': '12px',
-            'padding': '4px 10px',
-            'display': 'inline-flex',
-            'alignItems': 'center',
-        }))
-    return tags
-
-
 def _ranks_sort_key(r: str):
     nums = list(map(int, r.split(',')))
     is_consec_from_1 = nums == list(range(1, len(nums) + 1))
@@ -387,12 +367,12 @@ def _month_and_latest_ticks(timestamps):
     return tickvals, ticktext
 
 
-def _build_figure(data: dict, metric: str) -> go.Figure:
+def _build_figure(data: dict, metric: str, empty_text: str = '尚無資料') -> go.Figure:
     _, is_pct = _METRIC_META[metric]
     fig = go.Figure()
 
     if not data:
-        fig.update_layout(height=300, title='尚無資料', plot_bgcolor='white')
+        fig.update_layout(height=300, title=empty_text, plot_bgcolor='white')
         return fig
 
     for i, (ranks, df) in enumerate(sorted(data.items())):
@@ -661,21 +641,6 @@ def _simple_layout():
 
 def _main_layout():
     return html.Div([
-        dbc.Modal([
-            dbc.ModalHeader(dbc.ModalTitle('選擇 Rank 組合')),
-            dbc.ModalBody(
-                dcc.Dropdown(
-                    id='rank-picker',
-                    multi=True,
-                    placeholder='搜尋或選擇 Rank 組合...',
-                    optionHeight=35,
-                )
-            ),
-            dbc.ModalFooter([
-                dbc.Button('取消', id='cancel-rank-modal', color='secondary', outline=True, className='me-2'),
-                dbc.Button('確認', id='confirm-rank-modal', color='primary'),
-            ]),
-        ], id='rank-modal', is_open=False, size='lg'),
         dbc.Container([
             dbc.Row([
                 dbc.Col([
@@ -696,31 +661,37 @@ def _main_layout():
             html.Div(id='kpi-row', className='mb-3'),
 
             dbc.Card([
-                dbc.CardBody([
-                    dbc.RadioItems(
-                        id='metric-selector',
-                        options=[
-                            {'label': label, 'value': key}
-                            for key, (label, _) in _METRIC_META.items()
-                        ],
-                        value='annual_return',
-                        inputClassName='btn-check',
-                        labelClassName='btn btn-outline-secondary',
-                        labelCheckedClassName='active',
-                        inline=True,
-                        className='mb-3',
-                    ),
-                    html.Div([
-                        html.Div(id='rank-tags', style={
-                            'display': 'inline-flex', 'flexWrap': 'wrap',
-                            'gap': '6px', 'alignItems': 'center',
-                        }),
-                        dbc.Button(
-                            '+', id='open-rank-modal',
-                            color='secondary', outline=True, size='sm',
-                            style={'borderRadius': '20px', 'padding': '2px 14px', 'fontWeight': '600'},
+                dbc.CardHeader(
+                    html.Div(
+                        dbc.Tabs(
+                            [
+                                dbc.Tab(label=label, tab_id=key)
+                                for key, (label, _) in _METRIC_META.items()
+                            ],
+                            id='metric-selector',
+                            active_tab='annual_return',
                         ),
-                    ], className='mb-3 d-flex align-items-center gap-2 flex-wrap'),
+                        className='metric-tabs',
+                    ),
+                    style={
+                        'backgroundColor': _COLOR['transparent'],
+                        'border': 'none',
+                        'padding': '0 clamp(4px, 1vw, 12px)',
+                    },
+                ),
+                dbc.CardBody([
+                    html.Div([
+                        html.Span('第', className='rank-cap'),
+                        dbc.Checklist(
+                            id='rank-picker',
+                            options=[{'label': str(i), 'value': i} for i in _RANK_CHOICES],
+                            value=list(_RANK_CHOICES),
+                            inputClassName='btn-check',
+                            labelClassName='btn',
+                            labelCheckedClassName='active',
+                        ),
+                        html.Span('支', className='rank-cap'),
+                    ], className='rank-row mb-3 d-flex align-items-center'),
                     dcc.Loading(
                         dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
                         type='dot',
@@ -814,7 +785,6 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <style>
-            #metric-selector .form-check,
             #simple-strategy .form-check,
             #simple-period .form-check { padding-left: 0; }
             #report-rank-filter .Select-control { min-height: 44px !important; }
@@ -824,30 +794,109 @@ app.index_string = '''
                Color matches _COLOR['accent'] — update both if the accent changes. */
             #simple-strategy .btn-check:checked + .btn-outline-secondary,
             #simple-period   .btn-check:checked + .btn-outline-secondary,
-            #metric-selector .btn-check:checked + .btn-outline-secondary,
             #simple-strategy .btn-outline-secondary.active,
-            #simple-period   .btn-outline-secondary.active,
-            #metric-selector .btn-outline-secondary.active {
+            #simple-period   .btn-outline-secondary.active {
                 background-color: #1d4ed8;
                 border-color: #1d4ed8;
                 color: #ffffff;
             }
             #simple-strategy .btn-outline-secondary:hover,
-            #simple-period   .btn-outline-secondary:hover,
-            #metric-selector .btn-outline-secondary:hover {
+            #simple-period   .btn-outline-secondary:hover {
                 background-color: #dbeafe;
                 border-color: #1d4ed8;
                 color: #1d4ed8;
             }
             #simple-strategy .btn-check:checked + .btn-outline-secondary:hover,
             #simple-period   .btn-check:checked + .btn-outline-secondary:hover,
-            #metric-selector .btn-check:checked + .btn-outline-secondary:hover,
             #simple-strategy .btn-outline-secondary.active:hover,
-            #simple-period   .btn-outline-secondary.active:hover,
-            #metric-selector .btn-outline-secondary.active:hover {
+            #simple-period   .btn-outline-secondary.active:hover {
                 background-color: #1d4ed8;
                 border-color: #1d4ed8;
                 color: #ffffff;
+            }
+            /* ── 指標分頁：底線式，窄螢幕橫向捲動而非折行 ── */
+            .metric-tabs .nav {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                scrollbar-width: none;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            .metric-tabs .nav::-webkit-scrollbar { display: none; }
+            .metric-tabs .nav-item { flex: 0 0 auto; }
+            /* 分頁只當選擇器用，內容在下方 CardBody，空的 tab-content 不要佔位 */
+            .metric-tabs .tab-content { display: none; }
+            .metric-tabs .nav-link {
+                white-space: nowrap;
+                border: none;
+                border-bottom: 2px solid transparent;
+                border-radius: 0;
+                color: #6b7280;
+                font-weight: 500;
+                font-size: clamp(13px, 2.5vw, 15px);
+                padding: 11px clamp(10px, 2vw, 16px);
+                background: transparent;
+            }
+            .metric-tabs .nav-link:hover { color: #1d4ed8; border-bottom-color: #dbeafe; }
+            .metric-tabs .nav-link.active {
+                color: #1d4ed8;
+                font-weight: 600;
+                border-bottom-color: #1d4ed8;
+                background: transparent;
+            }
+            .metric-tabs .nav-link:focus-visible {
+                outline: none;
+                box-shadow: inset 0 0 0 2px rgba(29, 78, 216, 0.35);
+            }
+
+            /* ── 名次選取：整排讀作「第 1 2 … 8 支」，兩端的字是句子的一部分。
+                  每格各自有外框、彼此留間距。 ── */
+            .rank-row { flex-wrap: nowrap; gap: 8px; }
+            .rank-cap {
+                font-size: clamp(12px, 2.5vw, 14px);
+                font-weight: 500;
+                color: #6b7280;
+                white-space: nowrap;
+            }
+            #rank-picker {
+                display: flex;
+                gap: 6px;
+                flex: 0 1 380px;
+                min-width: 0;
+            }
+            #rank-picker .form-check {
+                flex: 1 1 0;
+                min-width: 0;
+                margin: 0;
+                padding-left: 0;
+            }
+            #rank-picker .btn {
+                width: 100%;
+                padding: 6px 0;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                background-color: #ffffff;
+                color: #6b7280;
+                font-size: clamp(12px, 2.5vw, 14px);
+                font-weight: 600;
+                font-variant-numeric: tabular-nums;
+                line-height: 1.4;
+                transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+            }
+            #rank-picker .btn:hover {
+                background-color: #dbeafe;
+                border-color: #1d4ed8;
+                color: #1d4ed8;
+            }
+            #rank-picker .btn-check:checked + .btn {
+                background-color: #1d4ed8;
+                border-color: #1d4ed8;
+                color: #ffffff;
+            }
+            #rank-picker .btn-check:focus-visible + .btn {
+                box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.35);
+            }
+            @media (prefers-reduced-motion: reduce) {
+                #rank-picker .btn { transition: none; }
             }
             .print-header { display: none; }
             @media print {
@@ -922,12 +971,13 @@ app.index_string = '''
                 .js-plotly-plot { break-inside: avoid; width: 100% !important; }
             }
             @media (max-width: 576px) {
-                #simple-strategy,
-                #metric-selector { flex-direction: column; }
-                #simple-strategy .form-check,
-                #metric-selector .form-check { width: 100%; }
-                #simple-strategy .btn,
-                #metric-selector .btn { width: 100%; text-align: left; }
+                #simple-strategy { flex-direction: column; }
+                #simple-strategy .form-check { width: 100%; }
+                #simple-strategy .btn { width: 100%; text-align: left; }
+                /* 「第…支」要讀得通所以不折行；改成佔滿寬度、間距收窄 */
+                .rank-row { gap: 6px; }
+                #rank-picker { flex: 1 1 auto; gap: 4px; }
+                #rank-picker .btn { padding: 7px 0; }
                 .container-fluid { padding-left: 12px; padding-right: 12px; }
             }
         </style>
@@ -948,7 +998,6 @@ app.layout = html.Div(
     style={'backgroundColor': _COLOR['bg_page'], 'minHeight': '100vh'},
     children=[
         dcc.Location(id='url', refresh=False),
-        dcc.Store(id='displayed-ranks', data=None),
 
         # Navbar
         html.Div(
@@ -1167,72 +1216,32 @@ def update_simple_recommendations(strategy):
 
 @app.callback(
     Output('kpi-row', 'children'),
-    Output('displayed-ranks', 'data'),
-    Output('rank-tags', 'children'),
     Output('metrics-graph', 'figure'),
     Input('strategy-dropdown', 'value'),
-    Input('metric-selector', 'value'),
-    Input('confirm-rank-modal', 'n_clicks'),
-    Input({'type': 'remove-rank', 'index': ALL}, 'n_clicks'),
-    State('rank-picker', 'value'),
-    State('displayed-ranks', 'data'),
+    Input('metric-selector', 'active_tab'),
+    Input('rank-picker', 'value'),
 )
-def update_main(strategy, metric, confirm_n, _remove_n_list, picker_value, current_ranks):
-    triggered = ctx.triggered_id
+def update_main(strategy, metric, picker_value):
     strategy = strategy or 'weekly'
     metric = metric or 'annual_return'
 
     df_norm = _normalized(strategy)
     d = _load_all(strategy, df_normalized=df_norm)
 
-    def _fig(ranks_list):
-        filtered = {r: df for r, df in d.items() if r in (ranks_list or [])}
-        return _build_figure(filtered, metric)
+    if picker_value:
+        # 勾選的名次 → DB 裡的 ranks key（升冪逗號、無空白）
+        ranks = ','.join(str(n) for n in sorted(picker_value))
+        fig = _build_figure({r: df for r, df in d.items() if r == ranks}, metric)
+    else:
+        fig = _build_figure({}, metric, empty_text='請至少勾選一個名次')
 
-    if current_ranks is None or triggered == 'strategy-dropdown':
+    # KPI 卡看的是完整名次，與圖上的勾選無關，只在首次載入與換策略時重算
+    if ctx.triggered_id in (None, 'strategy-dropdown'):
         kpi = _latest_kpi(strategy, df_normalized=df_norm)
         kpi_children = [_kpi_header(kpi, show_button=False), _render_kpi_row(kpi, size='compact')] if kpi else []
-        full = _longest_ranks(d.keys()) if d else None
-        new_ranks = [full] if full else []
-        return kpi_children, new_ranks, _build_tags(new_ranks), _fig(new_ranks)
+        return kpi_children, fig
 
-    if triggered == 'confirm-rank-modal' and confirm_n:
-        if picker_value:
-            return dash.no_update, picker_value, _build_tags(picker_value), _fig(picker_value)
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-
-    if isinstance(triggered, dict) and triggered.get('type') == 'remove-rank':
-        if not any(_remove_n_list):
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        rank_to_remove = triggered['index']
-        new_ranks = [r for r in current_ranks if r != rank_to_remove]
-        return dash.no_update, new_ranks, _build_tags(new_ranks), _fig(new_ranks)
-
-    # metric-selector triggered
-    return dash.no_update, dash.no_update, _build_tags(current_ranks), _fig(current_ranks)
-
-
-@app.callback(
-    Output('rank-modal', 'is_open'),
-    Output('rank-picker', 'options'),
-    Output('rank-picker', 'value'),
-    Input('open-rank-modal', 'n_clicks'),
-    Input('cancel-rank-modal', 'n_clicks'),
-    Input('confirm-rank-modal', 'n_clicks'),
-    State('strategy-dropdown', 'value'),
-    State('displayed-ranks', 'data'),
-    prevent_initial_call=True,
-)
-def toggle_rank_modal(open_n, _cancel_n, confirm_n, strategy, current_ranks):
-    triggered = ctx.triggered_id
-    if triggered == 'open-rank-modal' and open_n:
-        data = _load_all(strategy)
-        options = [
-            {'label': _rank_label(r), 'value': r}
-            for r in sorted(data.keys(), key=_ranks_sort_key)
-        ]
-        return True, options, current_ranks or []
-    return False, dash.no_update, dash.no_update
+    return dash.no_update, fig
 
 
 @app.callback(
