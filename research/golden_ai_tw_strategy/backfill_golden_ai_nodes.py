@@ -101,12 +101,19 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
     entry_date, exit_date = node_dates(
         list_date, strategy.buy_weekday, strategy.sell_weekday, hold_weeks)
 
-    n_stocks = int(position_all.loc[list_date].sum())
-    if n_stocks == 0:
-        return None, 'empty list'
+    # 結算檢查放最前面：最新一份清單可能比市場資料還新（週日出清單、行情只到週五），
+    # 那種情況 position 會被裁到資料尾端、index 裡根本沒有那個清單日。
     if not is_settled(exit_date, universe_index):
         # 還沒結算不是錯誤，只是還輪不到它——回填一整段時最後幾期本來就會落在這裡
         return None, f'pending until {exit_date.date()}'
+    if list_date not in position_all.index:
+        return None, f'pending until {exit_date.date()}'
+
+    n_stocks = int(position_all.loc[list_date].sum())
+    if n_stocks == 0:
+        # 這組 ranks 在這份清單上取不到股票（清單不滿 8 檔時，例如只選第 8 名）。
+        # 跑 --all-ranks 時這是常態，不是錯誤。
+        return None, 'no position for these ranks'
 
     # 只有這一份清單的進場訊號，所以不可能跟其他週的部位淨換倉
     entries = position_all & (position_all.index == entry_date)[:, np.newaxis]
@@ -185,7 +192,7 @@ def main():
     dao = None if args.dry_run else GoldenAIBacktestNodesDAO(db_path=args.db)
 
     # position 只跟 ranks 有關，同一組 ranks 的所有清單日共用一次建構
-    saved = skipped = pending = failed = 0
+    saved = skipped = pending = empty = failed = 0
     for ranks_str in rank_combos:
         ranks = [int(r) for r in ranks_str.split(',')]
         position_all, _, _ = strategy._create_df(universe, ranks=ranks)
@@ -203,6 +210,9 @@ def main():
                 if problem.startswith('pending'):
                     logger.info(f'{key}: {problem}')
                     pending += 1
+                elif problem.startswith('no position'):
+                    logger.debug(f'{key}: {problem}')
+                    empty += 1
                 else:
                     logger.warning(f'{key}: skipped — {problem}')
                     failed += 1
@@ -220,7 +230,7 @@ def main():
                 saved += 1
 
     logger.info(f'done — saved {saved}, already stored {skipped}, '
-                f'not settled yet {pending}, failed {failed}')
+                f'not settled yet {pending}, no position {empty}, failed {failed}')
 
 
 if __name__ == '__main__':
