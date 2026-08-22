@@ -101,7 +101,7 @@ class TestNodeWindow:
 
         assert start == pd.Timestamp('2026-07-03')  # 前一個週五
         assert not pos.loc[start].any()
-        assert end == pd.Timestamp('2026-07-14')  # 結算日 7/10 再兩個交易日
+        assert end == pd.Timestamp('2026-07-10')  # 結算日當天，賣完就收工
 
     def test_start_retreats_further_when_that_friday_is_a_holiday(self):
         """7/10 休市那次：寫死「進場日減三天」會落在非交易日，節點報酬因此算錯。"""
@@ -123,16 +123,16 @@ class TestNodeWindow:
 
         assert end == pd.Timestamp('2026-07-15')
 
-    def test_slack_counts_trading_days_so_a_holiday_shifts_the_end(self):
-        """7/10 休市那次：成交順延到 7/13，終點跟著往後，不是照日曆天硬加。"""
+    def test_end_follows_the_deferred_settlement_when_the_exit_day_is_closed(self):
+        """名目出場日休市時，終點跟著成交日往後，不是照日曆天硬加。"""
         index = _calendar('2026-07-01', '2026-07-31')
-        pos = _position(index, ('2026-07-12', '2026-07-16'))
+        pos = _position(index, ('2026-07-09', '2026-07-13'))
         td = _trading_days('2026-07-01', '2026-07-31', holidays=['2026-07-10'])
 
-        _, end = node_window(pos, '2026-07-13', td, '2026-07-17')
+        _, end = node_window(pos, '2026-07-06', td, '2026-07-10')
 
-        assert settle_day('2026-07-17', td) == pd.Timestamp('2026-07-17')
-        assert end == pd.Timestamp('2026-07-21')
+        assert settle_day('2026-07-10', td) == pd.Timestamp('2026-07-13')
+        assert end == pd.Timestamp('2026-07-13')
 
     def test_end_does_not_depend_on_how_much_data_follows(self):
         """回歸：終點原本是 min(出場日 + 10 天, 資料最後一天)，於是「排程當晚算的」
@@ -146,14 +146,14 @@ class TestNodeWindow:
 
         ends = {node_window(pos, '2026-07-06',
                             _trading_days('2026-07-01', last), '2026-07-10')[1]
-                for last in ('2026-07-14', '2026-07-20', '2026-08-31')}
+                for last in ('2026-07-10', '2026-07-20', '2026-08-31')}
 
-        assert ends == {pd.Timestamp('2026-07-14')}
+        assert ends == {pd.Timestamp('2026-07-10')}
 
-    def test_refuses_a_node_whose_slack_is_not_in_the_data_yet(self):
-        pos = _position(_calendar('2026-07-01', '2026-07-10'),
+    def test_refuses_a_node_that_has_not_settled_yet(self):
+        pos = _position(_calendar('2026-07-01', '2026-07-09'),
                         ('2026-07-05', '2026-07-09'))
-        td = _trading_days('2026-07-01', '2026-07-10')
+        td = _trading_days('2026-07-01', '2026-07-09')
 
         with pytest.raises(ValueError):
             node_window(pos, '2026-07-06', td, '2026-07-10')
@@ -176,37 +176,22 @@ class TestSettleDay:
 
 
 class TestIsSettled:
-    """結算＝資料已經長到能框出一個「與計算時間無關」的視窗，也就是結算日之後還要
-    有 SLACK_TRADING_DAYS 個交易日。只到出場日當天是不夠的——那個視窗會被截短。"""
+    """結算＝資料已經走到成交日。**賣掉當天就算數**，不多等——多等只是為了讓 finlab 的
+    sharpe 好看一點，代價是週五賣掉的節點要到下週才看得到。"""
 
-    def test_settled_once_the_window_plus_a_spare_day_is_in(self):
-        # 出場 7/10，視窗到 7/14，再多要一個交易日 7/15
-        td = _trading_days('2026-07-01', '2026-07-15')
-        assert is_settled('2026-07-10', td) is True
-
-    def test_not_settled_while_the_data_stops_at_the_exit_day(self):
-        """排程當晚跑到的就是這種：資料只到出場日，視窗會比事後回填短一截。"""
+    def test_settled_the_moment_the_data_reaches_the_exit_day(self):
         td = _trading_days('2026-07-01', '2026-07-10')
-        assert is_settled('2026-07-10', td) is False
-
-    def test_not_settled_with_only_part_of_the_slack(self):
-        td = _trading_days('2026-07-01', '2026-07-13')
-        assert is_settled('2026-07-10', td) is False
-
-    def test_not_settled_while_the_window_end_is_the_last_row_of_the_data(self):
-        """視窗終點壓在資料最後一列時也還不算數：sim 的價格 frame 是 adj_open 與
-        adj_close 的交集，可能比這裡的 price:收盤價 短一天。"""
-        td = _trading_days('2026-07-01', '2026-07-14')
-        assert window_end('2026-07-10', td) == pd.Timestamp('2026-07-14')
-        assert is_settled('2026-07-10', td) is False
-
-    def test_a_closed_exit_day_counts_slack_from_the_deferred_settlement(self):
-        """7/10 休市成交落在 7/13，slack 要從 7/13 起算，不是從 7/10。"""
-        td = _trading_days('2026-07-01', '2026-07-15', holidays=['2026-07-10'])
-        assert is_settled('2026-07-10', td) is False
-
-        td = _trading_days('2026-07-01', '2026-07-16', holidays=['2026-07-10'])
         assert is_settled('2026-07-10', td) is True
+        assert window_end('2026-07-10', td) == pd.Timestamp('2026-07-10')
+
+    def test_a_closed_exit_day_settles_on_the_deferred_trading_day(self):
+        """7/10 休市，成交順延到 7/13——資料要走到 7/13 才算數，但也只要到 7/13。"""
+        td = _trading_days('2026-07-01', '2026-07-09', holidays=['2026-07-10'])
+        assert is_settled('2026-07-10', td) is False
+
+        td = _trading_days('2026-07-01', '2026-07-13', holidays=['2026-07-10'])
+        assert is_settled('2026-07-10', td) is True
+        assert window_end('2026-07-10', td) == pd.Timestamp('2026-07-13')
 
     def test_not_settled_when_the_data_stops_before_the_exit(self):
         td = _trading_days('2026-07-01', '2026-07-09')

@@ -1,4 +1,4 @@
-"""GoldenAI 當期清單（節點）回測。
+"""GoldenAI 單期清單（節點）回測。
 
 一個節點 = 一份推薦清單 × 一組 ranks 的一次獨立回測。與 backtest_executor 的差別：
 那支跑的是「今天回頭看三個月」的滾動回測，同一份清單每天都會被重算；這支算的是
@@ -36,8 +36,8 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 
 from core.node_backtest import (
-    HOLD_WEEKS, SLACK_TRADING_DAYS, align_to_sunday, check_trades, is_settled,
-    is_tradable_list_date, node_dates, node_return, node_window, nth_sunday_of_month,
+    HOLD_WEEKS, align_to_sunday, check_trades, is_settled, is_tradable_list_date,
+    node_dates, node_return, node_window, nth_sunday_of_month,
 )
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
@@ -64,7 +64,7 @@ FULL_RANKS = '1,2,3,4,5,6,7,8'
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='GoldenAI 當期清單（節點）回測')
+    parser = argparse.ArgumentParser(description='GoldenAI 單期清單（節點）回測')
     parser.add_argument('--strategy', required=True, choices=list(STRATEGY_CLASS_MAP))
 
     # 必填：三種都是有界的。沒有「全部」這個選項，排程才不會在初始回填之前
@@ -118,7 +118,7 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
     # 那種情況 position 會被裁到資料尾端、index 裡根本沒有那個清單日。
     if not is_settled(exit_date, universe_index):
         # 還沒結算不是錯誤，只是還輪不到它——回填一整段時最後幾期本來就會落在這裡
-        return None, f'pending until {exit_date.date()} + {SLACK_TRADING_DAYS} trading days'
+        return None, f'pending until {exit_date.date()} settles'
     if list_date not in position_all.index:
         return None, f'pending until {exit_date.date()}'
 
@@ -271,7 +271,7 @@ def main():
 
 if __name__ == '__main__':
     # 與其他排程 job 一致（見 jobs/backtest_executor.py）：整支掛掉要發 Telegram，
-    # 否則「當期清單」只會靜靜地停止更新，沒有人會發現。
+    # 否則「單期清單」只會靜靜地停止更新，沒有人會發現。
     _notifier = create_notification_manager(
         ConfigLoader(CONFIG_PATH).config.get('notification', {}), logger)
     try:
@@ -279,7 +279,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.exception(e)
         _notifier.send_error(
-            task_name='當期清單（節點）回測',
+            task_name='單期清單（節點）回測',
             error_message=str(e),
             error_traceback=traceback.format_exc(),
         )
