@@ -63,12 +63,6 @@ _METRIC_META = {
     'win_ratio':     ('勝率',        True),
 }
 
-# Tableau 10 (advanced view multi-line chart palette)
-_COLORS = [
-    '#4E79A7', '#F28E2B', '#E15759', '#76B7B2',
-    '#59A14F', '#EDC948', '#B07AA1', '#FF9DA7',
-]
-
 _COLOR = {
     'text_heading':   '#1a202c',
     'text_value':     '#1e293b',
@@ -376,8 +370,7 @@ def _build_figure(data: dict, metric: str, empty_text: str = '尚無資料') -> 
         fig.update_layout(height=300, title=empty_text, plot_bgcolor='white')
         return fig
 
-    for i, (ranks, df) in enumerate(sorted(data.items())):
-        color = _COLORS[i % len(_COLORS)]
+    for ranks, df in sorted(data.items()):
         y = df[metric] * 100 if is_pct else df[metric]
         rl = _rank_label(ranks)
         fig.add_trace(go.Scatter(
@@ -385,7 +378,7 @@ def _build_figure(data: dict, metric: str, empty_text: str = '尚無資料') -> 
             y=y,
             mode='lines+markers',
             name=rl,
-            line=dict(color=color, width=2),
+            line=dict(color=_COLOR['accent'], width=2),
             marker=dict(size=5),
             hovertemplate=f'%{{x|%Y-%m-%d}}<br>{rl}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
         ))
@@ -682,7 +675,7 @@ def _main_layout():
                 ),
                 dbc.CardBody([
                     html.Div([
-                        html.Span('第', className='rank-cap'),
+                        html.Span('Rank 組合', className='rank-cap'),
                         dbc.Checklist(
                             id='rank-picker',
                             options=[{'label': str(i), 'value': i} for i in _RANK_CHOICES],
@@ -691,7 +684,6 @@ def _main_layout():
                             labelClassName='btn',
                             labelCheckedClassName='active',
                         ),
-                        html.Span('支', className='rank-cap'),
                     ], className='rank-row mb-3 d-flex align-items-center'),
                     dcc.Loading(
                         dcc.Graph(id='metrics-graph', config={'displayModeBar': False}),
@@ -849,9 +841,8 @@ app.index_string = '''
                 box-shadow: inset 0 0 0 2px rgba(29, 78, 216, 0.35);
             }
 
-            /* ── 名次選取：整排讀作「第 1 2 … 8 支」，兩端的字是句子的一部分。
-                  每格各自有外框、彼此留間距。 ── */
-            .rank-row { flex-wrap: nowrap; gap: 8px; }
+            /* ── Rank 組合選取：固定尺寸的正方形格子，整組靠左、不隨寬度拉伸 ── */
+            .rank-row { flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
             .rank-cap {
                 font-size: clamp(12px, 2.5vw, 14px);
                 font-weight: 500;
@@ -860,27 +851,31 @@ app.index_string = '''
             }
             #rank-picker {
                 display: flex;
+                flex: 0 0 auto;
+                flex-wrap: wrap;
                 gap: 6px;
-                flex: 0 1 380px;
-                min-width: 0;
+                justify-content: flex-start;
             }
             #rank-picker .form-check {
-                flex: 1 1 0;
-                min-width: 0;
+                flex: 0 0 auto;
                 margin: 0;
                 padding-left: 0;
             }
             #rank-picker .btn {
-                width: 100%;
-                padding: 6px 0;
+                width: 36px;
+                height: 36px;
+                padding: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
                 border: 1px solid #d1d5db;
                 border-radius: 6px;
                 background-color: #ffffff;
                 color: #6b7280;
-                font-size: clamp(12px, 2.5vw, 14px);
+                font-size: 14px;
                 font-weight: 600;
                 font-variant-numeric: tabular-nums;
-                line-height: 1.4;
+                line-height: 1;
                 transition: background-color .12s ease, border-color .12s ease, color .12s ease;
             }
             #rank-picker .btn:hover {
@@ -975,10 +970,10 @@ app.index_string = '''
                 #simple-strategy { flex-direction: column; }
                 #simple-strategy .form-check { width: 100%; }
                 #simple-strategy .btn { width: 100%; text-align: left; }
-                /* 「第…支」要讀得通所以不折行；改成佔滿寬度、間距收窄 */
-                .rank-row { gap: 6px; }
-                #rank-picker { flex: 1 1 auto; gap: 4px; }
-                #rank-picker .btn { padding: 7px 0; }
+                /* 標籤獨立一行、靠左；格子維持正方形只是略縮，八格 320px 內排得下 */
+                .rank-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+                #rank-picker { gap: 5px; }
+                #rank-picker .btn { width: 34px; height: 34px; font-size: 13px; }
                 .container-fluid { padding-left: 12px; padding-right: 12px; }
             }
         </style>
