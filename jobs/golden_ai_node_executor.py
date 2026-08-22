@@ -25,6 +25,7 @@ idempotent。也因此它可以每晚跑而不必擔心重複。
 import argparse
 import logging
 import os
+import traceback
 from itertools import combinations
 
 import numpy as np
@@ -35,8 +36,8 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 
 from core.node_backtest import (
-    HOLD_WEEKS, align_to_sunday, check_trades, is_settled, node_dates, node_return,
-    node_window, nth_sunday_of_month,
+    HOLD_WEEKS, SLACK_TRADING_DAYS, align_to_sunday, check_trades, is_settled,
+    is_tradable_list_date, node_dates, node_return, node_window, nth_sunday_of_month,
 )
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
@@ -46,6 +47,7 @@ from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
 from strategy_class.golden_ai_tw_strategy_weekly_4w import GoldenAITWStrategyWeekly4W
 from utils.authentication import Authenticator
 from utils.config_loader import ConfigLoader
+from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,7 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
     # 那種情況 position 會被裁到資料尾端、index 裡根本沒有那個清單日。
     if not is_settled(exit_date, universe_index):
         # 還沒結算不是錯誤，只是還輪不到它——回填一整段時最後幾期本來就會落在這裡
-        return None, f'pending until {exit_date.date()}'
+        return None, f'pending until {exit_date.date()} + {SLACK_TRADING_DAYS} trading days'
     if list_date not in position_all.index:
         return None, f'pending until {exit_date.date()}'
 
@@ -186,7 +188,9 @@ def main():
     rank_combos = (all_rank_combos(strategy.rank_start, strategy.rank_end)
                    if args.all_ranks else [args.ranks])
 
-    available = real_list_dates(strategy)
+    # 4 週策略只在當月第 1~4 個週日進場，第 5 個週日的清單不該有節點
+    available = {d for d in real_list_dates(strategy)
+                 if is_tradable_list_date(d, hold_weeks)}
     if args.list_date:
         list_dates = []
         for raw in args.list_date:
@@ -196,6 +200,9 @@ def main():
                 logger.info(f'{raw} is not a Sunday, aligned to list date {d.date()}')
             if d in available:
                 list_dates.append(d)
+            elif not is_tradable_list_date(d, hold_weeks):
+                logger.warning(f'{d.date()}: 5th Sunday of the month — '
+                               f'{args.strategy} never enters on it, skipped')
             else:
                 logger.warning(f'{d.date()}: no recommendation list, skipped')
     elif args.date_range:
@@ -263,4 +270,17 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # 與其他排程 job 一致（見 jobs/backtest_executor.py）：整支掛掉要發 Telegram，
+    # 否則「當期清單」只會靜靜地停止更新，沒有人會發現。
+    _notifier = create_notification_manager(
+        ConfigLoader(CONFIG_PATH).config.get('notification', {}), logger)
+    try:
+        main()
+    except Exception as e:
+        logger.exception(e)
+        _notifier.send_error(
+            task_name='當期清單（節點）回測',
+            error_message=str(e),
+            error_traceback=traceback.format_exc(),
+        )
+        raise SystemExit(1)

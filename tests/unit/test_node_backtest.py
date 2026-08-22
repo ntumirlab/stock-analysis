@@ -12,10 +12,13 @@ from core.node_backtest import (
     align_to_sunday,
     check_trades,
     is_settled,
+    is_tradable_list_date,
     node_dates,
     node_return,
     node_window,
     nth_sunday_of_month,
+    settle_day,
+    window_end,
 )
 
 MON, FRI = 0, 4  # config 的 buy_weekday=1 / sell_weekday=5 減 1 之後
@@ -98,7 +101,7 @@ class TestNodeWindow:
 
         assert start == pd.Timestamp('2026-07-03')  # 前一個週五
         assert not pos.loc[start].any()
-        assert end == pd.Timestamp('2026-07-20')
+        assert end == pd.Timestamp('2026-07-14')  # 結算日 7/10 再兩個交易日
 
     def test_start_retreats_further_when_that_friday_is_a_holiday(self):
         """7/10 休市那次：寫死「進場日減三天」會落在非交易日，節點報酬因此算錯。"""
@@ -111,39 +114,99 @@ class TestNodeWindow:
         assert start == pd.Timestamp('2026-07-09')  # 退到週四，不是休市的週五
         assert not pos.loc[start].any()
 
-    def test_end_leaves_slack_after_the_exit(self):
+    def test_end_leaves_slack_trading_days_after_the_settlement(self):
         index = _calendar('2026-07-01', '2026-08-31')
         pos = _position(index, ('2026-07-05', '2026-07-09'))
         td = _trading_days('2026-07-01', '2026-08-31')
 
-        _, end = node_window(pos, '2026-07-06', td, '2026-07-10', slack_days=10)
+        _, end = node_window(pos, '2026-07-06', td, '2026-07-10', slack_days=3)
 
-        assert end == pd.Timestamp('2026-07-20')
+        assert end == pd.Timestamp('2026-07-15')
 
-    def test_end_never_runs_past_the_available_data(self):
-        index = _calendar('2026-07-01', '2026-07-14')
-        pos = _position(index, ('2026-07-05', '2026-07-09'))
-        td = _trading_days('2026-07-01', '2026-07-14')
+    def test_slack_counts_trading_days_so_a_holiday_shifts_the_end(self):
+        """7/10 休市那次：成交順延到 7/13，終點跟著往後，不是照日曆天硬加。"""
+        index = _calendar('2026-07-01', '2026-07-31')
+        pos = _position(index, ('2026-07-12', '2026-07-16'))
+        td = _trading_days('2026-07-01', '2026-07-31', holidays=['2026-07-10'])
 
-        _, end = node_window(pos, '2026-07-06', td, '2026-07-10', slack_days=10)
+        _, end = node_window(pos, '2026-07-13', td, '2026-07-17')
 
-        assert end == pd.Timestamp('2026-07-14')
+        assert settle_day('2026-07-17', td) == pd.Timestamp('2026-07-17')
+        assert end == pd.Timestamp('2026-07-21')
+
+    def test_end_does_not_depend_on_how_much_data_follows(self):
+        """回歸：終點原本是 min(出場日 + 10 天, 資料最後一天)，於是「排程當晚算的」
+        與「事後回填算的」視窗長度不同。finlab 的 sharpe / sortino / annualReturn 是
+        對整段視窗算的，同一條 +4.12% 的權益曲線，結算日後 0 個交易日得到
+        sharpe=15.13、7 個交易日得到 sharpe=7.97（差 1.9 倍），而 DAO 是
+        INSERT OR IGNORE，先寫進去的就被凍住。終點必須只跟節點與交易日曆有關。
+        """
+        pos = _position(_calendar('2026-07-01', '2026-08-31'),
+                        ('2026-07-05', '2026-07-09'))
+
+        ends = {node_window(pos, '2026-07-06',
+                            _trading_days('2026-07-01', last), '2026-07-10')[1]
+                for last in ('2026-07-14', '2026-07-20', '2026-08-31')}
+
+        assert ends == {pd.Timestamp('2026-07-14')}
+
+    def test_refuses_a_node_whose_slack_is_not_in_the_data_yet(self):
+        pos = _position(_calendar('2026-07-01', '2026-07-10'),
+                        ('2026-07-05', '2026-07-09'))
+        td = _trading_days('2026-07-01', '2026-07-10')
+
+        with pytest.raises(ValueError):
+            node_window(pos, '2026-07-06', td, '2026-07-10')
+
+
+class TestSettleDay:
+    def test_an_open_exit_day_settles_that_day(self):
+        td = _trading_days('2026-07-01', '2026-07-31')
+        assert settle_day('2026-07-17', td) == pd.Timestamp('2026-07-17')
+
+    def test_a_closed_exit_day_defers_to_the_next_trading_day(self):
+        """7/10 休市，賣單順延到 7/13。"""
+        td = _trading_days('2026-07-01', '2026-07-31', holidays=['2026-07-10'])
+        assert settle_day('2026-07-10', td) == pd.Timestamp('2026-07-13')
+
+    def test_none_when_the_data_stops_before_the_exit(self):
+        td = _trading_days('2026-07-01', '2026-07-09')
+        assert settle_day('2026-07-10', td) is None
+        assert window_end('2026-07-10', td) is None
 
 
 class TestIsSettled:
-    def test_settled_when_the_data_reaches_the_exit_day(self):
-        """出場日當天有開市就當天成交，不必等到下一個交易日。"""
+    """結算＝資料已經長到能框出一個「與計算時間無關」的視窗，也就是結算日之後還要
+    有 SLACK_TRADING_DAYS 個交易日。只到出場日當天是不夠的——那個視窗會被截短。"""
+
+    def test_settled_once_the_window_plus_a_spare_day_is_in(self):
+        # 出場 7/10，視窗到 7/14，再多要一個交易日 7/15
+        td = _trading_days('2026-07-01', '2026-07-15')
+        assert is_settled('2026-07-10', td) is True
+
+    def test_not_settled_while_the_data_stops_at_the_exit_day(self):
+        """排程當晚跑到的就是這種：資料只到出場日，視窗會比事後回填短一截。"""
         td = _trading_days('2026-07-01', '2026-07-10')
-        assert is_settled('2026-07-10', td) is True
-
-    def test_settled_when_a_closed_exit_day_has_been_passed(self):
-        """7/10 休市，成交順延到 7/13——資料走到那天才算數。"""
-        td = _trading_days('2026-07-01', '2026-07-13', holidays=['2026-07-10'])
-        assert is_settled('2026-07-10', td) is True
-
-    def test_not_settled_while_a_closed_exit_day_is_the_edge_of_the_data(self):
-        td = _trading_days('2026-07-01', '2026-07-09', holidays=['2026-07-10'])
         assert is_settled('2026-07-10', td) is False
+
+    def test_not_settled_with_only_part_of_the_slack(self):
+        td = _trading_days('2026-07-01', '2026-07-13')
+        assert is_settled('2026-07-10', td) is False
+
+    def test_not_settled_while_the_window_end_is_the_last_row_of_the_data(self):
+        """視窗終點壓在資料最後一列時也還不算數：sim 的價格 frame 是 adj_open 與
+        adj_close 的交集，可能比這裡的 price:收盤價 短一天。"""
+        td = _trading_days('2026-07-01', '2026-07-14')
+        assert window_end('2026-07-10', td) == pd.Timestamp('2026-07-14')
+        assert is_settled('2026-07-10', td) is False
+
+    def test_a_closed_exit_day_counts_slack_from_the_deferred_settlement(self):
+        """7/10 休市成交落在 7/13，slack 要從 7/13 起算，不是從 7/10。"""
+        td = _trading_days('2026-07-01', '2026-07-15', holidays=['2026-07-10'])
+        assert is_settled('2026-07-10', td) is False
+
+        td = _trading_days('2026-07-01', '2026-07-16', holidays=['2026-07-10'])
+        assert is_settled('2026-07-10', td) is True
 
     def test_not_settled_when_the_data_stops_before_the_exit(self):
         td = _trading_days('2026-07-01', '2026-07-09')
@@ -152,6 +215,28 @@ class TestIsSettled:
     def test_not_settled_for_a_future_exit(self):
         td = _trading_days('2026-07-01', '2026-07-10')
         assert is_settled('2026-08-14', td) is False
+
+
+class TestIsTradableListDate:
+    """4 週策略的進場週來自 `_get_nth_sundays`，而那支只跑 n=1~4。"""
+
+    FIFTH_SUNDAYS = ['2025-11-30', '2026-03-29', '2026-05-31']
+
+    @pytest.mark.parametrize('list_date', FIFTH_SUNDAYS)
+    def test_a_four_week_strategy_never_enters_on_a_fifth_sunday(self, list_date):
+        assert nth_sunday_of_month(list_date) == 5
+        assert is_tradable_list_date(list_date, HOLD_WEEKS['monthly']) is False
+        assert is_tradable_list_date(list_date, HOLD_WEEKS['weekly_4w']) is False
+
+    @pytest.mark.parametrize('list_date', FIFTH_SUNDAYS)
+    def test_weekly_enters_on_every_sunday(self, list_date):
+        assert is_tradable_list_date(list_date, HOLD_WEEKS['weekly']) is True
+
+    @pytest.mark.parametrize('list_date', [
+        '2026-07-05', '2026-07-12', '2026-07-19', '2026-07-26'])
+    def test_the_first_four_sundays_are_tradable_either_way(self, list_date):
+        assert is_tradable_list_date(list_date, 1) is True
+        assert is_tradable_list_date(list_date, 4) is True
 
 
 class TestNodeReturn:

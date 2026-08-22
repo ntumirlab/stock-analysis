@@ -55,36 +55,86 @@ def nth_sunday_of_month(list_date) -> int:
     return (d - first_sunday).days // 7 + 1
 
 
-def node_window(position, entry_date, trading_days, exit_date, slack_days: int = 10):
-    """節點回測的視窗 (start, end)。
+def is_tradable_list_date(list_date, hold_weeks: int) -> bool:
+    """這份清單在正式策略裡真的會被買進嗎？
+
+    4 週／月策略的進場週由 `GoldenAITWStrategyMonthly._get_nth_sundays` 決定，而那支
+    只跑 n=1~4——**當月第 5 個週日的清單從來不會進場**。節點制若照跑，會生出策略
+    根本沒持有過的部位（實測 2025-11-30、2026-03-29、2026-05-31 三份清單就是）。
+
+    weekly 每週都進場，不受這個限制。
+    """
+    return hold_weeks == 1 or nth_sunday_of_month(list_date) <= 4
+
+
+# 視窗終點要在結算日之後再留幾個交易日，讓出場那根 K 不會是 frame 的最後一列。
+# 用交易日而不是日曆天：休市順延已經由 `settle_day`（第一個 >= 名目出場日的交易日）
+# 吸收掉，這裡只需要一點餘裕。
+SLACK_TRADING_DAYS = 2
+
+
+def settle_day(exit_date, trading_days):
+    """名目出場日實際成交的那天＝第一個 >= exit_date 的交易日。資料還沒走到就回 None。"""
+    td = pd.DatetimeIndex(trading_days).sort_values()
+    later = td[td >= pd.Timestamp(exit_date)]
+    return later[0] if len(later) else None
+
+
+def window_end(exit_date, trading_days, slack_days: int = SLACK_TRADING_DAYS):
+    """視窗終點＝結算日再往後 slack_days 個交易日。資料還沒走到就回 None。
+
+    **終點必須是節點自己的函數，不能是「跑的當下資料到哪天」。** finlab 的
+    sharpe / sortino / annualReturn 是對整段視窗的日報酬算的，視窗一長一短，同一個
+    節點就會拿到不同的數字：實測同一條 +4.12% 的權益曲線，結算日後補 0 個交易日
+    得到 sharpe=15.13、annualReturn=+722.9%，補 7 個交易日得到 sharpe=7.97、
+    annualReturn=+127.0%（maxDrawdown 與勝率不受影響）。DAO 又是 INSERT OR IGNORE，
+    先寫進去的那份會被凍住，於是「當晚排程算的」與「事後回填算的」永遠對不起來。
+
+    正式策略的滾動回測沒有這個問題，是因為它用 `backtest_date` 把資料尾端整條釘死
+    （`GoldenAITWStrategyBase._run_core` 的 data.truncate_end 與 universe 裁切、
+    `_apply_cutoff` 的 ref、`TargetWeekdayTWMarket._truncate`）。節點沒有 backtest_date
+    可釘，所以改從出場日推算終點，達到同一件事。
+    """
+    td = pd.DatetimeIndex(trading_days).sort_values()
+    later = td[td >= pd.Timestamp(exit_date)]
+    return later[slack_days] if len(later) > slack_days else None
+
+
+def node_window(position, entry_date, trading_days, exit_date,
+                slack_days: int = SLACK_TRADING_DAYS):
+    """節點回測的視窗 (start, end)。呼叫前必須先確認 `is_settled` 為真。
 
     起點退到進場日之前最近的「空手交易日」——直接寫死「進場日減幾天」會錯：
     2026-07-10 週五休市那次，寫死的起點讓首筆交易延後一天、節點報酬從 -7.64%
     變成 -5.14%。理由與 [core.backtest_window] 相同，這裡重用同一支函式。
 
-    終點放到出場日之後 slack_days 天，留給休市順延；出場後本來就空手，
-    多幾天平盤不會產生交易。
+    終點見 `window_end`：兩端都只跟節點與交易日曆有關，跟哪天跑無關。
     """
-    entry_date = pd.Timestamp(entry_date)
-    exit_date = pd.Timestamp(exit_date)
-
-    start = snap_cutoff_to_flat_trading_day(position, entry_date, trading_days)
-    end = min(exit_date + pd.Timedelta(days=slack_days),
-              pd.Timestamp(position.index.max()))
+    start = snap_cutoff_to_flat_trading_day(
+        position, pd.Timestamp(entry_date), trading_days)
+    end = window_end(exit_date, trading_days, slack_days)
+    if end is None:
+        raise ValueError(
+            f'node not settled: {pd.Timestamp(exit_date).date()} '
+            f'+ {slack_days} trading days is beyond the data')
     return start, end
 
 
-def is_settled(exit_date, trading_days) -> bool:
-    """行情資料已經走到名目出場日（或更後面）才算結算完畢。
+def is_settled(exit_date, trading_days, slack_days: int = SLACK_TRADING_DAYS) -> bool:
+    """行情資料是否已經長到足以框出一個「與計算時間無關」的視窗。
 
-    兩種情況都被這個條件涵蓋：出場日有開市時，當天就成交，資料含當天即可；
-    出場日休市時，成交順延到下一個交易日，而那天必然大於名目出場日。
+    判準就是 `window_end` 算不算得出來。休市不必特別處理：出場日開市時當天成交，
+    休市時順延到下一個交易日，兩種都由「第一個 >= 出場日的交易日」涵蓋。
+
+    **比視窗本身多要一個交易日**：sim 用的價格 frame 是 adj_open 與 adj_close 的交集
+    （見 `core.price_frames.mix_open_close`），這兩個資料集收盤後非同步更新，可能比
+    這裡拿到的 price:收盤價 短一天。視窗終點若正好壓在資料最後一列，那一天的權益就會
+    缺，指標又會跟隔天算的不一樣——與 `window_end` 要防的是同一件事。
 
     只是回填時的便宜預檢——真正的判準是 sim 跑完後 `trades` 的出場日都不是 NaT，
     `check_trades` 仍會擋。
     """
-    td = pd.DatetimeIndex(trading_days)
-    return bool((td >= pd.Timestamp(exit_date)).any())
+    return window_end(exit_date, trading_days, slack_days + 1) is not None
 
 
 def node_return(trades) -> float:
