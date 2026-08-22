@@ -21,6 +21,11 @@ TZ=Asia/Taipei
 45 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyWeekly4W >> /app/logs/backtest.log 2>&1
 55 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=GoldenAITWStrategyMonthly >> /app/logs/backtest.log 2>&1
 
+# 每天 23:10 - 計算當期清單（節點）：只算最近 14 天內結算的，已存在的跳過。
+10 23 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.golden_ai_node_executor --strategy weekly --days 14 --all-ranks >> /app/logs/nodes.log 2>&1
+20 23 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.golden_ai_node_executor --strategy weekly_4w --days 14 --all-ranks >> /app/logs/nodes.log 2>&1
+30 23 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.golden_ai_node_executor --strategy monthly --days 14 --all-ranks >> /app/logs/nodes.log 2>&1
+
 # 每天 07:30 - 發布解析後的推薦清單 JSON 到 Drive（只補 Drive 缺的日期）
 30 7 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.recommendations_publisher >> /app/logs/recommendations_publisher.log 2>&1
 
