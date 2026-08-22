@@ -1,36 +1,34 @@
-"""GoldenAI 節點回填工具。
+"""GoldenAI 當期清單（節點）回測。
 
-一個節點 = 一份推薦清單 × 一組 ranks 的一次獨立回測。與 backfill_golden_ai_backtest.py
-的差別：那支補的是「某一天跑的三個月滾動回測」，每天都要重算；這支補的是「某一份清單
-的單期結果」，結算後永不改變，所以重跑會被 UNIQUE 索引擋下、天生 idempotent。
+一個節點 = 一份推薦清單 × 一組 ranks 的一次獨立回測。與 backtest_executor 的差別：
+那支跑的是「今天回頭看三個月」的滾動回測，同一份清單每天都會被重算；這支算的是
+「某一份清單的單期結果」，結算後永不改變，所以重跑會被 UNIQUE 索引擋下、天生
+idempotent。也因此它可以每晚跑而不必擔心重複。
 
 日期運算在 core/node_backtest.py（純運算、CI 有測），這裡只負責建 position、跑 sim、
 把結果交給 DAO。
 
-用法：
-    python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
+排程（docker/crontab）用 --days，只看最近結算的那幾個：
+    python -m jobs.golden_ai_node_executor --strategy weekly --days 14 --all-ranks
+
+手動補歷史或查單一節點：
+    python -m jobs.golden_ai_node_executor \
         --strategy weekly --list-date 2026-08-02 2026-08-09 --dry-run
-    python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
+    python -m jobs.golden_ai_node_executor \
         --strategy weekly --date-range 2025-09-24 2026-08-09 --all-ranks
 
-每天的排程用 --days，只看最近結算的那幾個：
-    python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
-        --strategy weekly --days --all-ranks
-
-**日期一定要給一個**。少了這道界線，排程若在初始回填之前就啟動，第一晚就會
-從零開始跑完整段歷史（實測全量約 14 小時）。
+**日期一定要給一個**，沒有「全部」這個預設——每一次執行的範圍都必須是明寫出來的。
+排程用的 --days 也因此是有界的：即使表還是空的，第一晚也只算最近 14 天內結算的節點
+（約 13 分鐘），不會變成一次全量回填（那要約 14 小時，請手動跑 --date-range）。
 """
 
 import argparse
 import logging
 import os
-import sys
 from itertools import combinations
 
 import numpy as np
 import pandas as pd
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from finlab import data
 from finlab.backtest import sim
@@ -51,7 +49,7 @@ from utils.config_loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config.yaml')
 
 STRATEGY_CLASS_MAP = {
@@ -64,7 +62,7 @@ FULL_RANKS = '1,2,3,4,5,6,7,8'
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='GoldenAI 節點回填工具')
+    parser = argparse.ArgumentParser(description='GoldenAI 當期清單（節點）回測')
     parser.add_argument('--strategy', required=True, choices=list(STRATEGY_CLASS_MAP))
 
     # 必填：三種都是有界的。沒有「全部」這個選項，排程才不會在初始回填之前

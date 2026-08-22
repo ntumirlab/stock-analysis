@@ -1,7 +1,7 @@
 """節點回測的日期運算（純運算，不 import finlab，CI 可測）。
 
 一個節點 = 一份推薦清單 × 一組 ranks 的一次獨立回測。跑 sim 的部分在
-`research/golden_ai_tw_strategy/backfill_golden_ai_nodes.py`，這裡只負責
+`jobs/golden_ai_node_executor.py`，這裡只負責
 「哪天進、哪天出、視窗從哪天起跑、算不算已結算」。
 
 為什麼要獨立回測而不是從連續回測的交易紀錄分組：連續回測時兩份清單重疊的股票會被
