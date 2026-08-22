@@ -12,6 +12,7 @@ import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
+from core.node_backtest import HOLD_WEEKS, align_to_sunday, node_dates
 
 logger = logging.getLogger(__name__)
 
@@ -598,6 +599,71 @@ def _query_report_list(strategy: str) -> pd.DataFrame:
     return df[['date', 'timestamp', 'ranks', 'week']]
 
 
+# 買賣視窗用的星期：清單日是週日，週策略隔天一～五、四週策略隔天一到四週後的週五。
+# 寫死＝config.yaml 的 buy_weekday 1 / sell_weekday 5 減 1 之後，與 _RANK_CHOICES 同作法。
+_BUY_WEEKDAY, _SELL_WEEKDAY = 0, 4
+
+
+def _rec_weeks(strategy: str) -> list:
+    """[(週日, record), ...] 由新到舊，一週一筆。
+
+    DB 的 `date` 是原始發布日、常常不是週日，而且同一週可能有兩份（實測 weekly 有 4 週、
+    monthly 有 3 週）。對齊規則與 `_create_df` 一致：對到下一個週日、同週取較晚發布的那份
+    ——策略實際吃的就是那份。按週翻頁而不是按原始日期翻，那幾週才不會出現兩頁。
+    """
+    latest = {}
+    for r in _REC_DAOS[strategy].load():
+        if not r.date or not r.stocks:
+            continue
+        sunday = align_to_sunday(r.date)
+        if sunday not in latest or r.date > latest[sunday].date:
+            latest[sunday] = r
+    return sorted(latest.items(), key=lambda kv: kv[0], reverse=True)
+
+
+def _rec_window_text(strategy: str, sunday) -> str:
+    """這份清單的買賣視窗，例如 `2026/08/17 ~ 2026/08/21`（名目日期，休市順延由策略處理）。
+
+    兩端都帶年份：45 期橫跨一年多，翻回舊清單時只有月日會認不出是哪一年。
+    """
+    entry, exit_ = node_dates(sunday, _BUY_WEEKDAY, _SELL_WEEKDAY,
+                              HOLD_WEEKS.get(strategy, 1))
+    return f'{entry.strftime("%Y/%m/%d")} ~ {exit_.strftime("%Y/%m/%d")}'
+
+
+def _rec_table(record):
+    if not (record and record.stocks):
+        return html.Div(
+            '目前無推薦資料',
+            className='text-muted text-center py-4',
+            style={'fontSize': 'clamp(12px, 2.5vw, 14px)'},
+        )
+    rows = [
+        {
+            '#': i + 1,
+            '代號': s.id,
+            '名稱': s.name or '',
+            '目標價': f'{s.TP:,.2f}' if s.TP is not None else '—',
+        }
+        for i, s in enumerate(record.stocks)
+    ]
+    return dash_table.DataTable(
+        columns=[
+            {'name': '#',     'id': '#'},
+            {'name': '代號',  'id': '代號'},
+            {'name': '名稱',  'id': '名稱'},
+            {'name': '目標價', 'id': '目標價'},
+        ],
+        data=rows,
+        **_TABLE_STYLE,
+        style_cell_conditional=[
+            {'if': {'column_id': '#'},      'width': '10%',  'textAlign': 'center'},
+            {'if': {'column_id': '代號'},   'width': '20%',  'textAlign': 'center'},
+            {'if': {'column_id': '目標價'}, 'width': '25%',  'textAlign': 'right'},
+        ],
+    )
+
+
 def _recommendation_card(strategy: str):
     record = _REC_DAOS[strategy].get_latest()
 
@@ -625,37 +691,7 @@ def _recommendation_card(strategy: str):
         )
     header = html.Div(header_children, className='mb-3')
 
-    if record and record.stocks:
-        rows = [
-            {
-                '#': i + 1,
-                '代號': s.id,
-                '名稱': s.name or '',
-                '目標價': f'{s.TP:,.2f}' if s.TP is not None else '—',
-            }
-            for i, s in enumerate(record.stocks)
-        ]
-        body = dash_table.DataTable(
-            columns=[
-                {'name': '#',     'id': '#'},
-                {'name': '代號',  'id': '代號'},
-                {'name': '名稱',  'id': '名稱'},
-                {'name': '目標價', 'id': '目標價'},
-            ],
-            data=rows,
-            **_TABLE_STYLE,
-            style_cell_conditional=[
-                {'if': {'column_id': '#'},      'width': '10%',  'textAlign': 'center'},
-                {'if': {'column_id': '代號'},   'width': '20%',  'textAlign': 'center'},
-                {'if': {'column_id': '目標價'}, 'width': '25%',  'textAlign': 'right'},
-            ],
-        )
-    else:
-        body = html.Div(
-            '目前無推薦資料',
-            className='text-muted text-center py-4',
-            style={'fontSize': 'clamp(12px, 2.5vw, 14px)'},
-        )
+    body = _rec_table(record)
 
     return dbc.Card(
         dbc.CardBody([header, body], style=_CARD_BODY_STYLE),
@@ -798,7 +834,21 @@ def _main_layout():
                 ], style=_CARD_BODY_STYLE),
             ], style=_CARD_STYLE, className='mb-4'),
 
-            html.Div(id='advanced-recommendations', className='mb-4'),
+            dbc.Card(dbc.CardBody([
+                html.Div([
+                    html.Div('推薦清單', style=_TYPO['card_title']),
+                    html.Div([
+                        html.Span(id='rec-week-label', style=_TYPO['muted']),
+                        html.Button('‹', id='rec-prev', title='上一週',
+                                    className='btn btn-outline-secondary btn-sm rec-nav'),
+                        html.Button('›', id='rec-next', title='下一週',
+                                    className='btn btn-outline-secondary btn-sm rec-nav'),
+                    ], className='d-flex align-items-center', style={'gap': '6px'}),
+                ], className='d-flex justify-content-between align-items-center '
+                             'flex-wrap gap-2 mb-3'),
+                html.Div(id='advanced-recommendations'),
+            ], style=_CARD_BODY_STYLE), style=_CARD_STYLE, className='mb-4'),
+            dcc.Store(id='rec-week-index', data=0),
         ], fluid=True),
     ])
 
@@ -1009,6 +1059,12 @@ app.index_string = '''
             /* 單期清單視窗有五張卡；Bootstrap 12 欄制除不盡，lg 以上改成等分五欄 */
             @media (min-width: 992px) {
                 .kpi-row-5 > [class*="col-"] { flex: 0 0 20%; max-width: 20%; }
+            }
+            .rec-nav {
+                min-width: 34px;
+                padding: 2px 8px;
+                line-height: 1.4;
+                font-size: 16px;
             }
             .print-header { display: none; }
             @media print {
@@ -1392,11 +1448,41 @@ def update_metric_tabs(window):
 
 
 @app.callback(
+    Output('rec-week-index', 'data'),
+    Input('rec-prev', 'n_clicks'),
+    Input('rec-next', 'n_clicks'),
+    Input('strategy-dropdown', 'value'),
+    State('rec-week-index', 'data'),
+)
+def update_rec_week_index(_prev, _next, strategy, index):
+    """0 ＝ 最新一期，往回翻索引變大。換策略時回到最新（各策略的清單集合不同）。"""
+    if ctx.triggered_id != 'rec-prev' and ctx.triggered_id != 'rec-next':
+        return 0
+    weeks = _rec_weeks(strategy or 'weekly')
+    step = 1 if ctx.triggered_id == 'rec-prev' else -1
+    return max(0, min((index or 0) + step, len(weeks) - 1))
+
+
+@app.callback(
     Output('advanced-recommendations', 'children'),
+    Output('rec-week-label', 'children'),
+    Output('rec-prev', 'disabled'),
+    Output('rec-next', 'disabled'),
+    Input('rec-week-index', 'data'),
     Input('strategy-dropdown', 'value'),
 )
-def update_advanced_recommendations(strategy):
-    return _recommendation_card(strategy or 'weekly')
+def update_advanced_recommendations(index, strategy):
+    weeks = _rec_weeks(strategy or 'weekly')
+    if not weeks:
+        return _rec_table(None), '', True, True
+
+    index = max(0, min(index or 0, len(weeks) - 1))
+    sunday, record = weeks[index]
+    # 括號裡的序號按時間順序，最新的那期＝總數（往回翻數字變小，跟 ‹ 的方向一致）
+    label = (f'買賣區間 {_rec_window_text(strategy or "weekly", sunday)}'
+             f' ({len(weeks) - index}/{len(weeks)})')
+    # index 0 ＝ 最新，所以「上一週」在索引末端停、「下一週」在索引 0 停
+    return _rec_table(record), label, index >= len(weeks) - 1, index <= 0
 
 
 app.clientside_callback(
