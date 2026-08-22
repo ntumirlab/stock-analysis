@@ -8,6 +8,7 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase, MultiReportWrapper, _extract_report_json
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
+from core.tranche_schedule import NUM_TRANCHES, tranche_sundays
 
 logger = logging.getLogger(__name__)
 
@@ -16,21 +17,8 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
     def __init__(self, config_path="config.yaml", override_params=None):
         super().__init__(task_name="monthly", config_path=config_path, override_params=override_params)
 
-    def _get_nth_sundays(self, date_range, n):
-        """每個月第 n 個週日（n 從 1 開始）；若該月不足 n 個週日則跳過"""
-        results = []
-        months = pd.period_range(start=date_range.min(), end=date_range.max(), freq='M')
-        for month in months:
-            first_day = month.to_timestamp()
-            days_to_sunday = (6 - first_day.weekday()) % 7
-            first_sunday = first_day + pd.Timedelta(days=days_to_sunday)
-            nth_sunday = first_sunday + pd.Timedelta(weeks=n - 1)
-            if nth_sunday.month == first_day.month:
-                results.append(nth_sunday)
-        return pd.DatetimeIndex(results)
-
     def _run_core(self, ranks):
-        """月策略核心：對給定 ranks 跑 Week1~4，回傳 {'Week1': report, ...}"""
+        """月策略核心：對給定 ranks 跑四份 tranche，回傳 {'tranche1': report, ...}"""
         try:
             if self.backtest_date is not None:
                 data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
@@ -51,8 +39,9 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 pre_raw_high = data.get('price:最高價').reindex(index=base_position.index, columns=base_position.columns)
 
             reports = {}
-            for offset in range(4):
-                selected_weeks = self._get_nth_sundays(base_position.index, offset + 1)
+            for offset in range(NUM_TRANCHES):
+                # 進場週由錨點連續輪動決定，與實盤的 tranche 排程同一套定義
+                selected_weeks = tranche_sundays(self.task_name, base_position.index, offset + 1)
                 entry_dates = selected_weeks + pd.Timedelta(days=1 + self.buy_weekday)
                 exit_dates  = selected_weeks + pd.Timedelta(days=22 + self.sell_weekday)
 
@@ -107,7 +96,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                         upload=False,
                         notification_enable=False
                     )
-                reports[f"Week{offset + 1}"] = report
+                reports[f"tranche{offset + 1}"] = report
 
             return reports
         finally:
@@ -119,12 +108,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
-        week_reports = self._run_core(ranks=ranks)
-        for week_name, report in week_reports.items():
-            dao.save(timestamp=timestamp, strategy=self.task_name, week=week_name, ranks=ranks_str, report=report)
+        tranche_reports = self._run_core(ranks=ranks)
+        for tranche_name, report in tranche_reports.items():
+            dao.save(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name, ranks=ranks_str, report=report)
 
         if report_dir is not None:
-            wrapper = MultiReportWrapper(week_reports)
+            wrapper = MultiReportWrapper(tranche_reports)
             save_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
             if self.backtest_date is not None:
                 data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
@@ -134,19 +123,19 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 data.truncate_end = None
             base_dir, file_name = os.path.split(save_path)
             file_base, ext = os.path.splitext(file_name)
-            for week_name in week_reports:
-                week_path = os.path.join(base_dir, f"{file_base}_{week_name}{ext}")
-                rj, pj = _extract_report_json(week_path)
+            for tranche_name in tranche_reports:
+                tranche_path = os.path.join(base_dir, f"{file_base}_{tranche_name}{ext}")
+                rj, pj = _extract_report_json(tranche_path)
                 if rj:
-                    dao.save_report(timestamp=timestamp, strategy=self.task_name, week=week_name,
+                    dao.save_report(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name,
                                     ranks=ranks_str, report_json=rj, position_json=pj)
                 else:
                     logger.warning(
                         f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "
-                        f"{self.task_name} {week_name} Ranks[{ranks_str}] @ {timestamp}"
+                        f"{self.task_name} {tranche_name} Ranks[{ranks_str}] @ {timestamp}"
                     )
         else:
-            for week_name, report in week_reports.items():
+            for tranche_name, report in tranche_reports.items():
                 tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
                 tmp_path = tmp.name
                 tmp.close()
@@ -159,12 +148,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 rj, pj = _extract_report_json(tmp_path)
                 os.unlink(tmp_path)
                 if rj:
-                    dao.save_report(timestamp=timestamp, strategy=self.task_name, week=week_name,
+                    dao.save_report(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name,
                                     ranks=ranks_str, report_json=rj, position_json=pj)
                 else:
                     logger.warning(
                         f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "
-                        f"{self.task_name} {week_name} Ranks[{ranks_str}] @ {timestamp}"
+                        f"{self.task_name} {tranche_name} Ranks[{ranks_str}] @ {timestamp}"
                     )
 
 

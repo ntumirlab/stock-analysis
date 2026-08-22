@@ -36,9 +36,10 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 
 from core.node_backtest import (
-    HOLD_WEEKS, align_to_sunday, check_trades, is_settled, is_tradable_list_date,
-    node_dates, node_return, node_window, nth_sunday_of_month,
+    HOLD_WEEKS, align_to_sunday, check_trades, is_settled,
+    node_dates, node_return, node_window,
 )
+from core.tranche_schedule import tranche_of
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
@@ -163,8 +164,8 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
         'ranks': ranks_str,
         'entry_date': pd.Timestamp(trades['entry_date'].iloc[0]).strftime('%Y-%m-%d'),
         'exit_date': pd.Timestamp(trades['exit_date'].iloc[0]).strftime('%Y-%m-%d'),
-        # 只有四週策略需要分 Week1~4；weekly 一週一輪，這個維度不存在
-        'week_of_month': nth_sunday_of_month(list_date) if hold_weeks > 1 else None,
+        # 只有四週策略需要分相位；weekly 一週一輪，這個維度不存在
+        'tranche': tranche_of(strategy.task_name, list_date) if hold_weeks > 1 else None,
         'n_stocks': n_stocks,
         'node_return': node_return(trades),
         'report': report,
@@ -188,9 +189,8 @@ def main():
     rank_combos = (all_rank_combos(strategy.rank_start, strategy.rank_end)
                    if args.all_ranks else [args.ranks])
 
-    # 4 週策略只在當月第 1~4 個週日進場，第 5 個週日的清單不該有節點
-    available = {d for d in real_list_dates(strategy)
-                 if is_tradable_list_date(d, hold_weeks)}
+    # 錨點連續輪動下每個週日都恰好被一份 tranche 買到，所以每份清單都該有節點
+    available = real_list_dates(strategy)
     if args.list_date:
         list_dates = []
         for raw in args.list_date:
@@ -200,9 +200,6 @@ def main():
                 logger.info(f'{raw} is not a Sunday, aligned to list date {d.date()}')
             if d in available:
                 list_dates.append(d)
-            elif not is_tradable_list_date(d, hold_weeks):
-                logger.warning(f'{d.date()}: 5th Sunday of the month — '
-                               f'{args.strategy} never enters on it, skipped')
             else:
                 logger.warning(f'{d.date()}: no recommendation list, skipped')
     elif args.date_range:

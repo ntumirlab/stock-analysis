@@ -12,11 +12,9 @@ from core.node_backtest import (
     align_to_sunday,
     check_trades,
     is_settled,
-    is_tradable_list_date,
     node_dates,
     node_return,
     node_window,
-    nth_sunday_of_month,
     settle_day,
     window_end,
 )
@@ -70,24 +68,6 @@ class TestNodeDates:
         e, x = node_dates('2026-07-05', 2, FRI, 1)  # 週三買
         assert e == pd.Timestamp('2026-07-08')
         assert x == pd.Timestamp('2026-07-10')
-
-
-class TestNthSundayOfMonth:
-    @pytest.mark.parametrize('list_date, nth', [
-        ('2026-07-05', 1),
-        ('2026-07-12', 2),
-        ('2026-07-19', 3),
-        ('2026-07-26', 4),
-        ('2026-08-02', 1),
-        ('2026-08-09', 2),
-    ])
-    def test_counts_sundays_within_the_month(self, list_date, nth):
-        assert nth_sunday_of_month(list_date) == nth
-
-    def test_month_starting_on_a_sunday_counts_from_day_one(self):
-        assert pd.Timestamp('2026-03-01').weekday() == 6
-        assert nth_sunday_of_month('2026-03-01') == 1
-        assert nth_sunday_of_month('2026-03-08') == 2
 
 
 class TestNodeWindow:
@@ -200,28 +180,6 @@ class TestIsSettled:
     def test_not_settled_for_a_future_exit(self):
         td = _trading_days('2026-07-01', '2026-07-10')
         assert is_settled('2026-08-14', td) is False
-
-
-class TestIsTradableListDate:
-    """4 週策略的進場週來自 `_get_nth_sundays`，而那支只跑 n=1~4。"""
-
-    FIFTH_SUNDAYS = ['2025-11-30', '2026-03-29', '2026-05-31']
-
-    @pytest.mark.parametrize('list_date', FIFTH_SUNDAYS)
-    def test_a_four_week_strategy_never_enters_on_a_fifth_sunday(self, list_date):
-        assert nth_sunday_of_month(list_date) == 5
-        assert is_tradable_list_date(list_date, HOLD_WEEKS['monthly']) is False
-        assert is_tradable_list_date(list_date, HOLD_WEEKS['weekly_4w']) is False
-
-    @pytest.mark.parametrize('list_date', FIFTH_SUNDAYS)
-    def test_weekly_enters_on_every_sunday(self, list_date):
-        assert is_tradable_list_date(list_date, HOLD_WEEKS['weekly']) is True
-
-    @pytest.mark.parametrize('list_date', [
-        '2026-07-05', '2026-07-12', '2026-07-19', '2026-07-26'])
-    def test_the_first_four_sundays_are_tradable_either_way(self, list_date):
-        assert is_tradable_list_date(list_date, 1) is True
-        assert is_tradable_list_date(list_date, 4) is True
 
 
 class TestNodeReturn:

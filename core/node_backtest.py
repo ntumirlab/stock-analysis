@@ -43,30 +43,6 @@ def align_to_sunday(date) -> pd.Timestamp:
     return d + pd.Timedelta(days=6 - d.weekday())
 
 
-def nth_sunday_of_month(list_date) -> int:
-    """清單日是當月第幾個週日（1 起算）。
-
-    4W／月策略的 Week1~4 就是這個維度：正式策略用 `_get_nth_sundays` 挑當月第 n 個
-    週日當進場週，節點制不必為此跑四份回測，存下這個值之後篩即可。
-    """
-    d = pd.Timestamp(list_date)
-    first = d.replace(day=1)
-    first_sunday = first + pd.Timedelta(days=(6 - first.weekday()) % 7)
-    return (d - first_sunday).days // 7 + 1
-
-
-def is_tradable_list_date(list_date, hold_weeks: int) -> bool:
-    """這份清單在正式策略裡真的會被買進嗎？
-
-    4 週／月策略的進場週由 `GoldenAITWStrategyMonthly._get_nth_sundays` 決定，而那支
-    只跑 n=1~4——**當月第 5 個週日的清單從來不會進場**。節點制若照跑，會生出策略
-    根本沒持有過的部位（實測 2025-11-30、2026-03-29、2026-05-31 三份清單就是）。
-
-    weekly 每週都進場，不受這個限制。
-    """
-    return hold_weeks == 1 or nth_sunday_of_month(list_date) <= 4
-
-
 # 視窗終點在結算日之後還要留幾個交易日。**0 ＝ 賣出當天就收工**：部位在結算日已經出清，
 # 之後的日子只是平盤，對節點沒有任何資訊，卻會讓結果晚好幾天才看得到——週五賣掉要等到
 # 下週三，而這個檢視存在的意義就是「週五收盤就知道上週結果」。

@@ -3,7 +3,7 @@ from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonth
 
 class GoldenAITWStrategyWeekly4W(GoldenAITWStrategyMonthly):
     """行為與月策略（GoldenAITWStrategyMonthly）完全相同：
-    Week1~4 loop、跑所有 ranks 子集組合、multi-worker、每週存一筆 DB record。
+    tranche1~4 loop、跑所有 ranks 子集組合、multi-worker、每週存一筆 DB record。
     唯一差別是推薦清單來源吃 weekly（recommendation_frequency='weekly'），
     DB / 報告檔名的 strategy 欄位為 'weekly_4w'（由 task_name 帶入）。
     """
