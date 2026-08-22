@@ -52,6 +52,8 @@ RUN test "$(ls /app/strategy_class | sort)" = "$(printf '__init__.py\ngolden_ai_
 # IP 守門：開發方模組（回測、報告解析/清單發布、主 dashboard）不得混入 image
 RUN for f in jobs/backtest_executor.py jobs/recommendations_parser.py \
         jobs/recommendations_publisher.py jobs/drive_fetcher.py \
+        jobs/golden_ai_node_executor.py core/node_backtest.py \
+        dao/golden_ai_backtest_nodes_dao.py \
         core/recommendation_parsing.py core/report_rewrap.py dashboard.py; do \
         test ! -e "/app/$f" || exit 1; \
     done
