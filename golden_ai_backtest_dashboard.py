@@ -175,25 +175,26 @@ def _normalized(strategy: str) -> pd.DataFrame:
     return df_all
 
 
-def _latest_kpi(strategy: str, df_normalized=None) -> dict:
+def _latest_kpi(strategy: str, df_normalized=None, ranks: str = None) -> dict:
+    """最新一次回測的 KPI。`ranks` 不給時看完整名次組合——簡易版都走這條。"""
     if df_normalized is None:
         df_normalized = _normalized(strategy)
     if df_normalized.empty:
         return {}
 
-    full_ranks = _longest_ranks(df_normalized['ranks'].unique())
-    df_full = df_normalized[df_normalized['ranks'] == full_ranks]
+    ranks = ranks or _longest_ranks(df_normalized['ranks'].unique())
+    df_sel = df_normalized[df_normalized['ranks'] == ranks]
 
-    sorted_ts = sorted(df_full['timestamp'].unique())
+    sorted_ts = sorted(df_sel['timestamp'].unique())
     if not sorted_ts:
         return {}
     latest_ts = sorted_ts[-1]
-    avg = df_full[df_full['timestamp'] == latest_ts][_KPI_COLS].mean()
-    result = {'timestamp': latest_ts, 'full_ranks': full_ranks, **avg.to_dict()}
+    avg = df_sel[df_sel['timestamp'] == latest_ts][_KPI_COLS].mean()
+    result = {'timestamp': latest_ts, 'ranks': ranks, **avg.to_dict()}
 
     if len(sorted_ts) >= 2:
         prev_ts = sorted_ts[-2]
-        prev_avg = df_full[df_full['timestamp'] == prev_ts][_KPI_COLS].mean()
+        prev_avg = df_sel[df_sel['timestamp'] == prev_ts][_KPI_COLS].mean()
         result['prev'] = prev_avg.to_dict()
 
     return result
@@ -258,7 +259,7 @@ def _kpi_header(kpi: dict, show_button: bool = True) -> html.Div:
             style={'whiteSpace': 'nowrap', 'marginLeft': '12px', 'fontSize': 'clamp(11px, 2vw, 13px)'},
         ))
     return html.Div([
-        html.Div(f'{_rank_label(kpi["full_ranks"])}績效', style=_TYPO['section_label']),
+        html.Div(f'{_rank_label(kpi["ranks"])}績效', style=_TYPO['section_label']),
         html.Div(right_children, style={'display': 'flex', 'alignItems': 'center'}),
     ], className='d-flex justify-content-between align-items-center mb-2 kpi-header-strip')
 
@@ -1196,7 +1197,7 @@ def update_simple_view(strategy, period):
     data = _load_all(strategy, months=months, df_normalized=df_norm)
     chart_df = None
     if data:
-        full_ranks = kpi['full_ranks'] if kpi['full_ranks'] in data else _longest_ranks(data.keys())
+        full_ranks = kpi['ranks'] if kpi['ranks'] in data else _longest_ranks(data.keys())
         chart_df = data[full_ranks]
 
     fig = _build_simple_figure(chart_df, 'annual_return')
@@ -1233,15 +1234,16 @@ def update_main(strategy, metric, picker_value):
         ranks = ','.join(str(n) for n in sorted(picker_value))
         fig = _build_figure({r: df for r, df in d.items() if r == ranks}, metric)
     else:
+        ranks = None
         fig = _build_figure({}, metric, empty_text='請至少勾選一個名次')
 
-    # KPI 卡看的是完整名次，與圖上的勾選無關，只在首次載入與換策略時重算
-    if ctx.triggered_id in (None, 'strategy-dropdown'):
-        kpi = _latest_kpi(strategy, df_normalized=df_norm)
-        kpi_children = [_kpi_header(kpi, show_button=False), _render_kpi_row(kpi, size='compact')] if kpi else []
-        return kpi_children, fig
+    # 卡片四個指標本來就都在，切分頁不必重算；一個名次都沒勾時保留原本的卡片
+    if ctx.triggered_id == 'metric-selector' or ranks is None:
+        return dash.no_update, fig
 
-    return dash.no_update, fig
+    kpi = _latest_kpi(strategy, df_normalized=df_norm, ranks=ranks)
+    kpi_children = [_kpi_header(kpi, show_button=False), _render_kpi_row(kpi, size='compact')] if kpi else []
+    return kpi_children, fig
 
 
 @app.callback(
