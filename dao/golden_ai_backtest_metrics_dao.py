@@ -6,6 +6,26 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _rename_column_if_needed(cursor, table: str, old: str, new: str) -> None:
+    """欄位改名，已經改過就跳過。DAO 建構時呼叫，所以每個 process 都會跑到。
+
+    讀 PRAGMA 與 ALTER 之間沒有鎖，部署時多個容器同時啟動的話，後手拿到的欄位快照
+    會是舊的、ALTER 會噴 `no such column`。那不是錯誤——先手已經把事情做完了，
+    確認結果對就好，不對才往外丟。
+    """
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+    if old not in cols or new in cols:
+        return
+    try:
+        cursor.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+    except sqlite3.OperationalError:
+        cursor.execute(f"PRAGMA table_info({table})")
+        if new not in {row[1] for row in cursor.fetchall()}:
+            raise
+        logger.info(f"{table}.{old} 已由其他 process 改名為 {new}")
+
+
 class GoldenAIBacktestMetricsDAO:
     def __init__(self, db_path="data_prod.db"):
         self.db_path = db_path
@@ -52,10 +72,7 @@ class GoldenAIBacktestMetricsDAO:
             # 值從 Week1~4 變成 tranche1~4，欄位名跟著改。純 metadata 操作，與表裡有幾列無關。
             # 放在 top_n migration 之前，那支重建表時才會讀到已經改好名的來源欄位。
             for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
-                cursor.execute(f"PRAGMA table_info({table})")
-                cols = {row[1] for row in cursor.fetchall()}
-                if 'week' in cols and 'tranche' not in cols:
-                    cursor.execute(f"ALTER TABLE {table} RENAME COLUMN week TO tranche")
+                _rename_column_if_needed(cursor, table, 'week', 'tranche')
 
             # Migration: if top_n column exists, recreate table without it
             cursor.execute("PRAGMA table_info(golden_ai_backtest_metrics)")

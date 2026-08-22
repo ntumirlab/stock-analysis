@@ -16,6 +16,8 @@ from typing import Optional
 
 import pandas as pd
 
+from dao.golden_ai_backtest_metrics_dao import _rename_column_if_needed
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,11 +85,8 @@ class GoldenAIBacktestNodesDAO:
 
             # Migration: 相位改由錨點連續輪動定義後，`week_of_month`（當月第幾個週日）
             # 沒有日曆語意了，改名為 `tranche`。既有的表都是空的，直接改欄位名即可。
-            cursor.execute("PRAGMA table_info(golden_ai_backtest_nodes)")
-            columns = {row[1] for row in cursor.fetchall()}
-            if 'week_of_month' in columns and 'tranche' not in columns:
-                cursor.execute("ALTER TABLE golden_ai_backtest_nodes "
-                               "RENAME COLUMN week_of_month TO tranche")
+            _rename_column_if_needed(cursor, 'golden_ai_backtest_nodes',
+                                     'week_of_month', 'tranche')
 
             conn.commit()
         finally:

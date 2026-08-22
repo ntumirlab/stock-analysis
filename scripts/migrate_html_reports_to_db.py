@@ -70,14 +70,14 @@ def migrate(strategy, db_path, dry_run=False, batch_size=500):
 
         date_str, time_str, ranks_str, week_str = m.groups()
         timestamp = f"{date_str} {time_str.replace('-', ':')}"
-        # 舊 HTML 檔名寫的是 Week1~4（月索引時代）；相位改由錨點連續輪動定義之後
-        # DB 存的是 tranche1~4，這裡跟著換，免得遷移進來的列用的是另一套字彙。
-        tranche_str = week_str.replace('Week', 'tranche') if week_str else week_str
+        # 值維持 Week1~4：這些 HTML 是月索引時代跑出來的，`Week1` 真的就是
+        # 「當月第 1 個週日」。改標成 tranche1 會誤述它涵蓋哪幾週——那是另一組進場週。
+        # 跟尚未重跑的既有列一樣，舊標籤留著，等重跑才會變成 tranche1~4。
 
         existing = conn.execute(
             "SELECT 1 FROM golden_ai_backtest_reports "
             "WHERE strategy=? AND timestamp=? AND ranks=? AND tranche IS ? LIMIT 1",
-            (strategy, timestamp, ranks_str, tranche_str)
+            (strategy, timestamp, ranks_str, week_str)
         ).fetchone()
         if existing:
             skipped += 1
@@ -100,7 +100,7 @@ def migrate(strategy, db_path, dry_run=False, batch_size=500):
             "INSERT INTO golden_ai_backtest_reports "
             "(timestamp, strategy, tranche, ranks, report_json, position_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (timestamp, strategy, tranche_str, ranks_str, rj, pj)
+            (timestamp, strategy, week_str, ranks_str, rj, pj)
         )
         inserted += 1
 

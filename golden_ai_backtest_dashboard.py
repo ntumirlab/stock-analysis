@@ -44,7 +44,9 @@ def report_view():
     strategy = request.args.get('strategy', '')
     timestamp = request.args.get('timestamp', '')
     ranks = request.args.get('ranks')
-    tranche = request.args.get('tranche') or None
+    # `week` 是改名前的參數名。少了它，舊連結會讓 get_report 的 WHERE 少一個條件、
+    # LIMIT 1 靜默回傳四份中的任一份——寧可查不到也不要給錯的那份。
+    tranche = request.args.get('tranche') or request.args.get('week') or None
 
     result = dao.get_report(timestamp, strategy, tranche=tranche, ranks=ranks)
     if not result:
