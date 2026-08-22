@@ -35,6 +35,14 @@ def node_dates(list_date, buy_weekday: int, sell_weekday: int, hold_weeks: int):
     return entry_date, exit_date
 
 
+def align_to_sunday(date) -> pd.Timestamp:
+    """推薦清單的日期對齊規則，與 `_create_df` 相同：週中產出的清單算下一個週日，
+    週日當天產出的留在當天。抽出來是為了讓「哪些週日真的有清單」能被獨立算出來。
+    """
+    d = pd.Timestamp(date)
+    return d + pd.Timedelta(days=6 - d.weekday())
+
+
 def nth_sunday_of_month(list_date) -> int:
     """清單日是當月第幾個週日（1 起算）。
 
@@ -102,4 +110,13 @@ def check_trades(trades, entry_date, exit_date, n_stocks: int):
         return 'position still open'
     if trades['exit_date'].nunique() != 1:
         return f'{trades["exit_date"].nunique()} distinct exit dates'
+
+    # 休市會讓成交往後順延，往前則永遠是錯的——那代表視窗起點沒對齊，
+    # finlab 把框裡第一列當成訊號日了。
+    actual_entry = pd.Timestamp(trades['entry_date'].iloc[0])
+    actual_exit = pd.Timestamp(trades['exit_date'].iloc[0])
+    if actual_entry < pd.Timestamp(entry_date):
+        return f'entry {actual_entry.date()} precedes signal {pd.Timestamp(entry_date).date()}'
+    if actual_exit < pd.Timestamp(exit_date):
+        return f'exit {actual_exit.date()} precedes signal {pd.Timestamp(exit_date).date()}'
     return None

@@ -9,6 +9,7 @@ import pytest
 
 from core.node_backtest import (
     HOLD_WEEKS,
+    align_to_sunday,
     check_trades,
     is_settled,
     node_dates,
@@ -186,3 +187,45 @@ class TestCheckTrades:
         trades = self._trades(2)
         trades.loc[1, 'exit_date'] = pd.Timestamp('2026-07-17')
         assert check_trades(trades, '2026-07-06', '2026-07-10', 2) == '2 distinct exit dates'
+
+
+class TestAlignToSunday:
+    """對齊規則要跟 _create_df 一致，否則「哪些週日真的有清單」會算錯。"""
+
+    @pytest.mark.parametrize('raw, aligned', [
+        ('2026-08-09', '2026-08-09'),   # 週日當天產出 → 留在當天
+        ('2026-08-10', '2026-08-16'),   # 週一 → 下一個週日
+        ('2026-08-14', '2026-08-16'),   # 週五 → 下一個週日
+        ('2026-08-15', '2026-08-16'),   # 週六 → 隔天
+    ])
+    def test_matches_the_create_df_rule(self, raw, aligned):
+        assert align_to_sunday(raw) == pd.Timestamp(aligned)
+
+    def test_accepts_a_timestamp(self):
+        assert align_to_sunday(pd.Timestamp('2026-08-10')) == pd.Timestamp('2026-08-16')
+
+
+class TestCheckTradesAgainstSignalDates:
+    """休市會讓成交往後順延，往前則代表視窗起點沒對齊。"""
+
+    def _trades(self, entry, exit_, n=2):
+        return pd.DataFrame({
+            'return': [0.01] * n,
+            'entry_date': [pd.Timestamp(entry)] * n,
+            'exit_date': [pd.Timestamp(exit_)] * n,
+        })
+
+    def test_deferred_dates_are_fine(self):
+        # 7/10 休市，賣單順延到 7/13
+        trades = self._trades('2026-07-06', '2026-07-13')
+        assert check_trades(trades, '2026-07-06', '2026-07-10', 2) is None
+
+    def test_rejects_an_entry_before_its_signal(self):
+        trades = self._trades('2026-07-03', '2026-07-10')
+        msg = check_trades(trades, '2026-07-06', '2026-07-10', 2)
+        assert msg == 'entry 2026-07-03 precedes signal 2026-07-06'
+
+    def test_rejects_an_exit_before_its_signal(self):
+        trades = self._trades('2026-07-06', '2026-07-09')
+        msg = check_trades(trades, '2026-07-06', '2026-07-10', 2)
+        assert msg == 'exit 2026-07-09 precedes signal 2026-07-10'

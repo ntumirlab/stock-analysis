@@ -30,10 +30,11 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 
 from core.node_backtest import (
-    HOLD_WEEKS, check_trades, is_settled, node_dates, node_return, node_window,
-    nth_sunday_of_month,
+    HOLD_WEEKS, align_to_sunday, check_trades, is_settled, node_dates, node_return,
+    node_window, nth_sunday_of_month,
 )
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
+from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
 from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly
 from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
@@ -76,6 +77,17 @@ def parse_args():
     return parser.parse_args()
 
 
+def real_list_dates(strategy) -> set:
+    """實際存在的清單日（對齊到週日）。
+
+    **不能從 position 的 index 推**：`_create_df` 會 `resample('D').ffill()`，缺漏的那一週
+    會被前一份清單填滿，照著跑就會生出一個內容與上週完全相同的假節點。實測 2026-08-16
+    沒有清單，position 上卻有 8/09 的那八檔。
+    """
+    records = RecommendationDAO(frequency=strategy.recommendation_frequency).load()
+    return {align_to_sunday(r.date) for r in records if r.date and r.stocks}
+
+
 def all_rank_combos(rank_start: int, rank_end: int) -> list:
     pool = list(range(rank_start, rank_end + 1))
     return [','.join(map(str, c))
@@ -89,13 +101,12 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
     entry_date, exit_date = node_dates(
         list_date, strategy.buy_weekday, strategy.sell_weekday, hold_weeks)
 
-    if list_date not in position_all.index:
-        return None, f'no list on {list_date.date()}'
     n_stocks = int(position_all.loc[list_date].sum())
     if n_stocks == 0:
         return None, 'empty list'
     if not is_settled(exit_date, universe_index):
-        return None, f'not settled (exit {exit_date.date()})'
+        # 還沒結算不是錯誤，只是還輪不到它——回填一整段時最後幾期本來就會落在這裡
+        return None, f'pending until {exit_date.date()}'
 
     # 只有這一份清單的進場訊號，所以不可能跟其他週的部位淨換倉
     entries = position_all & (position_all.index == entry_date)[:, np.newaxis]
@@ -132,7 +143,8 @@ def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_
         'ranks': ranks_str,
         'entry_date': pd.Timestamp(trades['entry_date'].iloc[0]).strftime('%Y-%m-%d'),
         'exit_date': pd.Timestamp(trades['exit_date'].iloc[0]).strftime('%Y-%m-%d'),
-        'week_of_month': nth_sunday_of_month(list_date),
+        # 只有四週策略需要分 Week1~4；weekly 一週一輪，這個維度不存在
+        'week_of_month': nth_sunday_of_month(list_date) if hold_weeks > 1 else None,
         'n_stocks': n_stocks,
         'node_return': node_return(trades),
         'report': report,
@@ -156,33 +168,44 @@ def main():
     rank_combos = (all_rank_combos(strategy.rank_start, strategy.rank_end)
                    if args.all_ranks else [args.ranks])
 
+    available = real_list_dates(strategy)
+    if args.list_date:
+        list_dates = []
+        for d in args.list_date:
+            d = align_to_sunday(d)
+            if d in available:
+                list_dates.append(d)
+            else:
+                logger.warning(f'{d.date()}: no recommendation list, skipped')
+    else:
+        lo, hi = (pd.Timestamp(d) for d in args.date_range)
+        list_dates = sorted(d for d in available if lo <= d <= hi)
+    logger.info(f'{len(list_dates)} list dates x {len(rank_combos)} ranks combos')
+
     dao = None if args.dry_run else GoldenAIBacktestNodesDAO(db_path=args.db)
 
     # position 只跟 ranks 有關，同一組 ranks 的所有清單日共用一次建構
-    saved = skipped = failed = 0
+    saved = skipped = pending = failed = 0
     for ranks_str in rank_combos:
         ranks = [int(r) for r in ranks_str.split(',')]
         position_all, _, _ = strategy._create_df(universe, ranks=ranks)
 
-        if args.list_date:
-            list_dates = [pd.Timestamp(d) for d in args.list_date]
-        else:
-            lo, hi = (pd.Timestamp(d) for d in args.date_range)
-            sundays = position_all.index[position_all.index.dayofweek == 6]
-            list_dates = [d for d in sundays if lo <= d <= hi]
-
         for list_date in list_dates:
-            key = f'{args.strategy} {pd.Timestamp(list_date).date()} Ranks[{ranks_str}]'
+            key = f'{strategy.task_name} {list_date.date()} Ranks[{ranks_str}]'
             if dao is not None and dao.exists(
-                    args.strategy, pd.Timestamp(list_date).strftime('%Y-%m-%d'), ranks_str):
+                    strategy.task_name, list_date.strftime('%Y-%m-%d'), ranks_str):
                 skipped += 1
                 continue
 
             node, problem = run_node(
                 strategy, position_all, universe.index, list_date, ranks_str, hold_weeks)
             if node is None:
-                logger.warning(f'{key}: skipped — {problem}')
-                failed += 1
+                if problem.startswith('pending'):
+                    logger.info(f'{key}: {problem}')
+                    pending += 1
+                else:
+                    logger.warning(f'{key}: skipped — {problem}')
+                    failed += 1
                 continue
 
             start, end = node.pop('window')
@@ -196,7 +219,8 @@ def main():
                 dao.save(report=report, **node)
                 saved += 1
 
-    logger.info(f'done — saved {saved}, skipped {skipped}, failed {failed}')
+    logger.info(f'done — saved {saved}, already stored {skipped}, '
+                f'not settled yet {pending}, failed {failed}')
 
 
 if __name__ == '__main__':
