@@ -10,6 +10,7 @@ from flask import Flask, request
 import plotly.graph_objects as go
 import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
+from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
 
 logger = logging.getLogger(__name__)
@@ -58,10 +59,27 @@ def report_view():
 
 _METRIC_META = {
     'annual_return': ('年化報酬',    True),
+    'node_return':   ('當期報酬',    True),
+    'node_annual':   ('當期年化',    True),
     'sharpe':        ('Sharpe Ratio', False),
     'max_drawdown':  ('Max Drawdown', True),
     'win_ratio':     ('勝率',        True),
 }
+
+# 回測視窗：三個月是每天重算的滾動視窗，當期清單是單一份清單的獨立回測（節點）。
+# 每個視窗一組指標，卡片（最新一期的數字）與分頁（那個指標的走勢）都從這裡長出來。
+# 順序即 UI 上的順序，預設的那個排前面
+_WINDOW_META = {
+    'node': {'label': '當期清單', 'date_label': '最新結算'},
+    '3m':   {'label': '三個月',   'date_label': '最新回測'},
+}
+
+_WINDOW_METRICS = {
+    '3m':   ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio'],
+    'node': ['node_return', 'node_annual', 'sharpe', 'max_drawdown', 'win_ratio'],
+}
+
+_DEFAULT_WINDOW = 'node'
 
 _COLOR = {
     'text_heading':   '#1a202c',
@@ -123,7 +141,12 @@ _TABLE_STYLE = {
 }
 
 dao = GoldenAIBacktestMetricsDAO(db_path=_DB_PATH)
+nodes_dao = GoldenAIBacktestNodesDAO(db_path=_DB_PATH)
 _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
+
+# 當期報酬年化的期數：按策略節奏而非日曆天。一週一輪＝52，四週一輪＝13。
+# 按日曆天會把 4 個交易日的當期報酬年化成 ^91，那不是這個策略在做的事。
+_NODE_PERIODS = {'weekly': 52, 'monthly': 13, 'weekly_4w': 13}
 # 名次選項＝config.yaml 的 rank_start~rank_end；DB 存的是它的完整 powerset（255 組）
 _RANK_CHOICES = list(range(1, 9))
 
@@ -167,6 +190,40 @@ def _normalized(strategy: str) -> pd.DataFrame:
             .reset_index()
         )
     return df_all
+
+
+def _load_nodes(strategy: str) -> dict:
+    """{ranks: df}，欄位對齊三個月那條路徑，`_build_figure` 才能共用。
+
+    節點畫在 `exit_date` 上：當期報酬要到出場才成立，畫在進場日等於把事後才知道的
+    數字擺到更早的位置。表裡只有已結算的節點，所以不必再過濾。
+    """
+    df_all = nodes_dao.load(strategy=strategy)
+    if df_all.empty:
+        return {}
+
+    df_all['timestamp'] = pd.to_datetime(df_all['exit_date'])
+    periods = _NODE_PERIODS.get(strategy, 52)
+    df_all['node_annual'] = (1 + df_all['node_return']) ** periods - 1
+
+    return {ranks: df.sort_values('timestamp')
+            for ranks, df in df_all.groupby('ranks')}
+
+
+def _latest_node_kpi(ranks: str, nodes: dict) -> dict:
+    """最新一個結算的節點。三個月那邊是「最新一次回測」，這邊是「最新一期」。"""
+    df = nodes.get(ranks)
+    if df is None or df.empty:
+        return {}
+
+    cols = _WINDOW_METRICS['node']
+    latest = df.iloc[-1]
+    result = {'timestamp': latest['timestamp'], 'ranks': ranks,
+              **{k: latest[k] for k in cols}}
+    if len(df) >= 2:
+        prev = df.iloc[-2]
+        result['prev'] = {k: prev[k] for k in cols}
+    return result
 
 
 def _latest_kpi(strategy: str, df_normalized=None, ranks: str = None) -> dict:
@@ -240,10 +297,10 @@ def _kpi_title(metric: str, size: str) -> str:
     return base
 
 
-def _kpi_header(kpi: dict, show_button: bool = True) -> html.Div:
-    """Header strip above KPI cards: '第 1~8 支績效' on the left, latest-backtest date on the right."""
+def _kpi_header(kpi: dict, show_button: bool = True, date_label: str = '最新回測') -> html.Div:
+    """Header strip above KPI cards: '第 1~8 支績效' on the left, latest date on the right."""
     right_children = [
-        html.Span(f'最新回測：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
+        html.Span(f'{date_label}：{kpi["timestamp"].strftime("%Y-%m-%d")}', style=_TYPO['muted']),
     ]
     if show_button:
         right_children.append(html.Button(
@@ -258,9 +315,14 @@ def _kpi_header(kpi: dict, show_button: bool = True) -> html.Div:
     ], className='d-flex justify-content-between align-items-center mb-2 kpi-header-strip')
 
 
-def _render_kpi_row(kpi: dict, size: str) -> dbc.Row:
+def _render_kpi_row(kpi: dict, size: str, metrics=None) -> dbc.Row:
+    metrics = metrics or _KPI_COLS
+
     def _delta(k):
         return kpi[k] - kpi['prev'][k] if 'prev' in kpi else None
+
+    # Bootstrap 是 12 欄制，五張卡會變成四張加一個孤兒；.kpi-row-5 在 lg 以上改成等分五欄
+    className = 'g-3 kpi-row-5' if len(metrics) == 5 else 'g-3'
     return dbc.Row(
         [
             _kpi_card(
@@ -270,9 +332,9 @@ def _render_kpi_row(kpi: dict, size: str) -> dbc.Row:
                 delta=_delta(k),
                 size=size,
             )
-            for k in _KPI_COLS
+            for k in metrics
         ],
-        className='g-3',
+        className=className,
     )
 
 
@@ -316,15 +378,17 @@ def _kpi_card(title: str, value, is_pct: bool, delta=None, size: str = 'compact'
     )
 
 
-def _load_all(strategy: str, months=3, df_normalized=None) -> dict:
+def _load_all(strategy: str, display_months=3, df_normalized=None) -> dict:
+    """display_months 是**顯示範圍**，不是回測視窗——回測視窗寫在 config.yaml 的
+    `lookback_months`。兩者剛好都是 3，別搞混。"""
     if df_normalized is None:
         df_normalized = _normalized(strategy)
     if df_normalized.empty:
         return {}
 
     cutoff = (
-        pd.Timestamp.now(tz=_TZ).normalize().tz_localize(None) - pd.DateOffset(months=months)
-        if months is not None else None
+        pd.Timestamp.now(tz=_TZ).normalize().tz_localize(None) - pd.DateOffset(months=display_months)
+        if display_months is not None else None
     )
     result = {}
     for ranks in df_normalized['ranks'].unique():
@@ -362,25 +426,43 @@ def _month_and_latest_ticks(timestamps):
     return tickvals, ticktext
 
 
-def _build_figure(data: dict, metric: str, empty_text: str = '尚無資料') -> go.Figure:
-    _, is_pct = _METRIC_META[metric]
+def _build_figure(data: dict, metric: str, empty_text: str = '尚無資料',
+                  line_dash: str = None, marker_size: int = 5) -> go.Figure:
+    """line_dash 給 'dot' 時畫成虛線：當期清單那條線上的點彼此不累積、不複利，
+    實線會暗示連續性，但它們確實有先後，所以連而不實。"""
+    label, is_pct = _METRIC_META[metric]
     fig = go.Figure()
 
     if not data:
         fig.update_layout(height=300, title=empty_text, plot_bgcolor='white')
         return fig
 
+    suffix = '%' if is_pct else ''
     for ranks, df in sorted(data.items()):
         y = df[metric] * 100 if is_pct else df[metric]
         rl = _rank_label(ranks)
+
+        # 節點的 x 是結算日，回溯得靠進場日與檔數，所以一併放進 hover
+        if 'entry_date' in df.columns:
+            customdata = df[['entry_date', 'n_stocks']].to_numpy()
+            hovertemplate = (f'{rl}<br>%{{customdata[0]}} ~ %{{x|%Y-%m-%d}}'
+                             f'　%{{customdata[1]}} 檔<br>'
+                             f'{label}: %{{y:.2f}}{suffix}<extra></extra>')
+        else:
+            customdata = None
+            hovertemplate = f'%{{x|%Y-%m-%d}}<br>{rl}: %{{y:.2f}}{suffix}<extra></extra>'
+
         fig.add_trace(go.Scatter(
             x=df['timestamp'],
             y=y,
             mode='lines+markers',
             name=rl,
-            line=dict(color=_COLOR['accent'], width=2),
-            marker=dict(size=5),
-            hovertemplate=f'%{{x|%Y-%m-%d}}<br>{rl}: %{{y:.2f}}{"%" if is_pct else ""}<extra></extra>',
+            line=dict(color=_COLOR['accent'],
+                      width=1.5 if line_dash else 2,
+                      dash=line_dash),
+            marker=dict(size=marker_size),
+            customdata=customdata,
+            hovertemplate=hovertemplate,
         ))
 
     all_ts = pd.concat([df['timestamp'] for df in data.values()])
@@ -650,7 +732,20 @@ def _main_layout():
                         clearable=False,
                     ),
                 ], xs=12, md=5, lg=4),
-            ], className='mt-4 mb-3'),
+                dbc.Col([
+                    html.Label('回測視窗', style={**_TYPO['section_label'], 'marginBottom': '6px'}),
+                    dbc.RadioItems(
+                        id='window-selector',
+                        options=[{'label': meta['label'], 'value': key}
+                                 for key, meta in _WINDOW_META.items()],
+                        value=_DEFAULT_WINDOW,
+                        inputClassName='btn-check',
+                        labelClassName='btn btn-outline-secondary',
+                        labelCheckedClassName='active',
+                        inline=True,
+                    ),
+                ], xs=12, md='auto'),
+            ], className='mt-4 mb-3 align-items-end'),
 
             html.Div(id='kpi-row', className='mb-3'),
 
@@ -659,11 +754,11 @@ def _main_layout():
                     html.Div(
                         dbc.Tabs(
                             [
-                                dbc.Tab(label=label, tab_id=key)
-                                for key, (label, _) in _METRIC_META.items()
+                                dbc.Tab(label=_METRIC_META[k][0], tab_id=k)
+                                for k in _WINDOW_METRICS[_DEFAULT_WINDOW]
                             ],
                             id='metric-selector',
-                            active_tab='annual_return',
+                            active_tab=_WINDOW_METRICS[_DEFAULT_WINDOW][0],
                         ),
                         className='metric-tabs',
                     ),
@@ -779,7 +874,8 @@ app.index_string = '''
         {%css%}
         <style>
             #simple-strategy .form-check,
-            #simple-period .form-check { padding-left: 0; }
+            #simple-period .form-check,
+            #window-selector .form-check { padding-left: 0; }
             #report-rank-filter .Select-control { min-height: 44px !important; }
             #report-rank-filter .Select-arrow-zone,
             #report-rank-filter .Select-clear-zone { vertical-align: middle !important; }
@@ -787,22 +883,27 @@ app.index_string = '''
                Color matches _COLOR['accent'] — update both if the accent changes. */
             #simple-strategy .btn-check:checked + .btn-outline-secondary,
             #simple-period   .btn-check:checked + .btn-outline-secondary,
+            #window-selector .btn-check:checked + .btn-outline-secondary,
             #simple-strategy .btn-outline-secondary.active,
-            #simple-period   .btn-outline-secondary.active {
+            #simple-period   .btn-outline-secondary.active,
+            #window-selector .btn-outline-secondary.active {
                 background-color: #1d4ed8;
                 border-color: #1d4ed8;
                 color: #ffffff;
             }
             #simple-strategy .btn-outline-secondary:hover,
-            #simple-period   .btn-outline-secondary:hover {
+            #simple-period   .btn-outline-secondary:hover,
+            #window-selector .btn-outline-secondary:hover {
                 background-color: #dbeafe;
                 border-color: #1d4ed8;
                 color: #1d4ed8;
             }
             #simple-strategy .btn-check:checked + .btn-outline-secondary:hover,
             #simple-period   .btn-check:checked + .btn-outline-secondary:hover,
+            #window-selector .btn-check:checked + .btn-outline-secondary:hover,
             #simple-strategy .btn-outline-secondary.active:hover,
-            #simple-period   .btn-outline-secondary.active:hover {
+            #simple-period   .btn-outline-secondary.active:hover,
+            #window-selector .btn-outline-secondary.active:hover {
                 background-color: #1d4ed8;
                 border-color: #1d4ed8;
                 color: #ffffff;
@@ -893,6 +994,10 @@ app.index_string = '''
             }
             @media (prefers-reduced-motion: reduce) {
                 #rank-picker .btn { transition: none; }
+            }
+            /* 當期清單視窗有五張卡；Bootstrap 12 欄制除不盡，lg 以上改成等分五欄 */
+            @media (min-width: 992px) {
+                .kpi-row-5 > [class*="col-"] { flex: 0 0 20%; max-width: 20%; }
             }
             .print-header { display: none; }
             @media print {
@@ -1189,7 +1294,7 @@ def update_simple_view(strategy, period):
         return empty, _build_simple_figure(None, 'annual_return'), print_header
 
     months = _PERIOD_MONTHS.get(period, 3)
-    data = _load_all(strategy, months=months, df_normalized=df_norm)
+    data = _load_all(strategy, display_months=months, df_normalized=df_norm)
     chart_df = None
     if data:
         full_ranks = kpi['ranks'] if kpi['ranks'] in data else _longest_ranks(data.keys())
@@ -1214,31 +1319,56 @@ def update_simple_recommendations(strategy):
     Output('kpi-row', 'children'),
     Output('metrics-graph', 'figure'),
     Input('strategy-dropdown', 'value'),
+    Input('window-selector', 'value'),
     Input('metric-selector', 'active_tab'),
     Input('rank-picker', 'value'),
 )
-def update_main(strategy, metric, picker_value):
+def update_main(strategy, window, metric, picker_value):
     strategy = strategy or 'weekly'
-    metric = metric or 'annual_return'
+    window = window if window in _WINDOW_METRICS else _DEFAULT_WINDOW
+    metrics = _WINDOW_METRICS[window]
+    # 換視窗的瞬間分頁還停在舊指標（另一條 callback 才會換掉它），先退回這個視窗的第一個
+    metric = metric if metric in metrics else metrics[0]
 
-    df_norm = _normalized(strategy)
-    d = _load_all(strategy, df_normalized=df_norm)
+    # 勾選的名次 → DB 裡的 ranks key（升冪逗號、無空白）
+    ranks = ','.join(str(n) for n in sorted(picker_value)) if picker_value else None
 
-    if picker_value:
-        # 勾選的名次 → DB 裡的 ranks key（升冪逗號、無空白）
-        ranks = ','.join(str(n) for n in sorted(picker_value))
-        fig = _build_figure({r: df for r, df in d.items() if r == ranks}, metric)
+    if window == 'node':
+        d = _load_nodes(strategy)
+        kpi = _latest_node_kpi(ranks, d) if ranks else {}
+        # 虛線＋放大的點：點是主角，線只是講先後
+        trace_style = {'line_dash': 'dot', 'marker_size': 7}
     else:
-        ranks = None
-        fig = _build_figure({}, metric, empty_text='請至少勾選一個名次')
+        df_norm = _normalized(strategy)
+        d = _load_all(strategy, df_normalized=df_norm)
+        kpi = _latest_kpi(strategy, df_normalized=df_norm, ranks=ranks) if ranks else {}
+        trace_style = {}
 
-    # 卡片四個指標本來就都在，切分頁不必重算；一個名次都沒勾時保留原本的卡片
+    if ranks is None:
+        fig = _build_figure({}, metric, empty_text='請至少勾選一個名次')
+    else:
+        fig = _build_figure({r: df for r, df in d.items() if r == ranks},
+                            metric, **trace_style)
+
+    # 卡片上的指標本來就都在，切分頁不必重算；一個名次都沒勾時卡片保留原狀
     if ctx.triggered_id == 'metric-selector' or ranks is None:
         return dash.no_update, fig
 
-    kpi = _latest_kpi(strategy, df_normalized=df_norm, ranks=ranks)
-    kpi_children = [_kpi_header(kpi, show_button=False), _render_kpi_row(kpi, size='compact')] if kpi else []
+    kpi_children = [
+        _kpi_header(kpi, show_button=False, date_label=_WINDOW_META[window]['date_label']),
+        _render_kpi_row(kpi, size='compact', metrics=metrics),
+    ] if kpi else []
     return kpi_children, fig
+
+
+@app.callback(
+    Output('metric-selector', 'children'),
+    Output('metric-selector', 'active_tab'),
+    Input('window-selector', 'value'),
+)
+def update_metric_tabs(window):
+    metrics = _WINDOW_METRICS.get(window, _WINDOW_METRICS[_DEFAULT_WINDOW])
+    return [dbc.Tab(label=_METRIC_META[k][0], tab_id=k) for k in metrics], metrics[0]
 
 
 @app.callback(
