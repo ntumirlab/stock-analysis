@@ -81,6 +81,16 @@ _WINDOW_METRICS = {
 
 _DEFAULT_WINDOW = 'node'
 
+# 分頁列的標籤。卡片有整行可用、分頁只有一條，五個分頁時長名字會把整排推出螢幕
+_TAB_LABEL_OVERRIDES = {
+    'sharpe':       'Sharpe',
+    'max_drawdown': '最大回檔',
+}
+
+
+def _tab_label(metric: str) -> str:
+    return _TAB_LABEL_OVERRIDES.get(metric, _METRIC_META[metric][0])
+
 _COLOR = {
     'text_heading':   '#1a202c',
     'text_value':     '#1e293b',
@@ -754,7 +764,7 @@ def _main_layout():
                     html.Div(
                         dbc.Tabs(
                             [
-                                dbc.Tab(label=_METRIC_META[k][0], tab_id=k)
+                                dbc.Tab(label=_tab_label(k), tab_id=k)
                                 for k in _WINDOW_METRICS[_DEFAULT_WINDOW]
                             ],
                             id='metric-selector',
@@ -916,6 +926,7 @@ app.index_string = '''
                 border-bottom: 1px solid #e5e7eb;
             }
             .metric-tabs .nav::-webkit-scrollbar { display: none; }
+            .metric-tabs .nav { -webkit-overflow-scrolling: touch; }
             .metric-tabs .nav-item { flex: 0 0 auto; }
             /* 分頁只當選擇器用，內容在下方 CardBody，空的 tab-content 不要佔位 */
             .metric-tabs .tab-content { display: none; }
@@ -1075,6 +1086,15 @@ app.index_string = '''
                 #simple-strategy { flex-direction: column; }
                 #simple-strategy .form-check { width: 100%; }
                 #simple-strategy .btn { width: 100%; text-align: left; }
+                /* 分頁：收窄間距先求塞得下；真的塞不下時留一條細捲軸當線索，
+                   完全藏起來會讓超出的部分看起來像被切掉 */
+                .metric-tabs .nav-link { padding: 10px 8px; font-size: 13px; }
+                .metric-tabs .nav { scrollbar-width: thin; padding-bottom: 2px; }
+                .metric-tabs .nav::-webkit-scrollbar { display: block; height: 3px; }
+                .metric-tabs .nav::-webkit-scrollbar-thumb {
+                    background: #d1d5db;
+                    border-radius: 2px;
+                }
                 /* 標籤獨立一行、靠左；格子維持正方形只是略縮，八格 320px 內排得下 */
                 .rank-row { flex-direction: column; align-items: flex-start; gap: 6px; }
                 #rank-picker { gap: 5px; }
@@ -1368,7 +1388,7 @@ def update_main(strategy, window, metric, picker_value):
 )
 def update_metric_tabs(window):
     metrics = _WINDOW_METRICS.get(window, _WINDOW_METRICS[_DEFAULT_WINDOW])
-    return [dbc.Tab(label=_METRIC_META[k][0], tab_id=k) for k in metrics], metrics[0]
+    return [dbc.Tab(label=_tab_label(k), tab_id=k) for k in metrics], metrics[0]
 
 
 @app.callback(
