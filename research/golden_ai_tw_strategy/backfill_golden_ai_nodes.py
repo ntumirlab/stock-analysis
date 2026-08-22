@@ -72,7 +72,9 @@ def parse_args():
     ranks.add_argument('--all-ranks', action='store_true',
                        help='跑 1~8 的完整 powerset（255 組）')
 
-    parser.add_argument('--db', default=os.path.join(PROJECT_ROOT, 'data_prod.db'))
+    parser.add_argument('--db', default=os.path.join(PROJECT_ROOT, 'data_prod.db'),
+                        help='節點寫到哪個 DB。推薦清單與行情不受它影響，'
+                             '一律跟策略走預設路徑')
     parser.add_argument('--dry-run', action='store_true', help='只印結果，不寫 DB')
     return parser.parse_args()
 
@@ -178,8 +180,11 @@ def main():
     available = real_list_dates(strategy)
     if args.list_date:
         list_dates = []
-        for d in args.list_date:
-            d = align_to_sunday(d)
+        for raw in args.list_date:
+            d = align_to_sunday(raw)
+            # 清單日是週日；給的若是別天會被對齊過去。講出來，免得把出場日當成清單日
+            if d != pd.Timestamp(raw):
+                logger.info(f'{raw} is not a Sunday, aligned to list date {d.date()}')
             if d in available:
                 list_dates.append(d)
             else:
@@ -192,7 +197,7 @@ def main():
     dao = None if args.dry_run else GoldenAIBacktestNodesDAO(db_path=args.db)
 
     # position 只跟 ranks 有關，同一組 ranks 的所有清單日共用一次建構
-    saved = skipped = pending = empty = failed = 0
+    ok = skipped = pending = empty = failed = 0
     for ranks_str in rank_combos:
         ranks = [int(r) for r in ranks_str.split(',')]
         position_all, _, _ = strategy._create_df(universe, ranks=ranks)
@@ -225,11 +230,16 @@ def main():
                 f'{node["n_stocks"]} 檔  節點報酬 {node["node_return"]:+.4%}  '
                 f'(視窗 {start.date()} ~ {end.date()})')
 
-            if dao is not None:
-                dao.save(report=report, **node)
-                saved += 1
+            if dao is None:
+                ok += 1
+            # exists() 之後仍可能是既有的（同一批跑兩次），以 DAO 的回傳為準
+            elif dao.save(report=report, **node):
+                ok += 1
+            else:
+                skipped += 1
 
-    logger.info(f'done — saved {saved}, already stored {skipped}, '
+    verb = 'computed (dry run, nothing written)' if args.dry_run else 'saved'
+    logger.info(f'done — {ok} {verb}, already stored {skipped}, '
                 f'not settled yet {pending}, no position {empty}, failed {failed}')
 
 
