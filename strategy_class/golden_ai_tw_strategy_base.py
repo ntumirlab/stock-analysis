@@ -370,7 +370,7 @@ class GoldenAITWStrategyBase:
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         report = self._run_core(ranks=ranks)
-        dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
+        dao.save(timestamp=timestamp, strategy=self.task_name, tranche=None, ranks=ranks_str, report=report)
 
         if report_dir is not None:
             html_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
@@ -392,7 +392,7 @@ class GoldenAITWStrategyBase:
         if cleanup:
             os.unlink(html_path)
         if rj:
-            dao.save_report(timestamp=timestamp, strategy=self.task_name, week=None,
+            dao.save_report(timestamp=timestamp, strategy=self.task_name, tranche=None,
                             ranks=ranks_str, report_json=rj, position_json=pj)
         else:
             logger.warning(

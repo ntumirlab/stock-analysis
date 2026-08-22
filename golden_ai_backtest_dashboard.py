@@ -44,9 +44,9 @@ def report_view():
     strategy = request.args.get('strategy', '')
     timestamp = request.args.get('timestamp', '')
     ranks = request.args.get('ranks')
-    week = request.args.get('week') or None
+    tranche = request.args.get('tranche') or None
 
-    result = dao.get_report(timestamp, strategy, week=week, ranks=ranks)
+    result = dao.get_report(timestamp, strategy, tranche=tranche, ranks=ranks)
     if not result:
         return 'Report not found', 404
 
@@ -591,12 +591,12 @@ def _build_simple_figure(df, metric: str) -> go.Figure:
 def _query_report_list(strategy: str) -> pd.DataFrame:
     df = dao.list_reports(strategy)
     if df.empty:
-        return pd.DataFrame(columns=['date', 'timestamp', 'ranks', 'week'])
+        return pd.DataFrame(columns=['date', 'timestamp', 'ranks', 'tranche'])
     df['date'] = df['timestamp'].str[:10]
-    df['week'] = df['week'].fillna('')
-    df = df.drop_duplicates(subset=['date', 'ranks', 'week'], keep='first')
-    df = df.sort_values(['date', 'ranks', 'week'], ascending=[False, True, True]).reset_index(drop=True)
-    return df[['date', 'timestamp', 'ranks', 'week']]
+    df['tranche'] = df['tranche'].fillna('')
+    df = df.drop_duplicates(subset=['date', 'ranks', 'tranche'], keep='first')
+    df = df.sort_values(['date', 'ranks', 'tranche'], ascending=[False, True, True]).reset_index(drop=True)
+    return df[['date', 'timestamp', 'ranks', 'tranche']]
 
 
 # 買賣視窗用的星期：清單日是週日，週策略隔天一～五、四週策略隔天一到四週後的週五。
@@ -771,8 +771,8 @@ def _main_layout():
                         id='strategy-dropdown',
                         options=[
                             {'label': 'Weekly（週清單 · 持有 1 週）', 'value': 'weekly'},
-                            {'label': 'Weekly 4W（週清單 · 持有 4 週，Week 1~4 平均）', 'value': 'weekly_4w'},
-                            {'label': 'Monthly（月清單 · 持有 4 週，Week 1~4 平均）', 'value': 'monthly'},
+                            {'label': 'Weekly 4W（週清單 · 持有 4 週，tranche 1~4 平均）', 'value': 'weekly_4w'},
+                            {'label': 'Monthly（月清單 · 持有 4 週，tranche 1~4 平均）', 'value': 'monthly'},
                         ],
                         value='weekly',
                         clearable=False,
@@ -1328,11 +1328,11 @@ def update_report_table(start_date, end_date, rank_filter, pathname):
     table_data = []
     for _, row in df.iterrows():
         qp = {'strategy': strategy, 'timestamp': row['timestamp'], 'ranks': row['ranks']}
-        if row['week']:
-            qp['week'] = row['week']
+        if row['tranche']:
+            qp['tranche'] = row['tranche']
         table_data.append({
             'date':       row['date'],
-            'rank_label': _rank_label(row['ranks']) + (f' · {row["week"]}' if row['week'] else ''),
+            'rank_label': _rank_label(row['ranks']) + (f' · {row["tranche"]}' if row['tranche'] else ''),
             'link':       f'[開啟](/report/view?{urlencode(qp)})',
         })
     return table_data, options

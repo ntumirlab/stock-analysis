@@ -22,7 +22,7 @@ class GoldenAIBacktestMetricsDAO:
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp     TEXT NOT NULL,
                     strategy      TEXT NOT NULL,
-                    week          TEXT,
+                    tranche       TEXT,
                     ranks         TEXT NOT NULL DEFAULT '',
                     annual_return REAL,
                     sharpe        REAL,
@@ -37,7 +37,7 @@ class GoldenAIBacktestMetricsDAO:
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp     TEXT NOT NULL,
                     strategy      TEXT NOT NULL,
-                    week          TEXT,
+                    tranche       TEXT,
                     ranks         TEXT NOT NULL DEFAULT '',
                     report_json   TEXT NOT NULL,
                     position_json TEXT NOT NULL
@@ -47,6 +47,15 @@ class GoldenAIBacktestMetricsDAO:
                 CREATE INDEX IF NOT EXISTS idx_reports_lookup
                 ON golden_ai_backtest_reports(strategy, timestamp, ranks)
             """)
+
+            # Migration: 4 週策略的相位改由錨點連續輪動定義（見 core/tranche_schedule），
+            # 值從 Week1~4 變成 tranche1~4，欄位名跟著改。純 metadata 操作，與表裡有幾列無關。
+            # 放在 top_n migration 之前，那支重建表時才會讀到已經改好名的來源欄位。
+            for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
+                cursor.execute(f"PRAGMA table_info({table})")
+                cols = {row[1] for row in cursor.fetchall()}
+                if 'week' in cols and 'tranche' not in cols:
+                    cursor.execute(f"ALTER TABLE {table} RENAME COLUMN week TO tranche")
 
             # Migration: if top_n column exists, recreate table without it
             cursor.execute("PRAGMA table_info(golden_ai_backtest_metrics)")
@@ -58,7 +67,7 @@ class GoldenAIBacktestMetricsDAO:
                         id            INTEGER PRIMARY KEY AUTOINCREMENT,
                         timestamp     TEXT NOT NULL,
                         strategy      TEXT NOT NULL,
-                        week          TEXT,
+                        tranche       TEXT,
                         ranks         TEXT NOT NULL DEFAULT '',
                         annual_return REAL,
                         sharpe        REAL,
@@ -69,8 +78,8 @@ class GoldenAIBacktestMetricsDAO:
                 """)
                 cursor.execute("""
                     INSERT INTO golden_ai_backtest_metrics
-                        (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
-                    SELECT timestamp, strategy, week,
+                        (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+                    SELECT timestamp, strategy, tranche,
                         COALESCE(NULLIF(ranks, ''), CAST(top_n AS TEXT), ''),
                         annual_return, sharpe, sortino, max_drawdown, win_ratio
                     FROM golden_ai_backtest_metrics_old
@@ -95,7 +104,7 @@ class GoldenAIBacktestMetricsDAO:
         finally:
             conn.close()
 
-    def save(self, timestamp: str, strategy: str, week: Optional[str], ranks: str, report) -> None:
+    def save(self, timestamp: str, strategy: str, tranche: Optional[str], ranks: str, report) -> None:
         try:
             metrics = report.get_metrics()
             annual_return = metrics.get('profitability', {}).get('annualReturn')
@@ -104,21 +113,21 @@ class GoldenAIBacktestMetricsDAO:
             max_drawdown  = metrics.get('risk', {}).get('maxDrawdown')
             win_ratio     = metrics.get('winrate', {}).get('winRate')
         except Exception as e:
-            logger.warning(f"get_metrics() failed for {strategy} {week} Ranks[{ranks}]: {e}. Saving NULLs.")
+            logger.warning(f"get_metrics() failed for {strategy} {tranche} Ranks[{ranks}]: {e}. Saving NULLs.")
             annual_return = sharpe = sortino = max_drawdown = win_ratio = None
 
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
             conn.execute("""
                 INSERT INTO golden_ai_backtest_metrics
-                    (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+                    (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio))
+            """, (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio))
             conn.commit()
         finally:
             conn.close()
 
-        logger.info(f"Saved metrics: {strategy} {week} Ranks[{ranks}] @ {timestamp}")
+        logger.info(f"Saved metrics: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
 
     def exists_for_date(self, date_str: str, strategy: str, ranks: str) -> bool:
         """檢查指定日期、策略、ranks 是否已有紀錄"""
@@ -133,7 +142,7 @@ class GoldenAIBacktestMetricsDAO:
         finally:
             conn.close()
 
-    def load(self, strategy: Optional[str] = None, week: Optional[str] = None,
+    def load(self, strategy: Optional[str] = None, tranche: Optional[str] = None,
              ranks: Optional[str] = None) -> pd.DataFrame:
         conditions = []
         params = []
@@ -141,9 +150,9 @@ class GoldenAIBacktestMetricsDAO:
         if strategy is not None:
             conditions.append("strategy = ?")
             params.append(strategy)
-        if week is not None:
-            conditions.append("week = ?")
-            params.append(week)
+        if tranche is not None:
+            conditions.append("tranche = ?")
+            params.append(tranche)
         if ranks is not None:
             conditions.append("ranks = ?")
             params.append(ranks)
@@ -163,28 +172,28 @@ class GoldenAIBacktestMetricsDAO:
 
     # ── Report JSON persistence ──
 
-    def save_report(self, timestamp: str, strategy: str, week: Optional[str],
+    def save_report(self, timestamp: str, strategy: str, tranche: Optional[str],
                     ranks: str, report_json: str, position_json: str) -> None:
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
             conn.execute("""
                 INSERT INTO golden_ai_backtest_reports
-                    (timestamp, strategy, week, ranks, report_json, position_json)
+                    (timestamp, strategy, tranche, ranks, report_json, position_json)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (timestamp, strategy, week, ranks, report_json, position_json))
+            """, (timestamp, strategy, tranche, ranks, report_json, position_json))
             conn.commit()
         finally:
             conn.close()
-        logger.info(f"Saved report JSON: {strategy} {week} Ranks[{ranks}] @ {timestamp}")
+        logger.info(f"Saved report JSON: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
 
     def get_report(self, timestamp: str, strategy: str,
-                   week: Optional[str] = None,
+                   tranche: Optional[str] = None,
                    ranks: Optional[str] = None) -> Optional[Tuple[str, str]]:
         conditions = ["strategy = ?", "timestamp = ?"]
         params: list = [strategy, timestamp]
-        if week is not None:
-            conditions.append("week = ?")
-            params.append(week)
+        if tranche is not None:
+            conditions.append("tranche = ?")
+            params.append(tranche)
         if ranks is not None:
             conditions.append("ranks = ?")
             params.append(ranks)
@@ -217,7 +226,7 @@ class GoldenAIBacktestMetricsDAO:
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
             df = pd.read_sql_query(
-                f"SELECT timestamp, strategy, week, ranks "
+                f"SELECT timestamp, strategy, tranche, ranks "
                 f"FROM golden_ai_backtest_reports "
                 f"WHERE {' AND '.join(conditions)} "
                 f"ORDER BY timestamp DESC",

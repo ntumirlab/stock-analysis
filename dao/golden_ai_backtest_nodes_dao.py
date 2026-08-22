@@ -58,7 +58,7 @@ class GoldenAIBacktestNodesDAO:
                     ranks         TEXT NOT NULL,
                     entry_date    TEXT NOT NULL,
                     exit_date     TEXT NOT NULL,
-                    week_of_month INTEGER,
+                    tranche       INTEGER,
                     n_stocks      INTEGER NOT NULL,
                     node_return   REAL NOT NULL,
                     annual_return REAL,
@@ -80,6 +80,15 @@ class GoldenAIBacktestNodesDAO:
                 CREATE INDEX IF NOT EXISTS idx_nodes_series
                 ON golden_ai_backtest_nodes(strategy, ranks, exit_date)
             """)
+
+            # Migration: 相位改由錨點連續輪動定義後，`week_of_month`（當月第幾個週日）
+            # 沒有日曆語意了，改名為 `tranche`。既有的表都是空的，直接改欄位名即可。
+            cursor.execute("PRAGMA table_info(golden_ai_backtest_nodes)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if 'week_of_month' in columns and 'tranche' not in columns:
+                cursor.execute("ALTER TABLE golden_ai_backtest_nodes "
+                               "RENAME COLUMN week_of_month TO tranche")
+
             conn.commit()
         finally:
             conn.close()
@@ -104,7 +113,7 @@ class GoldenAIBacktestNodesDAO:
 
     def save(self, strategy: str, list_date: str, ranks: str, entry_date: str,
              exit_date: str, n_stocks: int, node_return: float,
-             week_of_month: Optional[int] = None, report=None,
+             tranche: Optional[int] = None, report=None,
              created_at: Optional[str] = None) -> bool:
         """寫入一個已結算的節點。已存在則不動，回傳 False。
 
@@ -120,12 +129,12 @@ class GoldenAIBacktestNodesDAO:
         try:
             cursor = conn.execute("""
                 INSERT OR IGNORE INTO golden_ai_backtest_nodes
-                    (strategy, list_date, ranks, entry_date, exit_date, week_of_month,
+                    (strategy, list_date, ranks, entry_date, exit_date, tranche,
                      n_stocks, node_return, annual_return, sharpe, sortino,
                      max_drawdown, win_ratio, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                strategy, list_date, ranks, entry_date, exit_date, week_of_month,
+                strategy, list_date, ranks, entry_date, exit_date, tranche,
                 n_stocks, node_return, metrics['annual_return'], metrics['sharpe'],
                 metrics['sortino'], metrics['max_drawdown'], metrics['win_ratio'],
                 created_at,

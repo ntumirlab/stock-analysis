@@ -76,14 +76,14 @@ def test_load_filters_and_orders_by_exit_date(dao):
     dao.save(**{**NODE, "list_date": "2026-07-12", "entry_date": "2026-07-13",
                 "exit_date": "2026-07-17"})
     dao.save(**NODE)
-    dao.save(**{**NODE, "strategy": "monthly", "week_of_month": 1})
+    dao.save(**{**NODE, "strategy": "monthly", "tranche": 1})
 
     df = dao.load(strategy="weekly", ranks="1,2,3,4,5,6,7,8")
     assert list(df["exit_date"]) == ["2026-07-13", "2026-07-17"]
 
     monthly = dao.load(strategy="monthly")
     assert len(monthly) == 1
-    assert monthly.iloc[0]["week_of_month"] == 1
+    assert monthly.iloc[0]["tranche"] == 1
 
 
 def test_stored_list_dates_is_scoped_to_strategy_and_ranks(dao):
