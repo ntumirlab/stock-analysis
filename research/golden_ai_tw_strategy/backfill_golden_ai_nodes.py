@@ -1,0 +1,203 @@
+"""GoldenAI 節點回填工具。
+
+一個節點 = 一份推薦清單 × 一組 ranks 的一次獨立回測。與 backfill_golden_ai_backtest.py
+的差別：那支補的是「某一天跑的三個月滾動回測」，每天都要重算；這支補的是「某一份清單
+的單期結果」，結算後永不改變，所以重跑會被 UNIQUE 索引擋下、天生 idempotent。
+
+日期運算在 core/node_backtest.py（純運算、CI 有測），這裡只負責建 position、跑 sim、
+把結果交給 DAO。
+
+用法：
+    python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
+        --strategy weekly --list-date 2026-08-02 2026-08-09 --dry-run
+    python -m research.golden_ai_tw_strategy.backfill_golden_ai_nodes \
+        --strategy weekly --date-range 2025-09-24 2026-08-09 --all-ranks
+"""
+
+import argparse
+import logging
+import os
+import sys
+from itertools import combinations
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from finlab import data
+from finlab.backtest import sim
+from finlab.dataframe import FinlabDataFrame
+
+from core.node_backtest import (
+    HOLD_WEEKS, check_trades, is_settled, node_dates, node_return, node_window,
+    nth_sunday_of_month,
+)
+from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
+from markets.target_weekday_tw_market import TargetWeekdayTWMarket
+from strategy_class.golden_ai_tw_strategy_monthly import GoldenAITWStrategyMonthly
+from strategy_class.golden_ai_tw_strategy_weekly import GoldenAITWStrategyWeekly
+from strategy_class.golden_ai_tw_strategy_weekly_4w import GoldenAITWStrategyWeekly4W
+from utils.authentication import Authenticator
+from utils.config_loader import ConfigLoader
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config.yaml')
+
+STRATEGY_CLASS_MAP = {
+    'weekly': GoldenAITWStrategyWeekly,
+    'monthly': GoldenAITWStrategyMonthly,
+    'weekly_4w': GoldenAITWStrategyWeekly4W,
+}
+
+FULL_RANKS = '1,2,3,4,5,6,7,8'
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='GoldenAI 節點回填工具')
+    parser.add_argument('--strategy', required=True, choices=list(STRATEGY_CLASS_MAP))
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--list-date', nargs='+', metavar='YYYY-MM-DD',
+                       help='清單日（對齊後的週日），可給多個')
+    group.add_argument('--date-range', nargs=2, metavar=('START', 'END'),
+                       help='這個區間內的所有清單日')
+
+    ranks = parser.add_mutually_exclusive_group()
+    ranks.add_argument('--ranks', default=FULL_RANKS, metavar='1,2,3',
+                       help=f'單一組合（預設 {FULL_RANKS}）')
+    ranks.add_argument('--all-ranks', action='store_true',
+                       help='跑 1~8 的完整 powerset（255 組）')
+
+    parser.add_argument('--db', default=os.path.join(PROJECT_ROOT, 'data_prod.db'))
+    parser.add_argument('--dry-run', action='store_true', help='只印結果，不寫 DB')
+    return parser.parse_args()
+
+
+def all_rank_combos(rank_start: int, rank_end: int) -> list:
+    pool = list(range(rank_start, rank_end + 1))
+    return [','.join(map(str, c))
+            for r in range(1, len(pool) + 1)
+            for c in combinations(pool, r)]
+
+
+def run_node(strategy, position_all, universe_index, list_date, ranks_str, hold_weeks):
+    """跑一個節點。回不出乾淨的節點就回 (None, 原因)。"""
+    list_date = pd.Timestamp(list_date)
+    entry_date, exit_date = node_dates(
+        list_date, strategy.buy_weekday, strategy.sell_weekday, hold_weeks)
+
+    if list_date not in position_all.index:
+        return None, f'no list on {list_date.date()}'
+    n_stocks = int(position_all.loc[list_date].sum())
+    if n_stocks == 0:
+        return None, 'empty list'
+    if not is_settled(exit_date, universe_index):
+        return None, f'not settled (exit {exit_date.date()})'
+
+    # 只有這一份清單的進場訊號，所以不可能跟其他週的部位淨換倉
+    entries = position_all & (position_all.index == entry_date)[:, np.newaxis]
+    exits = pd.DataFrame(
+        np.broadcast_to((position_all.index == exit_date)[:, np.newaxis],
+                        position_all.shape).copy(),
+        index=position_all.index, columns=position_all.columns)
+
+    final = FinlabDataFrame(entries).hold_until(FinlabDataFrame(exits))
+    final = final.shift(-1).ffill().fillna(False).astype(bool)
+
+    start, end = node_window(final, entry_date, universe_index, exit_date)
+    final = final[(final.index >= start) & (final.index <= end)]
+
+    report = sim(
+        position=final,
+        fee_ratio=1.425 / 1000,
+        tax_ratio=3 / 1000,
+        market=TargetWeekdayTWMarket(buy_weekday=strategy.buy_weekday),
+        trade_at_price=strategy.trade_at_price,
+        resample=None,
+        upload=False,
+        notification_enable=False,
+    )
+
+    trades = report.trades
+    problem = check_trades(trades, entry_date, exit_date, n_stocks)
+    if problem:
+        return None, problem
+
+    return {
+        'strategy': strategy.task_name,
+        'list_date': list_date.strftime('%Y-%m-%d'),
+        'ranks': ranks_str,
+        'entry_date': pd.Timestamp(trades['entry_date'].iloc[0]).strftime('%Y-%m-%d'),
+        'exit_date': pd.Timestamp(trades['exit_date'].iloc[0]).strftime('%Y-%m-%d'),
+        'week_of_month': nth_sunday_of_month(list_date),
+        'n_stocks': n_stocks,
+        'node_return': node_return(trades),
+        'report': report,
+        'window': (start, end),
+    }, None
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    logging.getLogger('finlab').setLevel(logging.ERROR)
+
+    config = ConfigLoader(CONFIG_PATH)
+    config.load_global_env_vars()
+    Authenticator(config).login_finlab()
+
+    strategy = STRATEGY_CLASS_MAP[args.strategy](config_path=CONFIG_PATH)
+    hold_weeks = HOLD_WEEKS[args.strategy]
+    universe = data.get('price:收盤價')
+
+    rank_combos = (all_rank_combos(strategy.rank_start, strategy.rank_end)
+                   if args.all_ranks else [args.ranks])
+
+    dao = None if args.dry_run else GoldenAIBacktestNodesDAO(db_path=args.db)
+
+    # position 只跟 ranks 有關，同一組 ranks 的所有清單日共用一次建構
+    saved = skipped = failed = 0
+    for ranks_str in rank_combos:
+        ranks = [int(r) for r in ranks_str.split(',')]
+        position_all, _, _ = strategy._create_df(universe, ranks=ranks)
+
+        if args.list_date:
+            list_dates = [pd.Timestamp(d) for d in args.list_date]
+        else:
+            lo, hi = (pd.Timestamp(d) for d in args.date_range)
+            sundays = position_all.index[position_all.index.dayofweek == 6]
+            list_dates = [d for d in sundays if lo <= d <= hi]
+
+        for list_date in list_dates:
+            key = f'{args.strategy} {pd.Timestamp(list_date).date()} Ranks[{ranks_str}]'
+            if dao is not None and dao.exists(
+                    args.strategy, pd.Timestamp(list_date).strftime('%Y-%m-%d'), ranks_str):
+                skipped += 1
+                continue
+
+            node, problem = run_node(
+                strategy, position_all, universe.index, list_date, ranks_str, hold_weeks)
+            if node is None:
+                logger.warning(f'{key}: skipped — {problem}')
+                failed += 1
+                continue
+
+            start, end = node.pop('window')
+            report = node.pop('report')
+            logger.info(
+                f'{key}: {node["entry_date"]} ~ {node["exit_date"]}  '
+                f'{node["n_stocks"]} 檔  節點報酬 {node["node_return"]:+.4%}  '
+                f'(視窗 {start.date()} ~ {end.date()})')
+
+            if dao is not None:
+                dao.save(report=report, **node)
+                saved += 1
+
+    logger.info(f'done — saved {saved}, skipped {skipped}, failed {failed}')
+
+
+if __name__ == '__main__':
+    main()
