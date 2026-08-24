@@ -16,6 +16,7 @@ from typing import Optional
 
 import pandas as pd
 
+from core.tranche_schedule import TRANCHE_ANCHOR_SUNDAYS, tranche_of
 from dao.golden_ai_backtest_metrics_dao import _rename_column_if_needed
 
 logger = logging.getLogger(__name__)
@@ -84,13 +85,50 @@ class GoldenAIBacktestNodesDAO:
             """)
 
             # Migration: 相位改由錨點連續輪動定義後，`week_of_month`（當月第幾個週日）
-            # 沒有日曆語意了，改名為 `tranche`。既有的表都是空的，直接改欄位名即可。
-            _rename_column_if_needed(cursor, 'golden_ai_backtest_nodes',
-                                     'week_of_month', 'tranche')
+            # 沒有日曆語意了，改名為 `tranche`，既有的值也要跟著換算。
+            #
+            # 節點可以就地重算、metrics/reports 不行，差別在身分：節點的進出場日與
+            # 報酬只由 (list_date, ranks) 決定（見 `jobs.golden_ai_node_executor.run_node`），
+            # 換排程不影響任何數字，`tranche` 是唯一失真的欄位；metrics 那邊的 `Week1~4`
+            # 記的是舊排程當時真的買了哪幾週，改標才是說謊。
+            if _rename_column_if_needed(cursor, 'golden_ai_backtest_nodes',
+                                        'week_of_month', 'tranche'):
+                self._relabel_tranches(cursor)
 
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _relabel_tranches(cursor) -> None:
+        """把改名前寫進來的相位值換算成新定義。與改名同一個 transaction，一起成敗。
+
+        `tranche IS NULL` 的列（weekly，一週一輪、沒有相位）原樣不動。相位是
+        (strategy, list_date) 的純函數，所以同一份清單的所有 ranks 一次更新。
+        """
+        rows = cursor.execute(
+            "SELECT DISTINCT strategy, list_date FROM golden_ai_backtest_nodes "
+            "WHERE tranche IS NOT NULL"
+        ).fetchall()
+
+        updates, unknown = [], set()
+        for strategy, list_date in rows:
+            if strategy not in TRANCHE_ANCHOR_SUNDAYS:
+                unknown.add(strategy)
+                continue
+            updates.append((tranche_of(strategy, list_date), strategy, list_date))
+
+        if unknown:
+            logger.warning(f"有相位值卻沒有 tranche 錨點，標籤保持原樣: {sorted(unknown)}")
+        if not updates:
+            return
+
+        cursor.executemany(
+            "UPDATE golden_ai_backtest_nodes SET tranche = ? "
+            "WHERE strategy = ? AND list_date = ?",
+            updates,
+        )
+        logger.info(f"tranche 標籤已重算: {len(updates)} 份清單、{cursor.rowcount} 列")
 
     def stored_list_dates(self, strategy: str, ranks: str) -> set:
         """某策略某組 ranks 已經存過的清單日。

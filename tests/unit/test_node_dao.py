@@ -132,3 +132,160 @@ def test_extract_metrics_tolerates_missing_sections():
         "annual_return": 0.5, "sharpe": None, "sortino": None,
         "max_drawdown": None, "win_ratio": None,
     }
+
+
+# ── week_of_month -> tranche migration ──
+
+OLD_NODES_SCHEMA = """
+    CREATE TABLE golden_ai_backtest_nodes (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        strategy      TEXT NOT NULL,
+        list_date     TEXT NOT NULL,
+        ranks         TEXT NOT NULL,
+        entry_date    TEXT NOT NULL,
+        exit_date     TEXT NOT NULL,
+        week_of_month INTEGER,
+        n_stocks      INTEGER NOT NULL,
+        node_return   REAL NOT NULL,
+        annual_return REAL,
+        sharpe        REAL,
+        sortino       REAL,
+        max_drawdown  REAL,
+        win_ratio     REAL,
+        created_at    TEXT NOT NULL
+    );
+"""
+
+# (strategy, list_date, 舊的 week_of_month, 新制正確的 tranche)
+# 舊值＝當月第幾個週日，新值＝距錨點幾週取模；weekly_4w 在 2026-05 那段兩者不一致，
+# monthly 因為錨點差一週而全段不一致。三個都不是隨手編的，是照定義算出來的。
+LEGACY_NODES = [
+    ("weekly_4w", "2026-05-03", 1, 4),
+    ("weekly_4w", "2026-07-19", 3, 3),   # 這期湊巧相同，也必須維持正確
+    ("monthly",   "2026-07-19", 3, 2),
+]
+
+
+@pytest.fixture
+def legacy_nodes_db(tmp_path):
+    """舊 schema、且已經有回填資料的節點表（正式機 2026-08 的狀態）。"""
+    import sqlite3
+
+    path = str(tmp_path / "legacy_nodes.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(OLD_NODES_SCHEMA)
+    for strategy, list_date, week_of_month, _ in LEGACY_NODES:
+        for ranks in ("1,2", "1,2,3"):
+            conn.execute(
+                "INSERT INTO golden_ai_backtest_nodes (strategy, list_date, ranks, "
+                "entry_date, exit_date, week_of_month, n_stocks, node_return, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (strategy, list_date, ranks, "2026-07-20", "2026-08-14",
+                 week_of_month, 2, 0.01, "2026-08-23 23:20:00"),
+            )
+    # weekly 沒有相位，這一列必須全程不被碰到
+    conn.execute(
+        "INSERT INTO golden_ai_backtest_nodes (strategy, list_date, ranks, "
+        "entry_date, exit_date, week_of_month, n_stocks, node_return, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("weekly", "2026-07-19", "1,2", "2026-07-20", "2026-07-24",
+         None, 2, 0.02, "2026-08-23 23:10:00"),
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _nodes_columns(path):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        return {r[1] for r in conn.execute("PRAGMA table_info(golden_ai_backtest_nodes)")}
+    finally:
+        conn.close()
+
+
+def _tranche(path, strategy, list_date):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        return {
+            r[0] for r in conn.execute(
+                "SELECT tranche FROM golden_ai_backtest_nodes "
+                "WHERE strategy = ? AND list_date = ?", (strategy, list_date))
+        }
+    finally:
+        conn.close()
+
+
+def test_week_of_month_is_renamed_to_tranche(legacy_nodes_db):
+    assert "week_of_month" in _nodes_columns(legacy_nodes_db)
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    cols = _nodes_columns(legacy_nodes_db)
+    assert "tranche" in cols and "week_of_month" not in cols
+
+
+@pytest.mark.parametrize("strategy, list_date, old, new", LEGACY_NODES)
+def test_legacy_labels_are_recomputed_not_just_renamed(
+        legacy_nodes_db, strategy, list_date, old, new):
+    """節點的數字與排程無關，`tranche` 是唯一失真的欄位——就地換算，不必重跑回測。"""
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    assert _tranche(legacy_nodes_db, strategy, list_date) == {new}
+
+
+def test_weekly_rows_keep_a_null_phase(legacy_nodes_db):
+    """weekly 一週一輪、沒有相位，重算不能把 NULL 填成數字。"""
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    assert _tranche(legacy_nodes_db, "weekly", "2026-07-19") == {None}
+
+
+def test_node_numbers_are_untouched_by_the_migration(legacy_nodes_db):
+    import sqlite3
+
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    conn = sqlite3.connect(legacy_nodes_db)
+    try:
+        rows = conn.execute(
+            "SELECT COUNT(*), SUM(node_return), COUNT(DISTINCT exit_date) "
+            "FROM golden_ai_backtest_nodes").fetchone()
+    finally:
+        conn.close()
+    assert rows[0] == 7
+    assert rows[1] == pytest.approx(0.01 * 6 + 0.02)
+
+
+def test_migration_is_idempotent(legacy_nodes_db):
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    first = {(s, d): _tranche(legacy_nodes_db, s, d) for s, d, _, _ in LEGACY_NODES}
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    assert {(s, d): _tranche(legacy_nodes_db, s, d) for s, d, _, _ in LEGACY_NODES} == first
+
+
+def test_a_fresh_db_is_created_with_tranche(tmp_path):
+    path = str(tmp_path / "fresh_nodes.db")
+    GoldenAIBacktestNodesDAO(db_path=path)
+    cols = _nodes_columns(path)
+    assert "tranche" in cols and "week_of_month" not in cols
+
+
+def test_a_strategy_without_an_anchor_keeps_its_label_instead_of_blowing_up(tmp_path):
+    """沒有錨點的策略若帶著相位值出現，不該讓整個 DAO 建構失敗。"""
+    import sqlite3
+
+    path = str(tmp_path / "odd.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(OLD_NODES_SCHEMA)
+    conn.execute(
+        "INSERT INTO golden_ai_backtest_nodes (strategy, list_date, ranks, "
+        "entry_date, exit_date, week_of_month, n_stocks, node_return, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("some_future_strategy", "2026-07-19", "1,2", "2026-07-20", "2026-08-14",
+         2, 2, 0.01, "2026-08-23 23:20:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    GoldenAIBacktestNodesDAO(db_path=path)
+    assert _tranche(path, "some_future_strategy", "2026-07-19") == {2}

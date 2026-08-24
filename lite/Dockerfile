@@ -29,9 +29,11 @@ COPY --from=builder /opt/conda/envs/stock-analysis /opt/conda/envs/stock-analysi
 COPY jobs/__init__.py jobs/scheduler.py jobs/inventory_fetcher.py jobs/balance_fetcher.py \
      jobs/order_executor.py jobs/recommendations_fetcher.py jobs/profit_loss_fetcher.py \
      jobs/shioaji_activation_test.py /app/jobs/
+# backtest_window 名字像回測專用，但實盤會執行到：adapter 的 _apply_cutoff 會呼叫
+# snap_cutoff_to_flat_trading_day 把 3 個月視窗起點退到空手交易日
 COPY core/__init__.py core/trading_cycles.py core/notification_formats.py \
      core/recommendation_fetching.py core/recommendation_publishing.py core/price_frames.py \
-     core/profit_loss_range.py /app/core/
+     core/profit_loss_range.py core/backtest_window.py /app/core/
 COPY dao/__init__.py dao/order_dao.py dao/account_dao.py dao/inventory_dao.py \
      dao/balance_dao.py dao/recommendation_dao.py dao/golden_ai_backtest_metrics_dao.py \
      dao/profit_loss_dao.py /app/dao/

@@ -13,10 +13,14 @@ finlab 淨換倉、記成一筆橫跨兩週的交易。實測 2026-07-05 那份�
 import pandas as pd
 
 from core.backtest_window import snap_cutoff_to_flat_trading_day
+from core.tranche_schedule import NUM_TRANCHES
 
 # 每個策略一個節點持有幾週。weekly 是一週一輪；monthly 與 weekly_4w 行為相同
-# （都是週日清單持有四週），只差清單來源。
-HOLD_WEEKS = {'weekly': 1, 'monthly': 4, 'weekly_4w': 4}
+# （都是週日清單持有 NUM_TRANCHES 週），只差清單來源。
+#
+# 從 NUM_TRANCHES 導出而不是另寫 4：那個常數就是「持有幾週」，寫兩次就會有一天只改一邊，
+# 屆時單期清單算出來的進出場日會與策略實際跑的那組錯開，兩個檢視講不同的交易。
+HOLD_WEEKS = {'weekly': 1, 'monthly': NUM_TRANCHES, 'weekly_4w': NUM_TRANCHES}
 
 
 def node_dates(list_date, buy_weekday: int, sell_weekday: int, hold_weeks: int):

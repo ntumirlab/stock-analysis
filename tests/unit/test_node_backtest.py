@@ -54,7 +54,8 @@ class TestNodeDates:
         assert x == pd.Timestamp(exit_)
 
     def test_four_week_exit_matches_the_production_offset(self):
-        # 正式策略寫的是 list_date + 22 + sell_weekday
+        # 正式策略現在寫的是 (NUM_TRANCHES - 1) * 7 + 1 + sell_weekday。
+        # 這裡刻意留字面值 22 當外部釘樁：兩邊都從常數導出的話就沒人守著實際數字了。
         list_date = pd.Timestamp('2026-07-05')
         _, x = node_dates(list_date, MON, FRI, HOLD_WEEKS['monthly'])
         assert x == list_date + pd.Timedelta(days=22 + FRI)
@@ -62,7 +63,11 @@ class TestNodeDates:
 
     def test_monthly_and_weekly_4w_hold_the_same_length(self):
         assert HOLD_WEEKS['monthly'] == HOLD_WEEKS['weekly_4w'] == 4
-        assert node_dates('2026-07-05', MON, FRI, 4) == node_dates('2026-07-05', MON, FRI, 4)
+        # 兩支各自算出來的日期都釘死值——原本這裡是 node_dates(...) == node_dates(...)
+        # 左右完全相同的空轉斷言，永遠成立、測不到任何東西。
+        expected = (pd.Timestamp('2026-07-06'), pd.Timestamp('2026-07-31'))
+        assert node_dates('2026-07-05', MON, FRI, HOLD_WEEKS['monthly']) == expected
+        assert node_dates('2026-07-05', MON, FRI, HOLD_WEEKS['weekly_4w']) == expected
 
     def test_entry_follows_a_different_buy_weekday(self):
         e, x = node_dates('2026-07-05', 2, FRI, 1)  # 週三買

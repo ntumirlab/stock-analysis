@@ -10,6 +10,7 @@ import pytest
 from core.trading_cycles import (
     align_to_sunday,
     build_tranche_specs,
+    owning_sunday,
     check_recommendation_freshness,
     compute_cycles,
     compute_historical_cycles,
@@ -180,3 +181,27 @@ class TestCheckRecommendationFreshness:
         # 進場日當天清單還是上上週的 → 不下單
         with pytest.raises(RuntimeError, match="推薦清單過期"):
             check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), "2026-06-28")
+
+
+class TestOwningSunday:
+    """每一天用的是哪一份清單。`_create_df` 靠它找出「那週根本沒清單」的日子。"""
+
+    def test_a_sunday_owns_itself(self):
+        assert list(owning_sunday(['2026-01-11'])) == [pd.Timestamp('2026-01-11')]
+
+    def test_the_whole_week_after_a_sunday_belongs_to_it(self):
+        week = pd.date_range('2026-01-11', '2026-01-17', freq='D')   # 日 ~ 六
+        assert set(owning_sunday(week)) == {pd.Timestamp('2026-01-11')}
+
+    def test_the_next_sunday_starts_a_new_owner(self):
+        assert owning_sunday(['2026-01-18'])[0] == pd.Timestamp('2026-01-18')
+
+    def test_it_is_the_inverse_of_align_to_sunday(self):
+        """align_to_sunday 把清單日推到它生效的那個週日；這支把任一天推回它的清單日。"""
+        for d in pd.date_range('2026-01-04', '2026-02-15', freq='D'):
+            sunday = owning_sunday([d])[0]
+            assert sunday.weekday() == 6
+            assert sunday <= d < sunday + pd.Timedelta(days=7)
+
+    def test_an_empty_input_gives_an_empty_index(self):
+        assert len(owning_sunday(pd.DatetimeIndex([]))) == 0

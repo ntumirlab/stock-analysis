@@ -6,17 +6,21 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-def _rename_column_if_needed(cursor, table: str, old: str, new: str) -> None:
+def _rename_column_if_needed(cursor, table: str, old: str, new: str) -> bool:
     """欄位改名，已經改過就跳過。DAO 建構時呼叫，所以每個 process 都會跑到。
 
+    回傳「這次呼叫真的改了名」。一份 DB 只會改名成功一次，所以它天然就是呼叫端做
+    一次性資料修補的閘門；修補又與改名共用同一個 transaction，不會留下「名改了、
+    值沒補」的中間狀態。
+
     讀 PRAGMA 與 ALTER 之間沒有鎖，部署時多個容器同時啟動的話，後手拿到的欄位快照
-    會是舊的、ALTER 會噴 `no such column`。那不是錯誤——先手已經把事情做完了，
-    確認結果對就好，不對才往外丟。
+    會是舊的、ALTER 會噴 `no such column`。那不是錯誤——先手已經把事情做完了（連同
+    它的資料修補一起 commit），確認結果對就好，不對才往外丟。
     """
     cursor.execute(f"PRAGMA table_info({table})")
     cols = {row[1] for row in cursor.fetchall()}
     if old not in cols or new in cols:
-        return
+        return False
     try:
         cursor.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
     except sqlite3.OperationalError:
@@ -24,6 +28,8 @@ def _rename_column_if_needed(cursor, table: str, old: str, new: str) -> None:
         if new not in {row[1] for row in cursor.fetchall()}:
             raise
         logger.info(f"{table}.{old} 已由其他 process 改名為 {new}")
+        return False
+    return True
 
 
 class GoldenAIBacktestMetricsDAO:
@@ -69,7 +75,7 @@ class GoldenAIBacktestMetricsDAO:
             """)
 
             # Migration: 4 週策略的相位改由錨點連續輪動定義（見 core/tranche_schedule），
-            # 值從 Week1~4 變成 tranche1~4，欄位名跟著改。純 metadata 操作，與表裡有幾列無關。
+            # 值從 Week1~4 變成 tranche_1~4，欄位名跟著改。純 metadata 操作，與表裡有幾列無關。
             # 放在 top_n migration 之前，那支重建表時才會讀到已經改好名的來源欄位。
             for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
                 _rename_column_if_needed(cursor, table, 'week', 'tranche')
@@ -146,18 +152,51 @@ class GoldenAIBacktestMetricsDAO:
 
         logger.info(f"Saved metrics: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
 
-    def exists_for_date(self, date_str: str, strategy: str, ranks: str) -> bool:
-        """檢查指定日期、策略、ranks 是否已有紀錄"""
+    def exists_for_date(self, date_str: str, strategy: str, ranks: str,
+                        expected: int = 1) -> bool:
+        """這個日期／策略／ranks 是否已經有**完整的一組**紀錄。
+
+        `expected` 是一組幾列：weekly 一列，4 週策略每份 tranche 一列。只問「有沒有」
+        的話，寫到一半掛掉（例如 DB 鎖住）留下的殘缺組會被判定成已存在，隔天整組跳過，
+        缺的那幾份永遠補不回來，而且沒有任何人會發現。
+
+        只看 metrics 不看 reports：報告抽取失敗是既有的容許狀況（finlab 輸出格式變動時
+        會 log warning 後繼續），拿它當閘門會讓正常情況也一直重算。
+        """
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM golden_ai_backtest_metrics WHERE strategy = ? AND timestamp LIKE ? AND ranks = ? LIMIT 1",
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM golden_ai_backtest_metrics "
+                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
                 (strategy, f"{date_str}%", ranks)
             )
-            return cursor.fetchone() is not None
+            return cursor.fetchone()[0] >= expected
         finally:
             conn.close()
+
+    def delete_for_date(self, date_str: str, strategy: str, ranks: str) -> int:
+        """清掉這個日期／策略／ranks 的 metrics 與 reports，回傳刪除列數。
+
+        重算之前先清乾淨。`save` 是純 INSERT、沒有唯一鍵，殘缺組直接補寫的話那天會
+        同時存在殘列與新的完整組，`_normalized()` 按 (timestamp, ranks) 取平均就會被
+        重複計入的那幾份拉偏。
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            deleted = 0
+            for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
+                cursor = conn.execute(
+                    f"DELETE FROM {table} "
+                    f"WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
+                    (strategy, f"{date_str}%", ranks)
+                )
+                deleted += cursor.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if deleted:
+            logger.info(f"Cleared {deleted} stale rows: {strategy} Ranks[{ranks}] @ {date_str}")
+        return deleted
 
     def load(self, strategy: Optional[str] = None, tranche: Optional[str] = None,
              ranks: Optional[str] = None) -> pd.DataFrame:

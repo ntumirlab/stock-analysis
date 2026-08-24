@@ -119,3 +119,114 @@ class TestFifthSundaysAreNoLongerSkipped:
         assert 1 <= n <= NUM_TRANCHES
         assert pd.Timestamp(list_date) in tranche_sundays(
             strategy, _all_sundays('2025-01-01', '2026-12-31'), n)
+
+
+class TestPhaseMatchesLiveTrading:
+    """回測的 tranche 編號必須就是實盤的 tranche_1~4，否則 dashboard 上的
+    「tranche2」跟實倉裡的「tranche_2」是兩回事，而兩邊都不會有人發現。
+
+    實盤在 `jobs.order_executor.load_strategies` 用 config 的 `cycle_start_date`
+    當第一個買入日，`build_tranche_specs` 再往後鋪 7k 天開出 tranche_1~4。
+    回測的錨點是從最早的推薦清單推出來的，跟 config 沒有任何程式上的連結——
+    目前對得上是因為兩者剛好差 28 天的整數倍。所以要在這裡釘住。
+    """
+
+    @staticmethod
+    def _cycle_start_date():
+        import os
+        import yaml
+
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        with open(os.path.join(root, 'config.yaml'), encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        constant = config['users']['kiri']['shioaji']['constant']
+        return pd.Timestamp(str(constant['cycle_start_date'])), constant
+
+    def test_live_tranche_k_is_backtest_tranche_k(self):
+        cycle_start, constant = self._cycle_start_date()
+        strategy = constant['golden_ai_frequency']
+        live_tranches = int(constant['hold_weeks'])
+        if strategy == 'weekly' and live_tranches > 1:
+            strategy = 'weekly_4w'   # 實盤吃 weekly 清單、持有多週＝回測的 weekly_4w
+
+        # 回測要跑幾份 tranche 是回測自己的事，**不要求**與實盤相同。但份數相同時
+        # 編號就會被讀成同一件事（dashboard 的 tranche2 vs 實倉 state 的 tranche_2），
+        # 那個對應必須成立。份數不同時這個對應本來就不存在，沒什麼好守的。
+        if live_tranches != NUM_TRANCHES:
+            pytest.skip(f'回測跑 {NUM_TRANCHES} 份、實盤 {live_tranches} 份，編號無對應關係')
+
+        for k in range(NUM_TRANCHES):
+            entry = cycle_start + pd.Timedelta(days=7 * k)          # build_tranche_specs
+            list_sunday = entry - pd.Timedelta(days=1)              # 進場日前一天的清單
+            assert tranche_of(strategy, list_sunday) == k + 1, (
+                f"實盤 tranche_{k + 1}（買入日 {entry:%Y-%m-%d}）對到回測的 "
+                f"tranche{tranche_of(strategy, list_sunday)}。改過 config 的 "
+                f"cycle_start_date 嗎？它必須與 TRANCHE_ANCHOR_SUNDAYS 差 "
+                f"{NUM_TRANCHES} 週的整數倍。"
+            )
+
+    def test_the_live_anchor_lands_on_a_buy_weekday_after_a_list_sunday(self):
+        cycle_start, _ = self._cycle_start_date()
+        assert (cycle_start - pd.Timedelta(days=1)).weekday() == 6
+
+
+class TestRotationIsSeamless:
+    """`NUM_TRANCHES` 同時是「開幾份」與「每份持有幾週」。這兩件事分開寫死過一次
+    （`_run_core` 的 `days=22` 與 `HOLD_WEEKS` 的 4），只有恰好都是 4 才對得上。
+
+    現在兩者都從 `NUM_TRANCHES` 導出，這裡守住導出關係沒被誰改回字面值：
+    同一份 tranche 的下一次進場，必須恰好接在這次出場之後。
+    """
+
+    BUY, SELL = 0, 4          # config.yaml 的 buy_weekday 1 / sell_weekday 5 減 1
+
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    def test_hold_weeks_follows_the_tranche_count(self, strategy):
+        from core.node_backtest import HOLD_WEEKS
+
+        assert HOLD_WEEKS[strategy] == NUM_TRANCHES
+
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    @pytest.mark.parametrize('tranche', range(1, NUM_TRANCHES + 1))
+    def test_a_tranche_never_re_enters_before_it_has_exited(self, strategy, tranche):
+        from core.node_backtest import HOLD_WEEKS, node_dates
+
+        sundays = tranche_sundays(strategy, _all_sundays('2025-10-01', '2026-12-31'), tranche)
+        for this_week, next_week in zip(sundays, sundays[1:]):
+            _, exit_date = node_dates(this_week, self.BUY, self.SELL, HOLD_WEEKS[strategy])
+            next_entry, _ = node_dates(next_week, self.BUY, self.SELL, HOLD_WEEKS[strategy])
+            assert exit_date < next_entry, (
+                f'{strategy} tranche{tranche}: {next_week.date()} 那期在上一期 '
+                f'{exit_date.date()} 出場之前就進場了——同一份 tranche 的部位會自己疊到'
+                f'自己，出場訊號是整列廣播的，新買的會被上一輪的賣單掃掉。'
+            )
+
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    def test_the_gap_between_selling_and_re_entering_is_always_the_weekend(self, strategy):
+        """出場（週五）到下次進場（下週一）恆為 3 天，與 NUM_TRANCHES 無關——
+        進場節奏 7N 減掉持有期 (N-1)*7 + (sell - buy)，N 會消掉。"""
+        from core.node_backtest import HOLD_WEEKS, node_dates
+
+        sundays = tranche_sundays(strategy, _all_sundays('2025-10-01', '2026-12-31'), 1)
+        gaps = set()
+        for this_week, next_week in zip(sundays, sundays[1:]):
+            _, exit_date = node_dates(this_week, self.BUY, self.SELL, HOLD_WEEKS[strategy])
+            next_entry, _ = node_dates(next_week, self.BUY, self.SELL, HOLD_WEEKS[strategy])
+            gaps.add((next_entry - exit_date).days)
+        assert gaps == {7 - (self.SELL - self.BUY)}
+
+
+class TestBadTrancheNumbers:
+    """超出範圍要噴錯，不能靜默回空——空的回測看起來像資料不足而不像參數打錯。"""
+
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    @pytest.mark.parametrize('bad', [0, -1, NUM_TRANCHES + 1, 99])
+    def test_out_of_range_raises(self, strategy, bad):
+        with pytest.raises(ValueError, match='tranche'):
+            tranche_sundays(strategy, _all_sundays('2026-01-01', '2026-03-01'), bad)
+
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    def test_it_raises_even_when_the_range_is_empty(self, strategy):
+        """先驗參數再看資料，否則空區間會把參數錯誤蓋掉。"""
+        with pytest.raises(ValueError, match='tranche'):
+            tranche_sundays(strategy, pd.DatetimeIndex([]), 0)

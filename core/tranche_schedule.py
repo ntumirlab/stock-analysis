@@ -14,8 +14,14 @@
 
 import pandas as pd
 
-# 一輪有幾份 tranche。等於策略的 hold_weeks：持有 4 週、每週開一份，才會恰好無縫接上
-# （實盤是 config 的 num_tranches = hold_weeks = 4，見 `build_tranche_specs`）。
+# 一輪有幾份 tranche。**這個數字同時是「開幾份」與「每份持有幾週」**——週頻進場、
+# 持有 N 週，就要恰好 N 份錯開 7 天才無縫接上（出場後隔 3 天、也就是週五賣下週一買，
+# 就輪到自己再進場），所以兩者必須相等，只留一個常數。
+#
+# `core.node_backtest.HOLD_WEEKS` 與 `GoldenAITWStrategyMonthly._run_core` 的出場偏移
+# 都是從這裡導出的，別在那兩處另寫字面值。實盤那側的份數由 config 的 hold_weeks 決定
+# （見 `order_executor.load_strategies` 把它當 num_tranches 傳給 `build_tranche_specs`），
+# 與這裡各自獨立——回測要試幾份是回測自己的事。
 NUM_TRANCHES = 4
 
 # 各策略的錨點清單日（週日）。**從資料推導出來、算一次之後寫死**：若讓它每晚重算，
@@ -64,6 +70,11 @@ def tranche_sundays(strategy: str, date_range, tranche: int) -> pd.DatetimeIndex
     只是改由錨點連續輪動決定。每個週日恰好屬於一份 tranche，所以四份加起來
     不重不漏地蓋滿整段期間，同一份 tranche 的相鄰進場間隔恆為 NUM_TRANCHES * 7 天。
     """
+    if not 1 <= tranche <= NUM_TRANCHES:
+        # 靜默回空 index 的話，呼叫端會拿到「這份 tranche 一次都沒進場」的空回測，
+        # 看起來像資料不足而不像參數錯了。
+        raise ValueError(f'tranche 要在 1~{NUM_TRANCHES} 之間，收到 {tranche}')
+
     idx = pd.DatetimeIndex(date_range)
     if len(idx) == 0:
         return pd.DatetimeIndex([])

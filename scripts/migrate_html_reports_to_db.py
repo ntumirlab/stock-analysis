@@ -28,7 +28,9 @@ STRATEGY_DIRS = {
 }
 
 FILE_PATTERN = re.compile(
-    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d))?\.html$'
+    # `Week\d` 是月索引時代的檔名，`tranche_\d` 是錨點輪動之後的（見 MultiReportWrapper）。
+    # 兩種都要認：只認舊的會讓新產出的檔案靜默不匹配、整批跳過。
+    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d|tranche_\d))?\.html$'
 )
 
 
@@ -68,16 +70,15 @@ def migrate(strategy, db_path, dry_run=False, batch_size=500):
             skipped += 1
             continue
 
-        date_str, time_str, ranks_str, week_str = m.groups()
+        date_str, time_str, ranks_str, tranche_str = m.groups()
         timestamp = f"{date_str} {time_str.replace('-', ':')}"
-        # 值維持 Week1~4：這些 HTML 是月索引時代跑出來的，`Week1` 真的就是
-        # 「當月第 1 個週日」。改標成 tranche1 會誤述它涵蓋哪幾週——那是另一組進場週。
-        # 跟尚未重跑的既有列一樣，舊標籤留著，等重跑才會變成 tranche1~4。
+        # 值照檔名原樣寫入，不轉換：`Week1` 真的就是「當月第 1 個週日」，改標成
+        # `tranche_1` 會誤述它涵蓋哪幾週——那是另一組進場週。
 
         existing = conn.execute(
             "SELECT 1 FROM golden_ai_backtest_reports "
             "WHERE strategy=? AND timestamp=? AND ranks=? AND tranche IS ? LIMIT 1",
-            (strategy, timestamp, ranks_str, week_str)
+            (strategy, timestamp, ranks_str, tranche_str)
         ).fetchone()
         if existing:
             skipped += 1
@@ -100,7 +101,7 @@ def migrate(strategy, db_path, dry_run=False, batch_size=500):
             "INSERT INTO golden_ai_backtest_reports "
             "(timestamp, strategy, tranche, ranks, report_json, position_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (timestamp, strategy, week_str, ranks_str, rj, pj)
+            (timestamp, strategy, tranche_str, ranks_str, rj, pj)
         )
         inserted += 1
 

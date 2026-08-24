@@ -18,7 +18,7 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
         super().__init__(task_name="monthly", config_path=config_path, override_params=override_params)
 
     def _run_core(self, ranks):
-        """月策略核心：對給定 ranks 跑四份 tranche，回傳 {'tranche1': report, ...}"""
+        """月策略核心：對給定 ranks 跑 NUM_TRANCHES 份，回傳 {'tranche_1': report, ...}"""
         try:
             if self.backtest_date is not None:
                 data.truncate_end = self.backtest_date.strftime('%Y-%m-%d')
@@ -42,8 +42,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             for offset in range(NUM_TRANCHES):
                 # 進場週由錨點連續輪動決定，與實盤的 tranche 排程同一套定義
                 selected_weeks = tranche_sundays(self.task_name, base_position.index, offset + 1)
+                # 與 `core.node_backtest.node_dates` 同一條算式：持有 NUM_TRANCHES 週。
+                # 偏移量從常數導出，改份數時進場節奏與持有期才會一起動——寫死的話
+                # 只有 NUM_TRANCHES=4 是對的（3 會被上一輪的賣單掃到、只持有 4 天）。
                 entry_dates = selected_weeks + pd.Timedelta(days=1 + self.buy_weekday)
-                exit_dates  = selected_weeks + pd.Timedelta(days=22 + self.sell_weekday)
+                exit_dates  = selected_weeks + pd.Timedelta(
+                    days=(NUM_TRANCHES - 1) * 7 + 1 + self.sell_weekday)
 
                 entry_mask = base_position.index.isin(entry_dates)
                 entries = base_position & entry_mask[:, np.newaxis]
@@ -96,7 +100,10 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                         upload=False,
                         notification_enable=False
                     )
-                reports[f"tranche{offset + 1}"] = report
+                # 拼法與實盤的 PortfolioSyncManager state key 一致（`build_tranche_specs`
+                # 產的 tranche_1..N）。份數不必相同——相同時人會把兩邊讀成同一件事，
+                # 那就別讓它們只差一個底線。
+                reports[f"tranche_{offset + 1}"] = report
 
             return reports
         finally:
@@ -104,11 +111,16 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
 
     def _run_one_ranks(self, ranks, dao, timestamp, date_str, time_str, report_dir, i, total):
         ranks_str = ','.join(map(str, ranks))
-        if dao.exists_for_date(date_str, self.task_name, ranks_str):
+        # 一組 = NUM_TRANCHES 列。只問「有沒有」的話，上次寫到一半留下的殘缺組
+        # 會被當成已完成而永久跳過
+        if dao.exists_for_date(date_str, self.task_name, ranks_str,
+                               expected=NUM_TRANCHES):
             print(f"[{i}/{total}] Ranks[{ranks_str}] 已存在，跳過")
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         tranche_reports = self._run_core(ranks=ranks)
+        # 走到這裡代表那組不完整（或根本沒有）。先清殘列再寫，免得殘列與完整組並存
+        dao.delete_for_date(date_str, self.task_name, ranks_str)
         for tranche_name, report in tranche_reports.items():
             dao.save(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name, ranks=ranks_str, report=report)
 

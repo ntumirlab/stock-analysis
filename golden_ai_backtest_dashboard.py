@@ -159,7 +159,9 @@ _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
 
 # 單期報酬年化的期數：按策略節奏而非日曆天。一週一輪＝52，四週一輪＝13。
 # 按日曆天會把 4 個交易日的單期報酬年化成 ^91，那不是這個策略在做的事。
-_NODE_PERIODS = {'weekly': 52, 'monthly': 13, 'weekly_4w': 13}
+# 從 HOLD_WEEKS 導出：節點持有幾週，一年就有 52/幾週 期。寫死 13 的話，
+# 改了持有週數就會拿舊期數去年化，圖上的數字錯得毫無跡象。
+_NODE_PERIODS = {s: 52 // w for s, w in HOLD_WEEKS.items()}
 # 名次選項＝config.yaml 的 rank_start~rank_end；DB 存的是它的完整 powerset（255 組）
 _RANK_CHOICES = list(range(1, 9))
 

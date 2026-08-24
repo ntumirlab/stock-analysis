@@ -14,7 +14,7 @@ from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from core.backtest_window import snap_cutoff_to_flat_trading_day
-from core.report_rewrap import extract_report_data
+from core.trading_cycles import owning_sunday
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
@@ -60,7 +60,14 @@ def _extract_report_json(html_path):
 
     以整份 HTML 搜尋（見 core/report_rewrap.py），不依賴資料在第幾行 —
     finlab 2.x 改版報告前端後行號已位移。
+
+    **`core.report_rewrap` 刻意在函式內 import**：它在 lite 的「開發方模組不得混入
+    image」黑名單上，而這個檔案（base）是 lite 白名單的一員。放到 module level 會讓
+    lite build 期的白名單完整性檢查直接失敗。這支只有回測路徑會呼叫（`_run_one_ranks`），
+    lite 的下單 adapter 覆寫了 `run_strategy`、永遠走不到這裡。
     """
+    from core.report_rewrap import extract_report_data
+
     with open(html_path, 'r', encoding='utf-8') as f:
         html = f.read()
     report_json, position_json = extract_report_data(html)
@@ -200,6 +207,21 @@ class GoldenAITWStrategyBase:
             position = position[position.index <= end]
             sl_df    = sl_df[sl_df.index <= end]
             tp_df    = tp_df[tp_df.index <= end]
+
+        # 缺清單的那一週不進場。上面的 resample('D').ffill() 會把缺席那週填成上一份
+        # 清單，照著跑就是買進一份從未發布過的清單——實測 2026-01-11 沒有 weekly
+        # 清單，進場日 01-12 拿到的是 01-04 那五檔。
+        #
+        # 實盤那側的 `check_recommendation_freshness` 只擋得住進場後的頭兩天：它比的是
+        # 「最新清單」對「當期該用的週日」，而週中發布的清單會對齊到**下一個**週日、
+        # 讓判斷式通過，於是從那天起照樣拿舊清單下單。這裡歸零之後兩邊一致＝
+        # 沒清單就空手，等有清單再進場。
+        #
+        # sl_df / tp_df 不跟著歸零：它們只產生出場訊號，而 hold_until 只出場真的持有中
+        # 的部位，所以空手那幾天的訊號是 no-op。反過來歸零才有害——sl_df 的 0 會被
+        # replace 成 NaN、比較恆為 False，跨週持有到那幾天的部位會整週失去停損門檻。
+        real_sundays = pd.DatetimeIndex(sorted(weekly_batches))
+        position.loc[~owning_sunday(position.index).isin(real_sundays)] = 0
 
         position = position.reindex(columns=universe.columns, fill_value=0)
         sl_df    = sl_df.reindex(columns=universe.columns, fill_value=0)

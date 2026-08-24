@@ -86,6 +86,17 @@ def align_to_sunday(date: pd.Timestamp) -> pd.Timestamp:
     return date + pd.Timedelta(days=6 - date.weekday())
 
 
+def owning_sunday(dates) -> pd.DatetimeIndex:
+    """每一天用的是哪一份清單＝往前最近的週日（週日算自己）。`align_to_sunday` 的反向。
+
+    `_create_df` 把清單日的內容 resample('D').ffill() 往後鋪，所以「這天的 position
+    是哪個週日的清單」就是這個函式。用途是找出「那個週日根本沒有清單」的日子——
+    那幾天鋪過來的是更早的清單，進場等於買一份從未發布過的名單。
+    """
+    idx = pd.DatetimeIndex(dates)
+    return idx - pd.to_timedelta((idx.dayofweek + 1) % 7, unit='D')
+
+
 def check_recommendation_freshness(cycles: List[Cycle], today: pd.Timestamp,
                                    latest_rec_date: Optional[str]) -> None:
     """進行中的週期若缺少進場日應使用的週日清單，拋 RuntimeError 擋下下單。
