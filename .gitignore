@@ -38,3 +38,9 @@ finlab_db
 
 # 本機策略試驗用，不納入版控
 toy_example/
+
+# Playwright MCP 本機暫存
+.playwright-mcp/
+
+# 日期開頭的回測/分析報告（YYYYMMDD_*），屬一次性產出不納入版控
+docs/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*
