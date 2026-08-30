@@ -1,10 +1,9 @@
-"""EFG95% + ACE 組合 — 詳見 docs/alan_tw_strategy_efg95_ace.md"""
+"""EFG95% + ACE 組合（完整出場）— 詳見 docs/alan_tw_strategy_efg95_ace_full.md"""
 
 from finlab.backtest import sim
 
 from .alan_tw_strategy_base import AlanTWStrategyBase, AdjustTWMarketInfo
 from .alan_tw_strategy_efg95_full import AlanTWStrategyEFG95Full
-from .alan_tw_strategy_efg95_simple import AlanTWStrategyEFG95Simple
 from .alan_tw_strategy_ace_simple import AlanTWStrategyACESimple
 
 
@@ -15,14 +14,7 @@ class _ACE_A90C90Full(AlanTWStrategyACESimple):
     sell_type = 'full'
 
 
-class _ACE_A90C90Simple(AlanTWStrategyACESimple):
-    """組合用的 ACE 分量：A 90%、C 90%，出場與 EFG95% 分量統一為簡單出場"""
-    extra_high_pct_a = 0.90
-    extra_high_pct_c = 0.90
-    sell_type = 'simple'
-
-
-class AlanTWStrategyEFG95ACE(AlanTWStrategyBase):
+class AlanTWStrategyEFG95ACEFull(AlanTWStrategyBase):
     """
     兩個分量各自計算進場訊號，出場統一為完整出場，持倉取聯集：
         EFG95%、ACE(A90% C90% E)
@@ -100,12 +92,3 @@ class AlanTWStrategyEFG95ACE(AlanTWStrategyBase):
         print(f"總交易次數: {self.report.get_trades().shape[0]} 筆")
         print(f"單檔持股上限: {self.position_limit:.1%}")
         print("=" * 60)
-
-
-class AlanTWStrategyEFG95ACESimple(AlanTWStrategyEFG95ACE):
-    """同 AlanTWStrategyEFG95ACE，但兩個分量的出場統一為簡單出場"""
-
-    COMPONENTS = (AlanTWStrategyEFG95Simple, _ACE_A90C90Simple)
-
-    def get_strategy_name(self):
-        return "EFG95%_加_ACE_A90C90E_簡單出場"

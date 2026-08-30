@@ -1,20 +1,16 @@
-# EFG95% + ACE 組合
+# EFG95% + ACE 組合 完整出場
 
-- **類別**：`AlanTWStrategyEFG95ACE`（完整出場）、`AlanTWStrategyEFG95ACESimple`（簡單出場）
-- **檔案**：`strategy_class/alan_tw_strategy_efg95_ace.py`
-- **分量**：EFG95%（E｜F｜G）＋ ACE（A｜C｜E），兩分量的出場型別一致
-
-| 類別 | 分量一 | 分量二 | 出場 |
-| --- | --- | --- | --- |
-| `AlanTWStrategyEFG95ACE` | `AlanTWStrategyEFG95Full` | `_ACE_A90C90Full` | 完整出場 |
-| `AlanTWStrategyEFG95ACESimple` | `AlanTWStrategyEFG95Simple` | `_ACE_A90C90Simple` | 簡單出場 |
+- **類別**：`AlanTWStrategyEFG95ACEFull`
+- **檔案**：`strategy_class/alan_tw_strategy_efg95_ace_full.py`
+- **分量**：`AlanTWStrategyEFG95Full`（E｜F｜G）＋ `_ACE_A90C90Full`（A｜C｜E），兩分量皆為**完整出場**
+- **對應簡單出場版**：`AlanTWStrategyEFG95ACESimple`（`docs/alan_tw_strategy_efg95_ace_simple.md`）
 
 ## 組合方式
 
 兩個分量各自計算買入訊號與持倉，最後取聯集：
 
-1. 分量一 EFG95%：子策略 E／F／G 的買訊取聯集 → 套用該版出場 → `hold_until` 得到持倉。
-2. 分量二 ACE A90C90（繼承 `AlanTWStrategyACESimple`）：子策略 A／C／E 的買訊取聯集 → 套用該版出場 → `hold_until` 得到持倉。
+1. 分量一 EFG95%：子策略 E／F／G 的買訊取聯集 → 套用完整出場 → `hold_until` 得到持倉。
+2. 分量二 ACE A90C90（繼承 `AlanTWStrategyACESimple`）：子策略 A／C／E 的買訊取聯集 → 套用完整出場 → `hold_until` 得到持倉。
 3. 兩組持倉取聯集。
 
 同一檔股票只要任一分量要求持有就持有，兩個分量都出場後才真正賣出。
@@ -30,33 +26,31 @@ MACD 以加權收盤價 `(H+L+2C)/4` 自算，匹配 XQ 等台股看盤軟體。
 
 ### 分量一：EFG95%
 
-- 類別：`AlanTWStrategyEFG95Full`／`AlanTWStrategyEFG95Simple`（進場相同，僅出場不同）
-- 詳細說明：`docs/alan_tw_strategy_efg95_full.md`、`docs/alan_tw_strategy_efg95_simple.md`
+- 類別：`AlanTWStrategyEFG95Full`
+- 詳細說明：`docs/alan_tw_strategy_efg95_full.md`
 - 新高條件：還原收盤價 ≥ 近 N 日還原收盤最高價 × **95%**
 
 ### 分量二：ACE（A90% C90% E）
 
-- 類別：`_ACE_A90C90Full`／`_ACE_A90C90Simple`（定義於 `alan_tw_strategy_efg95_ace.py`）
+- 類別：`_ACE_A90C90Full`（定義於 `alan_tw_strategy_efg95_ace_full.py`）
 - 詳細說明：`docs/alan_tw_strategy_ace_simple.md`
 - 新高條件：A／C／E 須創 120／120／480 日新高（100%）
 - A、C 另有額外門檻：還原收盤價 ≥ 近 **480** 日還原收盤最高價 × **90%**；E 無此門檻
 
 與獨立上線的 `AlanTWStrategyACESimple` 相比，差異僅在 A、C 的額外新高門檻與出場類型：
 
-| 參數 | 獨立版 `AlanTWStrategyACESimple` | 組合版 `_ACE_A90C90Full`／`_ACE_A90C90Simple` |
+| 參數 | 獨立版 `AlanTWStrategyACESimple` | 組合版 `_ACE_A90C90Full` |
 | --- | --- | --- |
 | `extra_high_days` | 480 | 480 |
 | `extra_high_pct_a` | 0.85 | **0.90** |
 | `extra_high_pct_c` | 0.80 | **0.90** |
-| `sell_type` | `simple` | `full`（Full 版）／`simple`（Simple 版） |
+| `sell_type` | `simple` | `full` |
 
 其餘設定與獨立版相同：子策略 A／C／E 的 `top_n`、`op_growth`、新高天數、乖離區間與 DMI 門檻。
 
 ## 出場條件
 
-兩個分量套用相同的出場型別，各分量以自己的買入訊號搭配出場條件計算持倉。
-
-### `AlanTWStrategyEFG95ACE`：完整出場
+兩個分量皆套用**完整出場**，各分量以自己的買入訊號搭配出場條件計算持倉。
 
 3 日線下彎 **AND** DIF 下彎 **AND** 下列四者任一成立：
 
@@ -68,13 +62,6 @@ MACD 以加權收盤價 `(H+L+2C)/4` 自算，匹配 XQ 等台股看盤軟體。
 | 4 | ADX(14) > 31 **AND** 3 日乖離 < −0.5% **AND** 5 日乖離 < −0.5% |
 
 另有**獨立急殺出場**（獨立 OR，不受前提限制）：3 日乖離 < −3.5% **AND** 5 日乖離 < −3.5%。
-
-### `AlanTWStrategyEFG95ACESimple`：簡單出場
-
-```
-(3日線下彎 AND DIF 下彎 AND 3日乖離 < -0.5% AND 5日乖離 < -0.5%)
-OR (3日乖離 < -3.5% AND 5日乖離 < -3.5%)
-```
 
 ## 參數摘要表
 
