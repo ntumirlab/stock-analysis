@@ -35,7 +35,7 @@ class AlanTWStrategyNotStartBase(AlanTWStrategyBase):
         self.sub_sell_signals = {}
 
     def _build_technical_buy_condition(self, config):
-        """乖離區間 + 價量金額門檻 + 接近收盤新高（+ 選用的 DMI）"""
+        """乖離區間 + 價量金額門檻 + 接近收盤新高 + 收盤/近15日低點上限（+ 選用的 DMI）"""
         ma = {n: self.adj_close.rolling(n).mean() for n in (5, 10, 20, 60, 120, 240)}
         bias = {f'bias_{n}': (self.adj_close - m) / m for n, m in ma.items()}
 
@@ -51,7 +51,8 @@ class AlanTWStrategyNotStartBase(AlanTWStrategyBase):
             (self.close > self.min_price) &
             (self.volume > self.min_volume_shares) &
             ((self.close * self.volume) > self.min_amount) &
-            (self.adj_close >= close_high * config['entry_high_pct'])
+            (self.adj_close >= close_high * config['entry_high_pct']) &
+            self._build_low_ratio_condition()
         )
 
         if self.entry_plus_di_min is not None or self.entry_minus_di_max is not None:

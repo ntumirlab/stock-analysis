@@ -10,6 +10,7 @@ from finlab.backtest import sim
 import pandas as pd
 import numpy as np
 from .taiwan_kd import taiwan_kd_fast
+from .taiwan_macd import taiwan_macd
 
 
 class AdjustTWMarketInfo(TWMarket):
@@ -26,15 +27,26 @@ class AlanTWStrategyBase:
 
     可調參數（以類別屬性覆寫）：
         entry_plus_di_min / entry_minus_di_max: 買進 DMI 門檻，預設 24 / 21
+        entry_low_ratio_days / entry_low_ratio_max: 買進「收盤 ÷ 近 N 日最低價」上限
         sell_type: 出場條件，見 SELL_TYPES
 
     出場條件（sell_type）：
         'bare'   3日線↓ AND DIF↓
-        'simple' 3日線↓ AND DIF↓ AND 3日與5日乖離<-0.5%
-        'full'   3日線↓ AND DIF↓ AND (-DI>21
+        'simple' (3日線↓ AND DIF↓ AND 3日與5日乖離<-0.5%)
+                     OR 3日與5日乖離<-3.5%
+        'full'   (3日線↓ AND DIF↓ AND (-DI>21
                      OR 3日與5日乖離<-3.5%
                      OR (DEA↓ AND 3日與5日乖離<-2.5%)
-                     OR (ADX>31 AND 3日與5日乖離<-0.5%))
+                     OR (ADX>31 AND 3日與5日乖離<-0.5%)))
+                     OR 3日與5日乖離<-3.5%
+
+    'simple' 與 'full' 的「3日與5日乖離皆 < -3.5%」為獨立條件，
+    不受「3日線↓ AND DIF↓」前提限制（急殺直接出場）。
+
+    MACD 一律以加權收盤價 (H+L+2C)/4 自算（taiwan_macd），
+    匹配 XQ 等台股看盤軟體；KD 同理採 taiwan_kd_fast（alpha=1/3）。
+    DMI/ADX 經對帳確認 talib 標準 Wilder 即與 XQ 一致，不需調整，
+    詳見 docs/20260815_EFG95_full_technical_indicator_verification.md。
     """
 
     SELL_TYPES = ('bare', 'simple', 'full')
@@ -42,6 +54,10 @@ class AlanTWStrategyBase:
     # 買進 DMI 門檻
     entry_plus_di_min = 24
     entry_minus_di_max = 21
+
+    # 買進「收盤 ÷ 近 N 日最低價 <= 上限」門檻（濾掉離近期低點拉開太多的追高訊號）
+    entry_low_ratio_days = 15
+    entry_low_ratio_max = 1.32
 
     # 出場條件；預設 'bare' 以維持既有策略行為
     sell_type = 'bare'
@@ -141,9 +157,24 @@ class AlanTWStrategyBase:
             (main_force_top_3d_buy & main_force_condition_3d)
         )
 
-        chip_buy_condition = foreign_buy_condition | dealer_self_buy_condition | main_force_buy_condition
+        chip_buy_condition = (
+            foreign_buy_condition | investment_trust_buy_condition |
+            dealer_self_buy_condition | main_force_buy_condition
+        )
 
         return chip_buy_condition
+
+    def _macd(self):
+        """MACD 指標：加權收盤價 (H+L+2C)/4 自算，匹配 XQ；回傳 (dif, dea)"""
+        dif, dea, _ = taiwan_macd(
+            self.adj_high, self.adj_low, self.adj_close,
+            fastperiod=12, slowperiod=26, signalperiod=9)
+        return dif, dea
+
+    def _build_low_ratio_condition(self):
+        """收盤 ÷ 近 N 日最低價 <= 上限（發動型與未發動型共用）"""
+        low_min = self.adj_low.rolling(self.entry_low_ratio_days).min()
+        return (self.adj_close / low_min) <= self.entry_low_ratio_max
 
     def _build_technical_buy_condition(self, bias_5_range, bias_10_range, bias_20_range,
                                        bias_60_range, bias_120_range, bias_240_range,
@@ -227,14 +258,16 @@ class AlanTWStrategyBase:
         kd_buy_condition = k_up_condition & d_up_condition
 
         # MACD指標
-        with data.universe(market='TSE_OTC'):
-            dif, macd, _ = data.indicator('MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
+        dif, _macd_dea = self._macd()
 
         macd_dif_buy_condition = dif > dif.shift(1)
 
         # 創新高 (支援百分比，如 0.95 代表 95% 新高)
         high_n = self.adj_close.rolling(window=new_high_days).max()
         new_high_condition = self.adj_close >= (high_n * new_high_pct)
+
+        # 收盤價不可離近期低點拉開太多（收盤 ÷ 近 N 日最低價 <= 上限）
+        low_ratio_condition = self._build_low_ratio_condition()
 
         # 技術面綜合條件
         technical_buy_condition = (
@@ -248,7 +281,8 @@ class AlanTWStrategyBase:
             dmi_buy_condition &
             kd_buy_condition &
             macd_dif_buy_condition &
-            new_high_condition
+            new_high_condition &
+            low_ratio_condition
         )
 
         return technical_buy_condition
@@ -266,9 +300,9 @@ class AlanTWStrategyBase:
         ma3 = self.adj_close.rolling(3).mean()
         ma5 = self.adj_close.rolling(5).mean()
 
+        dif, dea = self._macd()
+
         with data.universe(market='TSE_OTC'):
-            dif, dea, _ = data.indicator(
-                'MACD', fastperiod=12, slowperiod=26, signalperiod=9, adjust_price=True)
             minus_di = data.indicator('MINUS_DI', timeperiod=14, adjust_price=True)
             adx = data.indicator('ADX', timeperiod=14, adjust_price=True)
 
@@ -282,26 +316,34 @@ class AlanTWStrategyBase:
         return (ma3 < ma3.shift(1)) & (dif < dif.shift(1))
 
     def _sell_simple(self):
-        """簡單出場：3日線↓ AND DIF↓ AND 3日與5日乖離皆 < -0.5%"""
+        """簡單出場：(3日線↓ AND DIF↓ AND 3日與5日乖離皆 < -0.5%)
+        OR 獨立的 3日與5日乖離皆 < -3.5%（急殺不受前提限制）"""
         ma3, b3, b5, dif, _, _, _ = self._sell_indicators()
         return (
-            (ma3 < ma3.shift(1)) &
-            (dif < dif.shift(1)) &
-            (b3 < -0.005) & (b5 < -0.005)
+            (
+                (ma3 < ma3.shift(1)) &
+                (dif < dif.shift(1)) &
+                (b3 < -0.005) & (b5 < -0.005)
+            ) |
+            ((b3 < -0.035) & (b5 < -0.035))
         )
 
     def _sell_full(self):
-        """完整出場：3日線↓ AND DIF↓ AND 四選一"""
+        """完整出場：(3日線↓ AND DIF↓ AND 四選一)
+        OR 獨立的 3日與5日乖離皆 < -3.5%（急殺不受前提限制）"""
         ma3, b3, b5, dif, dea, minus_di, adx = self._sell_indicators()
         return (
-            (ma3 < ma3.shift(1)) &
-            (dif < dif.shift(1)) &
             (
-                (minus_di > 21) |
-                ((b3 < -0.035) & (b5 < -0.035)) |
-                ((dea < dea.shift(1)) & (b3 < -0.025) & (b5 < -0.025)) |
-                ((adx > 31) & (b3 < -0.005) & (b5 < -0.005))
-            )
+                (ma3 < ma3.shift(1)) &
+                (dif < dif.shift(1)) &
+                (
+                    (minus_di > 21) |
+                    ((b3 < -0.035) & (b5 < -0.035)) |
+                    ((dea < dea.shift(1)) & (b3 < -0.025) & (b5 < -0.025)) |
+                    ((adx > 31) & (b3 < -0.005) & (b5 < -0.005))
+                )
+            ) |
+            ((b3 < -0.035) & (b5 < -0.035))
         )
 
     def _build_sell_condition(self):

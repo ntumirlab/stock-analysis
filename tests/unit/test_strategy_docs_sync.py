@@ -21,18 +21,34 @@ BIAS_KEYS = ['bias_5', 'bias_10', 'bias_20', 'bias_60', 'bias_120', 'bias_240']
 # md 檔名 → (策略檔名, 類別名)
 STRATEGIES = [
     ('alan_tw_strategy_efg_simple.md', 'alan_tw_strategy_efg_simple.py', 'AlanTWStrategyEFGSimple'),
+    ('alan_tw_strategy_efg95_simple.md', 'alan_tw_strategy_efg95_simple.py',
+     'AlanTWStrategyEFG95Simple'),
     ('alan_tw_strategy_efg95_full.md', 'alan_tw_strategy_efg95_full.py', 'AlanTWStrategyEFG95Full'),
     ('alan_tw_strategy_ace_simple.md', 'alan_tw_strategy_ace_simple.py', 'AlanTWStrategyACESimple'),
     ('alan_tw_strategy_efg_not_start.md', 'alan_tw_strategy_efg_not_start.py',
      'AlanTWStrategyEFGNotStart'),
 ]
 
+# 類別名 → 檔名（跨檔繼承時解析 configs / 屬性用）
+CLASS_FILES = {
+    'AlanTWStrategyEFGSimple': 'alan_tw_strategy_efg_simple.py',
+    'AlanTWStrategyEFG95Simple': 'alan_tw_strategy_efg95_simple.py',
+    'AlanTWStrategyEFG95Full': 'alan_tw_strategy_efg95_full.py',
+    'AlanTWStrategyACESimple': 'alan_tw_strategy_ace_simple.py',
+    'AlanTWStrategyEFGNotStart': 'alan_tw_strategy_efg_not_start.py',
+}
+
 # 基底類別的預設值（供子類未覆寫時回退）
 BASE_DEFAULTS = {
     'AlanTWStrategyBase': {'entry_plus_di_min': 24, 'entry_minus_di_max': 21,
-                           'sell_type': 'bare'},
-    'AlanTWStrategyNotStartBase': {'entry_plus_di_min': None, 'entry_minus_di_max': None},
+                           'sell_type': 'bare',
+                           'entry_low_ratio_days': 15, 'entry_low_ratio_max': 1.32},
+    'AlanTWStrategyNotStartBase': {'entry_plus_di_min': None, 'entry_minus_di_max': None,
+                                   'entry_low_ratio_days': 15, 'entry_low_ratio_max': 1.32},
 }
+
+# 未發動型類別（不套用發動型專屬檢查，如加權收盤 MACD）
+NOT_START_CLASSES = {'AlanTWStrategyEFGNotStart'}
 
 
 def _read(path):
@@ -76,14 +92,14 @@ def _resolve(node, attrs):
     raise TypeError(f'不支援的節點: {ast.dump(node)[:60]}')
 
 
-def _configs(class_node, attrs):
-    """取出 get_strategy_configs() 回傳的設定清單"""
+def _find_configs(class_node, attrs):
+    """取出 get_strategy_configs() 回傳的設定清單；未定義時回傳 None"""
     for stmt in class_node.body:
         if isinstance(stmt, ast.FunctionDef) and stmt.name == 'get_strategy_configs':
             ret = stmt.body[-1]
             assert isinstance(ret, ast.Return)
             return _resolve(ret.value, attrs)
-    raise AssertionError(f'{class_node.name} 未定義 get_strategy_configs')
+    return None
 
 
 def _norm(text):
@@ -96,16 +112,47 @@ def _pct(x):
     return f'{x:.0%}'
 
 
-def _collect(py_file, cls_name):
-    """取得該策略的 (configs, attrs)，attrs 含繼承回退後的 DMI 與 sell_type"""
+def _collect(py_file, cls_name, need_configs=True):
+    """取得該策略的 (configs, attrs)。
+
+    attrs 含繼承回退後的 DMI 與 sell_type；configs 若子類未定義
+    get_strategy_configs（如 EFG95Simple 繼承 EFG95Full），沿繼承鏈往上找。
+    """
     classes = _parse_classes(py_file)
     node = classes[cls_name]
     attrs = _class_attrs(node)
+    configs = _find_configs(node, attrs)
+
+    base_name = None
     for base in node.bases:
-        base_name = base.id if isinstance(base, ast.Name) else None
-        for key, val in BASE_DEFAULTS.get(base_name, {}).items():
+        if isinstance(base, ast.Name):
+            base_name = base.id
+
+    # 沿繼承鏈往上補 configs 與屬性預設值
+    visited = set()
+    while base_name and base_name not in visited:
+        visited.add(base_name)
+        if base_name in BASE_DEFAULTS:
+            for key, val in BASE_DEFAULTS[base_name].items():
+                attrs.setdefault(key, val)
+            break
+        if base_name not in CLASS_FILES:
+            break
+        parent_classes = _parse_classes(CLASS_FILES[base_name])
+        parent = parent_classes[base_name]
+        parent_attrs = _class_attrs(parent)
+        for key, val in parent_attrs.items():
             attrs.setdefault(key, val)
-    return _configs(node, attrs), attrs
+        if configs is None:
+            configs = _find_configs(parent, {**parent_attrs, **attrs})
+        base_name = None
+        for base in parent.bases:
+            if isinstance(base, ast.Name):
+                base_name = base.id
+
+    if need_configs:
+        assert configs is not None, f'{cls_name} 的繼承鏈上找不到 get_strategy_configs'
+    return configs, attrs
 
 
 @pytest.mark.parametrize('md_file,py_file,cls_name', STRATEGIES)
@@ -134,9 +181,26 @@ def test_strategy_doc_matches_code(md_file, py_file, cls_name):
         if val is not None and str(val) not in md:
             missing.append(f'{key} = {val}')
 
+    # 統一進場條件：收盤 ÷ 近 N 日最低價 <= 上限
+    low_days, low_max = attrs.get('entry_low_ratio_days'), attrs.get('entry_low_ratio_max')
+    if str(low_days) not in md or str(low_max) not in md:
+        missing.append(f'低點乖離上限 近{low_days}日×{low_max}')
+
+    # 統一技術指標：發動型 MACD 以加權收盤價自算
+    if cls_name not in NOT_START_CLASSES and '加權收盤價' not in md:
+        missing.append('MACD 加權收盤價說明')
+
+    # 籌碼面：投信已加入買進條件，不應再寫「不列入」
+    if '投信' not in md:
+        missing.append('籌碼面投信條件')
+    if '不列入' in md:
+        missing.append('投信已列入買進條件，md 不應再寫「不列入」')
+
     sell = attrs.get('sell_type')
-    if sell == 'simple' and '-0.5%' not in md:
-        missing.append('簡單出場的 -0.5%')
+    if sell == 'simple':
+        for token in ('-0.5%', '-3.5%'):
+            if token not in md:
+                missing.append(f'簡單出場的 {token}')
     if sell == 'full':
         for token in ('-3.5%', '-2.5%', '31'):
             if token not in md:
@@ -145,19 +209,23 @@ def test_strategy_doc_matches_code(md_file, py_file, cls_name):
     assert not missing, f'{md_file} 未涵蓋以下程式碼設定：\n  - ' + '\n  - '.join(missing)
 
 
-def test_combo_doc_matches_code():
+@pytest.mark.parametrize('combo_cls,expected_sell', [
+    ('AlanTWStrategyEFG95ACE', 'full'),
+    ('AlanTWStrategyEFG95ACESimple', 'simple'),
+])
+def test_combo_doc_matches_code(combo_cls, expected_sell):
     """組合策略：兩個分量的參數與出場型別"""
     md_file = 'alan_tw_strategy_efg95_ace.md'
     md = _norm(_read(os.path.join(DOCS_DIR, md_file)))
 
     classes = _parse_classes('alan_tw_strategy_efg95_ace.py')
-    combo = classes['AlanTWStrategyEFG95ACE']
+    combo = classes[combo_cls]
     component_names = []
     for stmt in combo.body:
         if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name) \
                 and stmt.targets[0].id == 'COMPONENTS':
             component_names = [e.id for e in stmt.value.elts]
-    assert component_names, 'COMPONENTS 未定義'
+    assert component_names, f'{combo_cls} COMPONENTS 未定義'
 
     missing = []
     sell_types = set()
@@ -171,16 +239,22 @@ def test_combo_doc_matches_code():
                 if key in attrs and _pct(attrs[key]) not in md:
                     missing.append(f'{comp}.{key} = {_pct(attrs[key])}')
         else:                                    # 引用其他檔案的策略
-            _, attrs = _collect('alan_tw_strategy_efg95_full.py', comp)
+            _, attrs = _collect(CLASS_FILES[comp], comp, need_configs=False)
             sell_types.add(attrs.get('sell_type'))
 
-    if len(sell_types) == 1 and '簡單出場' in md:
-        missing.append('兩分量出場已統一，md 不應提到簡單出場')
+    # 兩分量的出場型別必須一致，且符合該組合版本的定調
+    if sell_types != {expected_sell}:
+        missing.append(f'{combo_cls} 兩分量 sell_type 應皆為 {expected_sell}，實際 {sell_types}')
+    label = '完整出場' if expected_sell == 'full' else '簡單出場'
+    if label not in md:
+        missing.append(f'md 未提及 {combo_cls} 的{label}')
 
     # 「獨立版 vs 組合版」對照表：逐欄比對，避免兩個值寫反而未被發現
     raw = _read(os.path.join(DOCS_DIR, md_file))
-    _, ace_attrs = _collect('alan_tw_strategy_ace_simple.py', 'AlanTWStrategyACESimple')
-    combo_attrs = _class_attrs(classes['_ACE_A90C90Full'])
+    _, ace_attrs = _collect('alan_tw_strategy_ace_simple.py', 'AlanTWStrategyACESimple',
+                            need_configs=False)
+    combo_ace = ('_ACE_A90C90Full' if expected_sell == 'full' else '_ACE_A90C90Simple')
+    combo_attrs = _class_attrs(classes[combo_ace])
     for key in ('extra_high_pct_a', 'extra_high_pct_c'):
         for line in raw.split('\n'):
             if key not in line or not line.strip().startswith('|'):
