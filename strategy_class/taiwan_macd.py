@@ -32,10 +32,12 @@ def taiwan_macd(high_df, low_df, close_df,
     """
     wc = weighted_close(high_df, low_df, close_df)
 
-    ema_fast = wc.ewm(span=fastperiod, adjust=False).mean()
-    ema_slow = wc.ewm(span=slowperiod, adjust=False).mean()
+    # min_periods：不足期數先輸出 NaN（與 taiwan_kd 的 rolling min_periods 同慣例）。
+    # 只遮蔽前段輸出，不改變 EMA 遞迴種子，warm-up 期之後的數值與未設定時相同。
+    ema_fast = wc.ewm(span=fastperiod, adjust=False, min_periods=fastperiod).mean()
+    ema_slow = wc.ewm(span=slowperiod, adjust=False, min_periods=slowperiod).mean()
 
     dif = ema_fast - ema_slow
-    dea = dif.ewm(span=signalperiod, adjust=False).mean()
+    dea = dif.ewm(span=signalperiod, adjust=False, min_periods=signalperiod).mean()
 
     return dif, dea, dif - dea
