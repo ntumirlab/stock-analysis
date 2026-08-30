@@ -7,7 +7,8 @@ from .alan_tw_strategy_efg95_simple import AlanTWStrategyEFG95Simple
 from .alan_tw_strategy_efg95_full import AlanTWStrategyEFG95Full
 from .alan_tw_strategy_ace_simple import AlanTWStrategyACESimple
 from .alan_tw_strategy_efg_not_start import AlanTWStrategyEFGNotStart
-from .alan_tw_strategy_efg95_ace import AlanTWStrategyEFG95ACE, AlanTWStrategyEFG95ACESimple
+from .alan_tw_strategy_efg95_ace_full import AlanTWStrategyEFG95ACEFull
+from .alan_tw_strategy_efg95_ace_simple import AlanTWStrategyEFG95ACESimple
 
 from .oscar.oscar_strategy_andor import OscarAndOrStrategy
 from .oscar.oscar_strategy_composite import OscarCompositeStrategy

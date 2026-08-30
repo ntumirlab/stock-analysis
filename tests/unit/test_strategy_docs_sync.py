@@ -209,16 +209,17 @@ def test_strategy_doc_matches_code(md_file, py_file, cls_name):
     assert not missing, f'{md_file} 未涵蓋以下程式碼設定：\n  - ' + '\n  - '.join(missing)
 
 
-@pytest.mark.parametrize('combo_cls,expected_sell', [
-    ('AlanTWStrategyEFG95ACE', 'full'),
-    ('AlanTWStrategyEFG95ACESimple', 'simple'),
+@pytest.mark.parametrize('combo_cls,expected_sell,md_file,py_file', [
+    ('AlanTWStrategyEFG95ACEFull', 'full',
+     'alan_tw_strategy_efg95_ace_full.md', 'alan_tw_strategy_efg95_ace_full.py'),
+    ('AlanTWStrategyEFG95ACESimple', 'simple',
+     'alan_tw_strategy_efg95_ace_simple.md', 'alan_tw_strategy_efg95_ace_simple.py'),
 ])
-def test_combo_doc_matches_code(combo_cls, expected_sell):
+def test_combo_doc_matches_code(combo_cls, expected_sell, md_file, py_file):
     """組合策略：兩個分量的參數與出場型別"""
-    md_file = 'alan_tw_strategy_efg95_ace.md'
     md = _norm(_read(os.path.join(DOCS_DIR, md_file)))
 
-    classes = _parse_classes('alan_tw_strategy_efg95_ace.py')
+    classes = _parse_classes(py_file)
     combo = classes[combo_cls]
     component_names = []
     for stmt in combo.body:

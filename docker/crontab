@@ -14,7 +14,7 @@ TZ=Asia/Taipei
 8 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG95Full >> /app/logs/backtest.log 2>&1
 11 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyACESimple >> /app/logs/backtest.log 2>&1
 14 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFGNotStart >> /app/logs/backtest.log 2>&1
-17 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG95ACE >> /app/logs/backtest.log 2>&1
+17 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG95ACEFull >> /app/logs/backtest.log 2>&1
 20 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=AlanTWStrategyEFG95ACESimple >> /app/logs/backtest.log 2>&1
 23 22 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.backtest_executor --strategy_class_name=PeterWuStrategy >> /app/logs/backtest.log 2>&1
 
