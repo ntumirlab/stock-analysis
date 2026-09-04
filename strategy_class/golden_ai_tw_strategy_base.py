@@ -55,6 +55,31 @@ def _golden_ai_process_worker(args):
     strategy._run_one_ranks(ranks, dao, timestamp, date_str, time_str, report_dir, i, total)
 
 
+def rank_subsets(rank_start: int, rank_end: int, only=None):
+    """要回測哪幾組 ranks。`only` 不給就是 rank_start~rank_end 的完整 powerset。
+
+    `only` 傳一組（如 `[1, 2, 3, 4, 5, 6, 7, 8]`）時只跑那一組。補跑歷史時 255 組
+    與 1 組差 255 倍的 sim 次數，而多數時候只需要主力那一組先有線可看。
+
+    超出 pool 的名次直接拒絕：清單只有 rank_start~rank_end 這幾檔，寫進去的 ranks
+    字串 dashboard 的名次選單也選不到，那筆資料等於存了沒人看得到。
+    """
+    pool = list(range(rank_start, rank_end + 1))
+    if only is None:
+        return [list(c) for r in range(1, len(pool) + 1) for c in combinations(pool, r)]
+
+    only = list(only)
+    outside = sorted(set(only) - set(pool))
+    if outside:
+        raise ValueError(
+            f'ranks {outside} 不在 {rank_start}~{rank_end} 的範圍內，'
+            f'清單沒有這幾個名次'
+        )
+    if not only:
+        raise ValueError('ranks 不能是空的')
+    return [only]
+
+
 def _extract_report_json(html_path):
     """從 finlab 產出的報告 HTML 抽出 reportJson / positionJson。
 
@@ -423,7 +448,8 @@ class GoldenAITWStrategyBase:
                 f"{self.task_name} Ranks[{ranks_str}] @ {timestamp}"
             )
 
-    def run_strategy(self, report_dir=None, num_workers=None):
+    def run_strategy(self, report_dir=None, num_workers=None, ranks=None):
+        """`ranks` 不給就跑完整 powerset（排程走這條）；給一組就只跑那一組（補跑用）。"""
         if num_workers is None:
             num_workers = self.num_workers
 
@@ -439,8 +465,7 @@ class GoldenAITWStrategyBase:
         if report_dir is not None:
             os.makedirs(report_dir, exist_ok=True)
 
-        ranks_pool = list(range(self.rank_start, self.rank_end + 1))
-        all_subsets = [list(c) for r in range(1, len(ranks_pool) + 1) for c in combinations(ranks_pool, r)]
+        all_subsets = rank_subsets(self.rank_start, self.rank_end, only=ranks)
         total = len(all_subsets)
         print(f"[{self.task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Rank {self.rank_start}~{self.rank_end}")
         print(f"開始執行 {total} 組 Ranks 回測（workers={num_workers}）...")
