@@ -102,7 +102,9 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                     )
                 # 拼法與實盤的 PortfolioSyncManager state key 一致（`build_tranche_specs`
                 # 產的 tranche_1..N）。份數不必相同——相同時人會把兩邊讀成同一件事，
-                # 那就別讓它們只差一個底線。
+                # 那就別讓它們只差一個底線。**同名也真的同義**：monthly 與 weekly_4w
+                # 共用一個相位原點（見 `core.tranche_schedule`），所以這裡的 tranche_k
+                # 與實盤的 tranche_k 指的是同一組買入日，不分策略。
                 reports[f"tranche_{offset + 1}"] = report
 
             return reports

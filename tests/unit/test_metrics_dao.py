@@ -296,13 +296,43 @@ def test_a_complete_set_counts_as_done(tmp_path):
 
 
 def test_the_default_expectation_is_one_row(tmp_path):
-    """weekly 一天一列，行為必須與改動前逐字相同。"""
+    """weekly 一天一列（tranche 為 NULL），行為必須與改動前逐字相同。"""
     path = str(tmp_path / 'w.db')
     dao = GoldenAIBacktestMetricsDAO(db_path=path)
     assert dao.exists_for_date('2026-08-22', 'weekly', '1,2,3') is False
     dao.save(timestamp='2026-08-22 22:35:00', strategy='weekly',
              tranche=None, ranks='1,2,3', report=FakeReport())
     assert dao.exists_for_date('2026-08-22', 'weekly', '1,2,3') is True
+
+
+def test_two_overlapping_partial_sets_do_not_add_up_to_done(tmp_path):
+    """兩個殘缺組並存時不能用列數湊滿。
+
+    `_run_one_ranks` 會先 `delete_for_date` 再寫，但那是兩個獨立 transaction；
+    兩支行程重疊時「B 刪完 → A 寫入 → B 寫入」就會讓兩組並存。數列數的話這裡是 4、
+    判定完成、從此永久跳過，而實際上 tranche_4 一次都沒算過。
+    """
+    path = str(tmp_path / 'overlap.db')
+    dao = GoldenAIBacktestMetricsDAO(db_path=path)
+    for ts, tranches in [('2026-08-22 09:00:00', ('tranche_1', 'tranche_2')),
+                         ('2026-08-22 22:45:00', ('tranche_1', 'tranche_3'))]:
+        for tranche in tranches:
+            dao.save(timestamp=ts, strategy='weekly_4w', tranche=tranche,
+                     ranks='1,2,3', report=FakeReport())
+
+    assert _rows(path) == 4                                                   # 列數湊滿了
+    assert dao.exists_for_date('2026-08-22', 'weekly_4w', '1,2,3', expected=4) is False
+
+
+def test_a_duplicated_complete_set_still_counts_as_done(tmp_path):
+    """同樣的交錯下若兩組都寫完，四份都在，就不該再重算一次。"""
+    path = str(tmp_path / 'dup.db')
+    dao = GoldenAIBacktestMetricsDAO(db_path=path)
+    for ts in ('2026-08-22 09:00:00', '2026-08-22 22:45:00'):
+        for n in range(1, 5):
+            dao.save(timestamp=ts, strategy='weekly_4w', tranche=f'tranche_{n}',
+                     ranks='1,2,3', report=FakeReport())
+    assert dao.exists_for_date('2026-08-22', 'weekly_4w', '1,2,3', expected=4) is True
 
 
 def test_delete_for_date_clears_both_tables(partial_db):

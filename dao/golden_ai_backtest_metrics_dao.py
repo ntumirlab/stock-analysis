@@ -160,9 +160,18 @@ class GoldenAIBacktestMetricsDAO:
                         expected: int = 1) -> bool:
         """這個日期／策略／ranks 是否已經有**完整的一組**紀錄。
 
-        `expected` 是一組幾列：weekly 一列，4 週策略每份 tranche 一列。只問「有沒有」
+        `expected` 是一組幾份：weekly 一份，4 週策略每份 tranche 一份。只問「有沒有」
         的話，寫到一半掛掉（例如 DB 鎖住）留下的殘缺組會被判定成已存在，隔天整組跳過，
         缺的那幾份永遠補不回來，而且沒有任何人會發現。
+
+        **數的是相異的 tranche，不是列數。**同一天同一組 ranks 可能存在兩個殘缺組——
+        `_run_one_ranks` 雖然會先 `delete_for_date` 再寫，但那是兩個獨立 transaction，
+        兩支行程重疊執行時「B 刪完 → A 寫入 → B 寫入」的交錯會讓兩組並存。數列數的話
+        1+3 兩份加上另一組的 1+2 就湊滿 4，從此永久跳過，而 `_normalized()` 拿到的是
+        重複計入某幾份、又缺了另幾份的平均。相異 tranche 只有三種，不會被湊數騙過。
+
+        `tranche IS NULL`（weekly，沒有相位）在 SQLite 的 DISTINCT 下算同一個值，
+        所以那條路徑仍然是「有沒有那一列」，與改動前逐字相同。
 
         只看 metrics 不看 reports：報告抽取失敗是既有的容許狀況（finlab 輸出格式變動時
         會 log warning 後繼續），拿它當閘門會讓正常情況也一直重算。
@@ -170,8 +179,10 @@ class GoldenAIBacktestMetricsDAO:
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM golden_ai_backtest_metrics "
-                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
+                "SELECT COUNT(*) FROM ("
+                "  SELECT DISTINCT tranche FROM golden_ai_backtest_metrics "
+                "  WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?"
+                ")",
                 (strategy, f"{date_str}%", ranks)
             )
             return cursor.fetchone()[0] >= expected

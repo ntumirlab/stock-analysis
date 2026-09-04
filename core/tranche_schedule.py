@@ -24,25 +24,34 @@ import pandas as pd
 # 與這裡各自獨立——回測要試幾份是回測自己的事。
 NUM_TRANCHES = 4
 
-# 各策略的錨點清單日（週日）。**從資料推導出來、算一次之後寫死**：若讓它每晚重算，
-# 日後只要補進一份更早的清單、或清掉最早那筆，相位就會整組位移、整條歷史線回頭全變。
+# 相位原點（週日）。**算一次之後寫死**：若讓它每晚重算，日後只要補進一份更早的清單、
+# 或清掉最早那筆，相位就會整組位移、整條歷史線回頭全變。
 #
-# 推導方式（2026-08-22 於 data_prod.db 算出）：
-#     SELECT MIN(date) FROM recommendation_stocks WHERE frequency = '<weekly|monthly>'
-#     -> 依 `_create_df` 的規則對齊到下一個週日 -> 該週日即錨點，隔天是第一個買入日
+# 取值（2026-08-22 於 data_prod.db 算出）＝ weekly 最早的那份清單所對齊的週日：
+#     SELECT MIN(date) FROM recommendation_stocks WHERE frequency = 'weekly'
+#     -> 2025-09-24（週三）-> 依 `_create_df` 的規則對齊到 2025-09-28 -> 首個買入日 09-29
 #
-#   weekly  最早清單 2025-09-24（週三）-> 週日 2025-09-28 -> 首個買入日 2025-09-29
-#   monthly 最早清單 2025-10-05（週日）-> 週日 2025-10-05 -> 首個買入日 2025-10-06
+# **兩支策略共用同一個原點，不是各自從自己的第一份清單推。**相位沒有日曆語意，
+# 名字唯一的用處就是指認「錢落在哪一個槽位」——共用原點之後，monthly 的 tranche_2、
+# weekly_4w 的 tranche_2 與實盤 `build_tranche_specs` 的 tranche_2 指的是同一組週一，
+# 三邊可以直接對照。各自推的話 monthly 會因為第一份清單晚一週而整組位移一格，
+# 於是同名不同義——那正是這個命名想避免的誤讀。
 #
-# 兩支策略各有各的錨點，因為它們的清單來源不同、開始時間差一週。
+# monthly 的清單從 2025-10-05 才開始，落在原點之後一週＝tranche_2 先進場、tranche_1
+# 要等到 10-26。這只影響資料最前緣的四週，而 `_apply_cutoff` 只留最近 lookback_months，
+# 回測視窗裡看不到。
+#
+# dict 而非單一常數：key 就是「這支策略有沒有相位」的白名單，weekly（一週一輪）
+# 不該有，查不到時 `anchor_sunday` 會明確報錯而不是默默給一個槽位。
+_ANCHOR = pd.Timestamp('2025-09-28')
 TRANCHE_ANCHOR_SUNDAYS = {
-    'weekly_4w': pd.Timestamp('2025-09-28'),
-    'monthly':   pd.Timestamp('2025-10-05'),
+    'weekly_4w': _ANCHOR,
+    'monthly':   _ANCHOR,
 }
 
 
 def anchor_sunday(strategy: str) -> pd.Timestamp:
-    """該策略的錨點清單日。strategy 是 task_name（'weekly_4w' / 'monthly'）。"""
+    """相位原點。strategy 是 task_name（'weekly_4w' / 'monthly'）。"""
     try:
         return TRANCHE_ANCHOR_SUNDAYS[strategy]
     except KeyError:

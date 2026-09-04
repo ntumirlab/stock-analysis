@@ -95,8 +95,10 @@ def missing_list_sunday(cycles: List[Cycle], today: pd.Timestamp,
     每天再喊也改變不了。
 
     不拋例外：拋出去會擋掉整支 job、連其他 tranche 的賣出都做不成，而這種情況本來
-    就沒東西可買，擋下來沒有意義。`list_sundays` 是對齊後的清單週日（見
-    `align_to_sunday`），與 `_create_df` 的 `weekly_batches` 同一套鍵。
+    就沒東西可買，擋下來沒有意義。`check_recommendation_freshness` 已經按同一個理由
+    改成不拋（見那支的說明），兩邊現在一致＝缺清單只讓當期空手，其餘 tranche 照常。
+    `list_sundays` 是對齊後的清單週日（見 `align_to_sunday`），與 `_create_df` 的
+    `weekly_batches` 同一套鍵。
     """
     current = find_current_cycle(cycles, today)
     if current is None:
@@ -127,25 +129,40 @@ def owning_sunday(dates) -> pd.DatetimeIndex:
 
 def check_recommendation_freshness(cycles: List[Cycle], today: pd.Timestamp,
                                    latest_rec_date: Optional[str]) -> None:
-    """進行中的週期若缺少進場日應使用的週日清單，拋 RuntimeError 擋下下單。
+    """當期缺少進場日該用的週日清單就記警告；DB 一份清單都沒有才拋 RuntimeError。
 
-    清單晚入庫時每日 sync 會自動補進場，寧可晚買也不要默默用過期清單買。
+    **過期清單不再擋下單。**這支原本的工作是「不要默默拿過期清單買」，而
+    `GoldenAITWStrategyBase._create_df` 現在會把沒有清單的那一週整週歸零
+    （見那裡的註解），過期清單買進在結構上已經不可能發生——缺清單的那一份 tranche
+    自己空手，其餘照常。
+
+    留著拋就只剩壞處：`OrderExecutor.run_strategy_and_sync` 對每支策略沒有
+    try/except，任何一份 tranche 拋出去就是整支 job 中止，那天所有 tranche 的
+    **賣出**也一起做不成。實測缺 2026-09-06 清單時，tranche_2 會從週一一路拋到週六，
+    其中週五正是 tranche_3 的賣出日。而且不能改成「catch 起來跳過那一份」——
+    finlab 的 `_prune_removed_strategies` 會把不在 Portfolio 裡的策略整個 pop 掉，
+    等於把那份 tranche 的持股全部賣出，比中止更糟。
+
+    `latest_rec_date is None` 仍然拋：一份清單都沒有時 `_create_df` 連 position
+    都建不起來（空 records 會在 pivot 前 KeyError），與其讓它爆在下游不如講清楚。
+    這種情況也不可能有持股，擋下來沒有賣單的代價。
+
     today 不在任何週期內（錨點前、週期交界的週末）則不檢查。
     """
     current = find_current_cycle(cycles, today)
     if current is None:
         return
     entry = current[0]
-    expected_sunday = entry - pd.Timedelta(days=(entry.dayofweek - 6) % 7)
+    expected_sunday = owning_sunday([entry])[0]
     if latest_rec_date is None:
         raise RuntimeError(
             f"DB 無推薦清單：當前週期（買入日 {entry:%Y-%m-%d}）"
             f"需要 {expected_sunday:%Y-%m-%d} 的清單，不下單"
         )
-    rec_date = pd.to_datetime(latest_rec_date)
-    aligned = align_to_sunday(rec_date)
+    aligned = align_to_sunday(pd.to_datetime(latest_rec_date))
     if aligned < expected_sunday:
-        raise RuntimeError(
+        logger.warning(
             f"推薦清單過期：最新清單日期 {latest_rec_date}（對齊週日 {aligned:%Y-%m-%d}），"
-            f"當前週期買入日 {entry:%Y-%m-%d} 應使用 {expected_sunday:%Y-%m-%d} 的清單，不下單"
+            f"當前週期買入日 {entry:%Y-%m-%d} 應使用 {expected_sunday:%Y-%m-%d} 的清單。"
+            f"本輪空手，其餘 tranche 照常"
         )

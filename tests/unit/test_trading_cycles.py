@@ -4,6 +4,8 @@
 weekday 慣例：pandas dayofweek，週一=0。kiri 實際設定 = 週一買(0)、週五賣(4)、hold 4 週。
 """
 
+import logging
+
 import pandas as pd
 import pytest
 
@@ -169,19 +171,25 @@ class TestCheckRecommendationFreshness:
         # 週期中 DB 出現更新的清單（7/12）不該誤判為過期
         check_recommendation_freshness(kiri_cycles(), ts("2026-07-13"), "2026-07-12")
 
-    def test_stale_list_raises(self):
-        # 2026-07-02 容器實測過的情境：7/13 重放時 DB 最新只有 6/28 → 擋下
-        with pytest.raises(RuntimeError, match="推薦清單過期"):
+    def test_a_stale_list_only_warns(self, caplog):
+        """過期清單不再擋下單：`_create_df` 已經把缺清單那週歸零，這一份 tranche
+        自己空手就好。拋出去會連帶擋掉當天其他 tranche 的賣出。"""
+        # 2026-07-02 容器實測過的情境：7/13 重放時 DB 最新只有 6/28
+        with caplog.at_level(logging.WARNING, logger="core.trading_cycles"):
             check_recommendation_freshness(kiri_cycles(), ts("2026-07-13"), "2026-06-28")
+        assert "推薦清單過期" in caplog.text
 
-    def test_missing_list_raises(self):
+    def test_an_entry_day_with_the_previous_weeks_list_only_warns(self, caplog):
+        """進場日當天清單還是上上週的——最該空手的一天，也不該拋。"""
+        with caplog.at_level(logging.WARNING, logger="core.trading_cycles"):
+            check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), "2026-06-28")
+        assert "推薦清單過期" in caplog.text
+
+    def test_an_empty_db_still_raises(self):
+        """一份清單都沒有時 `_create_df` 連 position 都建不起來，讓它講清楚再死。
+        這種情況不可能有持股，擋下來沒有賣不掉的代價。"""
         with pytest.raises(RuntimeError, match="DB 無推薦清單"):
             check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), None)
-
-    def test_entry_day_with_previous_week_list_raises(self):
-        # 進場日當天清單還是上上週的 → 不下單
-        with pytest.raises(RuntimeError, match="推薦清單過期"):
-            check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), "2026-06-28")
 
 
 class TestOwningSunday:

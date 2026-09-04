@@ -249,8 +249,8 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
             self._latest_selected_ids = []
 
         today = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
-        # 先發缺清單的警告再做 freshness 檢查：清單整週沒進來時 freshness 會拋，
-        # 拋在前面的話這則警告就永遠送不出去。
+        # 先發缺清單的警告再做 freshness 檢查：freshness 只在「DB 一份清單都沒有」時
+        # 才拋，而那種情況下這則警告沒東西可講，順序仍以警告優先比較好讀。
         self._warn_if_the_weeks_list_is_missing(dao, today)
         self._check_recommendation_freshness(latest_rec, today)
 

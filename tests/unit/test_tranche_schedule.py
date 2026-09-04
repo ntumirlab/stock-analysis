@@ -23,13 +23,9 @@ def _all_sundays(start, end):
 
 
 class TestAnchor:
-    @pytest.mark.parametrize('strategy, first_buy_day', [
-        ('weekly_4w', '2025-09-29'),
-        ('monthly', '2025-10-06'),
-    ])
-    def test_anchor_sunday_is_the_day_before_the_first_buy_day(self, strategy, first_buy_day):
-        """錨點＝各策略最早一份清單對齊後的週日，隔天（buy_weekday=週一）就是首個買入日。"""
-        assert anchor_sunday(strategy) + pd.Timedelta(days=1) == pd.Timestamp(first_buy_day)
+    def test_the_anchor_is_the_day_before_the_first_weekly_buy_day(self):
+        """相位原點＝weekly 最早一份清單對齊後的週日，隔天（buy_weekday=週一）就是首個買入日。"""
+        assert anchor_sunday('weekly_4w') + pd.Timedelta(days=1) == pd.Timestamp('2025-09-29')
 
     @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
     def test_the_anchor_itself_is_tranche_one(self, strategy):
@@ -39,10 +35,12 @@ class TestAnchor:
     def test_anchors_are_sundays(self, strategy):
         assert TRANCHE_ANCHOR_SUNDAYS[strategy].weekday() == 6
 
-    def test_the_two_strategies_have_their_own_phase(self):
-        """兩支的清單來源不同、起跑差一週，所以同一個週日不會落在同一份 tranche。"""
-        assert anchor_sunday('monthly') - anchor_sunday('weekly_4w') == pd.Timedelta(weeks=1)
-        assert tranche_of('weekly_4w', '2026-08-09') != tranche_of('monthly', '2026-08-09')
+    def test_both_strategies_share_one_phase(self):
+        """同名必須同義：tranche_2 在兩支策略、在實盤，指的都是同一組週一。
+        各自從自己的第一份清單推的話 monthly 會位移一格，名字就開始說謊。"""
+        assert anchor_sunday('monthly') == anchor_sunday('weekly_4w')
+        for d in ('2026-08-09', '2026-01-11', '2025-10-05'):
+            assert tranche_of('weekly_4w', d) == tranche_of('monthly', d)
 
     def test_a_strategy_without_a_phase_says_so(self):
         with pytest.raises(KeyError, match='weekly'):
@@ -155,15 +153,20 @@ class TestPhaseMatchesLiveTrading:
         if live_tranches != NUM_TRANCHES:
             pytest.skip(f'回測跑 {NUM_TRANCHES} 份、實盤 {live_tranches} 份，編號無對應關係')
 
-        for k in range(NUM_TRANCHES):
-            entry = cycle_start + pd.Timedelta(days=7 * k)          # build_tranche_specs
-            list_sunday = entry - pd.Timedelta(days=1)              # 進場日前一天的清單
-            assert tranche_of(strategy, list_sunday) == k + 1, (
-                f"實盤 tranche_{k + 1}（買入日 {entry:%Y-%m-%d}）對到回測的 "
-                f"tranche{tranche_of(strategy, list_sunday)}。改過 config 的 "
-                f"cycle_start_date 嗎？它必須與 TRANCHE_ANCHOR_SUNDAYS 差 "
-                f"{NUM_TRANCHES} 週的整數倍。"
-            )
+        assert strategy in FOUR_WEEK_STRATEGIES
+
+        # 兩支 4 週策略共用同一個相位原點，所以這個對應對兩支都要成立——只驗實盤
+        # 在跑的那一支的話，另一支哪天位移了也沒人會發現。
+        for s in FOUR_WEEK_STRATEGIES:
+            for k in range(NUM_TRANCHES):
+                entry = cycle_start + pd.Timedelta(days=7 * k)      # build_tranche_specs
+                list_sunday = entry - pd.Timedelta(days=1)          # 進場日前一天的清單
+                assert tranche_of(s, list_sunday) == k + 1, (
+                    f"實盤 tranche_{k + 1}（買入日 {entry:%Y-%m-%d}）對到 {s} 的 "
+                    f"tranche{tranche_of(s, list_sunday)}。改過 config 的 "
+                    f"cycle_start_date 嗎？它必須與 TRANCHE_ANCHOR_SUNDAYS 差 "
+                    f"{NUM_TRANCHES} 週的整數倍。"
+                )
 
     def test_the_live_anchor_lands_on_a_buy_weekday_after_a_list_sunday(self):
         cycle_start, _ = self._cycle_start_date()

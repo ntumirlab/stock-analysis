@@ -161,7 +161,11 @@ _KPI_COLS = ['annual_return', 'sharpe', 'max_drawdown', 'win_ratio']
 # 按日曆天會把 4 個交易日的單期報酬年化成 ^91，那不是這個策略在做的事。
 # 從 HOLD_WEEKS 導出：節點持有幾週，一年就有 52/幾週 期。寫死 13 的話，
 # 改了持有週數就會拿舊期數去年化，圖上的數字錯得毫無跡象。
-_NODE_PERIODS = {s: 52 // w for s, w in HOLD_WEEKS.items()}
+#
+# 真除法不是 floor：`//` 在 52 整除時（1/2/4 週）沒差，但持有 3 週會算成 17 期
+# 而不是 17.33、5 週算成 10 而不是 10.4，年化差 2~4%——正是上面那句想避免的
+# 「錯得毫無跡象」。用途是 `(1 + node_return) ** periods`，吃 float 沒問題。
+_NODE_PERIODS = {s: 52 / w for s, w in HOLD_WEEKS.items()}
 # 名次選項＝config.yaml 的 rank_start~rank_end；DB 存的是它的完整 powerset（255 組）
 _RANK_CHOICES = list(range(1, 9))
 

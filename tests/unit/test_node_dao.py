@@ -157,12 +157,13 @@ OLD_NODES_SCHEMA = """
 """
 
 # (strategy, list_date, 舊的 week_of_month, 新制正確的 tranche)
-# 舊值＝當月第幾個週日，新值＝距錨點幾週取模；weekly_4w 在 2026-05 那段兩者不一致，
-# monthly 因為錨點差一週而全段不一致。三個都不是隨手編的，是照定義算出來的。
+# 舊值＝當月第幾個週日，新值＝距相位原點幾週取模。三個都不是隨手編的，是照定義算出來的。
+# 兩支 4 週策略共用同一個原點（見 `core.tranche_schedule`），所以同一個 list_date
+# 的新標籤必須一致——最後兩列刻意用同一天，位移一格就會被抓到。
 LEGACY_NODES = [
+    ("weekly_4w", "2026-07-19", 3, 3),   # 這期舊新湊巧相同，也必須維持正確
     ("weekly_4w", "2026-05-03", 1, 4),
-    ("weekly_4w", "2026-07-19", 3, 3),   # 這期湊巧相同，也必須維持正確
-    ("monthly",   "2026-07-19", 3, 2),
+    ("monthly",   "2026-05-03", 1, 4),
 ]
 
 
@@ -284,7 +285,7 @@ def test_a_failed_relabel_takes_the_rename_down_with_it(legacy_nodes_db, monkeyp
     monkeypatch.undo()
     GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
     assert "tranche" in _nodes_columns(legacy_nodes_db)
-    assert _tranche(legacy_nodes_db, "monthly", "2026-07-19") == {2}
+    assert _tranche(legacy_nodes_db, "monthly", "2026-05-03") == {4}
 
 
 def test_an_already_migrated_db_is_opened_without_taking_the_write_lock(legacy_nodes_db):
@@ -356,5 +357,5 @@ def test_unlabelling_an_unknown_strategy_does_not_touch_the_known_ones(legacy_no
 
     GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
     assert _tranche(legacy_nodes_db, "some_future_strategy", "2026-07-19") == {None}
-    assert _tranche(legacy_nodes_db, "monthly", "2026-07-19") == {2}
+    assert _tranche(legacy_nodes_db, "monthly", "2026-05-03") == {4}
     assert _tranche(legacy_nodes_db, "weekly", "2026-07-19") == {None}
