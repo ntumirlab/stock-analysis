@@ -10,12 +10,16 @@ def _rename_column_if_needed(cursor, table: str, old: str, new: str) -> bool:
     """欄位改名，已經改過就跳過。DAO 建構時呼叫，所以每個 process 都會跑到。
 
     回傳「這次呼叫真的改了名」。一份 DB 只會改名成功一次，所以它天然就是呼叫端做
-    一次性資料修補的閘門；修補又與改名共用同一個 transaction，不會留下「名改了、
-    值沒補」的中間狀態。
+    一次性資料修補的閘門。但閘門不會自己跟修補同進退：sqlite3 的 DDL 走 autocommit，
+    ALTER 一下去就落地，之後的 UPDATE 失敗只會退掉 UPDATE。要做資料修補的呼叫端
+    因此必須自己把兩者包進一筆 `BEGIN IMMEDIATE`（見
+    `GoldenAIBacktestNodesDAO._create_table`），否則會留下「名改了、值沒補」而且
+    再也補不回來的狀態。
 
     讀 PRAGMA 與 ALTER 之間沒有鎖，部署時多個容器同時啟動的話，後手拿到的欄位快照
-    會是舊的、ALTER 會噴 `no such column`。那不是錯誤——先手已經把事情做完了（連同
-    它的資料修補一起 commit），確認結果對就好，不對才往外丟。
+    會是舊的、ALTER 會噴 `no such column`。那不是錯誤——先手已經把事情做完了，確認
+    結果對就好，不對才往外丟。（呼叫端若已在 `BEGIN IMMEDIATE` 裡則走不到這條路：
+    後手會擋在寫鎖上，等先手 commit 完才讀到快照。）
     """
     cursor.execute(f"PRAGMA table_info({table})")
     cols = {row[1] for row in cursor.fetchall()}

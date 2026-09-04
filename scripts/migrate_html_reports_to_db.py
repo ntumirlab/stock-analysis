@@ -19,7 +19,10 @@ import sqlite3
 import argparse
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)   # 直接執行時 sys.path[0] 是 scripts/，dao 才 import 得到
 ASSETS = os.path.join(PROJECT_ROOT, 'assets')
+
+from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO  # noqa: E402
 
 STRATEGY_DIRS = {
     'weekly':    'GoldenAITWStrategyWeekly',
@@ -130,6 +133,12 @@ def main():
     print(f"DB: {args.db}")
     print(f"Dry run: {args.dry_run}")
     print()
+
+    # 這支自己開裸連線查 `tranche`，schema migration 全靠 DAO 建構時跑。指向一份還沒被
+    # 新版 DAO 開過的 DB（例如還原出來的備份）時少了這一步，第一句查詢就是
+    # `no such column: tranche`。dry run 不寫 DB，也就不該動 schema。
+    if not args.dry_run:
+        GoldenAIBacktestMetricsDAO(db_path=args.db)
 
     t_start = time.monotonic()
     total_inserted = 0

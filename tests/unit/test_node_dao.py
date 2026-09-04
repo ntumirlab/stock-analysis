@@ -263,6 +263,50 @@ def test_migration_is_idempotent(legacy_nodes_db):
     assert {(s, d): _tranche(legacy_nodes_db, s, d) for s, d, _, _ in LEGACY_NODES} == first
 
 
+def test_a_failed_relabel_takes_the_rename_down_with_it(legacy_nodes_db, monkeypatch):
+    """改標失敗時改名必須跟著退回，否則閘門關上、錯的標籤再也補不回來。
+
+    sqlite3 的 DDL 是 autocommit 跑的，所以這個保證只在呼叫端自己開 transaction 時
+    才成立——這支測試守的就是那句 `BEGIN IMMEDIATE`。
+    """
+    import sqlite3
+
+    def boom(cursor):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(GoldenAIBacktestNodesDAO, "_relabel_tranches", staticmethod(boom))
+    with pytest.raises(sqlite3.OperationalError):
+        GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    assert "week_of_month" in _nodes_columns(legacy_nodes_db)
+    assert "tranche" not in _nodes_columns(legacy_nodes_db)
+
+    # 改名沒發生，閘門就還開著：下次啟動照樣會改名並補上標籤
+    monkeypatch.undo()
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    assert "tranche" in _nodes_columns(legacy_nodes_db)
+    assert _tranche(legacy_nodes_db, "monthly", "2026-07-19") == {2}
+
+
+def test_an_already_migrated_db_is_opened_without_taking_the_write_lock(legacy_nodes_db):
+    """migration 跑完之後再開這個 DAO，不該再去搶寫鎖。
+
+    `golden_ai_backtest_dashboard` 在 module import 就建這個 DAO；節點回填正在寫的
+    時候若白搶一次鎖，會被擋滿 30 秒 busy timeout 然後整個 import 炸掉。
+    """
+    import sqlite3
+
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)   # 先把 migration 跑完
+
+    writer = sqlite3.connect(legacy_nodes_db, timeout=1)
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("UPDATE golden_ai_backtest_nodes SET n_stocks = 3")
+    try:
+        GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)   # 卡住就是回歸
+    finally:
+        writer.rollback()
+        writer.close()
+
+
 def test_a_fresh_db_is_created_with_tranche(tmp_path):
     path = str(tmp_path / "fresh_nodes.db")
     GoldenAIBacktestNodesDAO(db_path=path)
@@ -270,8 +314,12 @@ def test_a_fresh_db_is_created_with_tranche(tmp_path):
     assert "tranche" in cols and "week_of_month" not in cols
 
 
-def test_a_strategy_without_an_anchor_keeps_its_label_instead_of_blowing_up(tmp_path):
-    """沒有錨點的策略若帶著相位值出現，不該讓整個 DAO 建構失敗。"""
+def test_a_strategy_without_an_anchor_is_left_unlabelled_instead_of_blowing_up(tmp_path):
+    """沒有錨點的策略若帶著相位值出現，不該讓整個 DAO 建構失敗——但也不能留著舊標籤。
+
+    改名是一次性閘門，這一輪之後不會再有人來補。留著月份索引就是讓所有讀的人
+    把它當錨點相位讀；清成 NULL 至少是誠實的「沒有標籤」。
+    """
     import sqlite3
 
     path = str(tmp_path / "odd.db")
@@ -288,4 +336,25 @@ def test_a_strategy_without_an_anchor_keeps_its_label_instead_of_blowing_up(tmp_
     conn.close()
 
     GoldenAIBacktestNodesDAO(db_path=path)
-    assert _tranche(path, "some_future_strategy", "2026-07-19") == {2}
+    assert _tranche(path, "some_future_strategy", "2026-07-19") == {None}
+
+
+def test_unlabelling_an_unknown_strategy_does_not_touch_the_known_ones(legacy_nodes_db):
+    """混在同一批裡時，沒錨點的被清成 NULL，有錨點的照樣算出新標籤。"""
+    import sqlite3
+
+    conn = sqlite3.connect(legacy_nodes_db)
+    conn.execute(
+        "INSERT INTO golden_ai_backtest_nodes (strategy, list_date, ranks, "
+        "entry_date, exit_date, week_of_month, n_stocks, node_return, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("some_future_strategy", "2026-07-19", "1,2", "2026-07-20", "2026-08-14",
+         5, 2, 0.01, "2026-08-23 23:20:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    GoldenAIBacktestNodesDAO(db_path=legacy_nodes_db)
+    assert _tranche(legacy_nodes_db, "some_future_strategy", "2026-07-19") == {None}
+    assert _tranche(legacy_nodes_db, "monthly", "2026-07-19") == {2}
+    assert _tranche(legacy_nodes_db, "weekly", "2026-07-19") == {None}
