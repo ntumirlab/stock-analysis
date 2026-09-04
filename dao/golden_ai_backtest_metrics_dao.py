@@ -131,30 +131,82 @@ class GoldenAIBacktestMetricsDAO:
         finally:
             conn.close()
 
-    def save(self, timestamp: str, strategy: str, tranche: Optional[str], ranks: str, report) -> None:
+    _INSERT_METRICS = """
+        INSERT INTO golden_ai_backtest_metrics
+            (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    @staticmethod
+    def _metric_values(report, strategy: str, tranche: Optional[str], ranks: str):
+        """從 report 取出要寫的五個指標。抽不到就記 warning 寫 NULL，不中斷。
+
+        刻意與寫入分開：`save_group` 的四份必須在開 transaction **之前**全部抽完，
+        transaction 裡只留 DB 操作。`get_metrics()` 是 finlab 的計算、可能很慢也可能拋，
+        擺在交易中間就等於把好不容易縮短的空窗又拉開。
+        """
         try:
             metrics = report.get_metrics()
-            annual_return = metrics.get('profitability', {}).get('annualReturn')
-            sharpe        = metrics.get('ratio', {}).get('sharpeRatio')
-            sortino       = metrics.get('ratio', {}).get('sortinoRatio')
-            max_drawdown  = metrics.get('risk', {}).get('maxDrawdown')
-            win_ratio     = metrics.get('winrate', {}).get('winRate')
+            return (
+                metrics.get('profitability', {}).get('annualReturn'),
+                metrics.get('ratio', {}).get('sharpeRatio'),
+                metrics.get('ratio', {}).get('sortinoRatio'),
+                metrics.get('risk', {}).get('maxDrawdown'),
+                metrics.get('winrate', {}).get('winRate'),
+            )
         except Exception as e:
             logger.warning(f"get_metrics() failed for {strategy} {tranche} Ranks[{ranks}]: {e}. Saving NULLs.")
-            annual_return = sharpe = sortino = max_drawdown = win_ratio = None
+            return (None, None, None, None, None)
+
+    def save(self, timestamp: str, strategy: str, tranche: Optional[str], ranks: str, report) -> None:
+        values = self._metric_values(report, strategy, tranche, ranks)
 
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
-            conn.execute("""
-                INSERT INTO golden_ai_backtest_metrics
-                    (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio))
+            conn.execute(self._INSERT_METRICS,
+                         (timestamp, strategy, tranche, ranks) + values)
             conn.commit()
         finally:
             conn.close()
 
         logger.info(f"Saved metrics: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
+
+    def save_group(self, timestamp: str, strategy: str, ranks: str, reports: dict) -> None:
+        """把某日某組 ranks 的整組 tranche metrics 換掉：清舊列與寫新列同一筆 transaction。
+
+        重算之前一定要清乾淨——`save` 是純 INSERT、沒有唯一鍵，殘缺組直接補寫的話那天
+        會同時存在殘列與新的完整組，而 `_normalized()` 是按 (timestamp, ranks) 取平均，
+        被重複計入的那幾份會把數字拉偏。
+
+        但「先刪、再分四次寫」中間掛掉就是把稍早算好的那幾列刪光而且補不回來：
+        `exists_for_date` 永遠只問今天的 date_str，沒有任何東西會回頭看舊日期，
+        那個洞是永久的。包成一筆之後，要嘛整組換成功、要嘛什麼都沒動。
+
+        指標在開 transaction 之前就抽完（見 `_metric_values`），交易裡只有
+        一個 DELETE 加 N 個 INSERT。
+        """
+        rows = [
+            (timestamp, strategy, tranche, ranks) + self._metric_values(report, strategy, tranche, ranks)
+            for tranche, report in reports.items()
+        ]
+
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            cursor = conn.execute(
+                "DELETE FROM golden_ai_backtest_metrics "
+                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
+                (strategy, f"{timestamp[:10]}%", ranks)
+            )
+            cleared = cursor.rowcount
+            conn.executemany(self._INSERT_METRICS, rows)
+            conn.commit()
+        finally:
+            conn.close()
+
+        logger.info(
+            f"Saved metrics group: {strategy} Ranks[{ranks}] @ {timestamp} "
+            f"({len(rows)} tranches, cleared {cleared} stale rows)"
+        )
 
     def exists_for_date(self, date_str: str, strategy: str, ranks: str,
                         expected: int = 1) -> bool:
@@ -164,11 +216,15 @@ class GoldenAIBacktestMetricsDAO:
         的話，寫到一半掛掉（例如 DB 鎖住）留下的殘缺組會被判定成已存在，隔天整組跳過，
         缺的那幾份永遠補不回來，而且沒有任何人會發現。
 
-        **數的是相異的 tranche，不是列數。**同一天同一組 ranks 可能存在兩個殘缺組——
-        `_run_one_ranks` 雖然會先 `delete_metrics_for_date` 再寫，但那是兩個獨立 transaction，
-        兩支行程重疊執行時「B 刪完 → A 寫入 → B 寫入」的交錯會讓兩組並存。數列數的話
-        1+3 兩份加上另一組的 1+2 就湊滿 4，從此永久跳過，而 `_normalized()` 拿到的是
-        重複計入某幾份、又缺了另幾份的平均。相異 tranche 只有三種，不會被湊數騙過。
+        **數的是相異的 tranche，不是列數。**這支不控制誰寫進來，而它讀到的東西可能
+        比 `save_group` 老：正式機累積的舊列是「先刪、再分四次 INSERT」那版寫的，
+        當年掛在中間就會留下殘缺組，甚至兩組交錯並存。數列數的話 1+3 兩份加上另一組的
+        1+2 就湊滿 4、判定完成而永久跳過，`_normalized()` 拿到的則是重複計入某幾份、
+        又缺了另幾份的平均。相異 tranche 只有三種，不會被湊數騙過。
+
+        走 `save_group` 之後 4 週策略這側不會再產生殘缺組（整組換是一筆 transaction，
+        要嘛四份都在、要嘛什麼都沒動），所以這裡是對既有資料與未來其他寫入者的防線，
+        不是對現行寫入路徑的。
 
         `tranche IS NULL`（weekly，沒有相位）在 SQLite 的 DISTINCT 下算同一個值，
         所以那條路徑仍然是「有沒有那一列」，與改動前逐字相同。
@@ -188,33 +244,6 @@ class GoldenAIBacktestMetricsDAO:
             return cursor.fetchone()[0] >= expected
         finally:
             conn.close()
-
-    def delete_metrics_for_date(self, date_str: str, strategy: str, ranks: str) -> int:
-        """清掉這個日期／策略／ranks 的 metrics，回傳刪除列數。
-
-        重算之前先清乾淨。`save` 是純 INSERT、沒有唯一鍵，殘缺組直接補寫的話那天會
-        同時存在殘列與新的完整組，`_normalized()` 按 (timestamp, ranks) 取平均就會被
-        重複計入的那幾份拉偏。
-
-        **只碰 metrics，不碰 reports。**報告那半改由 `replace_report` 逐份就地換掉——
-        它們的重寫要先跑 `display()` 產 HTML 再抽 JSON，四份加起來是以秒計的空窗，
-        在這裡先刪掉的話，那段時間內掛掉就是把上一次算好的報告清光而且補不回來。
-        metrics 這半沒有那個問題：刪完緊接著就是四次 INSERT，中間沒有慢動作。
-        """
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        try:
-            cursor = conn.execute(
-                "DELETE FROM golden_ai_backtest_metrics "
-                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
-                (strategy, f"{date_str}%", ranks)
-            )
-            deleted = cursor.rowcount
-            conn.commit()
-        finally:
-            conn.close()
-        if deleted:
-            logger.info(f"Cleared {deleted} stale metrics rows: {strategy} Ranks[{ranks}] @ {date_str}")
-        return deleted
 
     def load(self, strategy: Optional[str] = None, tranche: Optional[str] = None,
              ranks: Optional[str] = None) -> pd.DataFrame:

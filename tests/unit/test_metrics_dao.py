@@ -308,7 +308,7 @@ def test_the_default_expectation_is_one_row(tmp_path):
 def test_two_overlapping_partial_sets_do_not_add_up_to_done(tmp_path):
     """兩個殘缺組並存時不能用列數湊滿。
 
-    `_run_one_ranks` 會先 `delete_metrics_for_date` 再寫，但那是兩個獨立 transaction；
+    正式機累積的舊列是「先刪、再分四次 INSERT」那版寫的（現在走 `save_group`）；
     兩支行程重疊時「B 刪完 → A 寫入 → B 寫入」就會讓兩組並存。數列數的話這裡是 4、
     判定完成、從此永久跳過，而實際上 tranche_4 一次都沒算過。
     """
@@ -335,32 +335,99 @@ def test_a_duplicated_complete_set_still_counts_as_done(tmp_path):
     assert dao.exists_for_date('2026-08-22', 'weekly_4w', '1,2,3', expected=4) is True
 
 
-def test_delete_metrics_for_date_leaves_the_reports_alone(partial_db):
-    """報告不能跟著整組刪：它們的重寫要先跑 display() 產 HTML，中途掛掉就補不回來了。
-    那半改由 `replace_report` 逐份就地換。"""
+def _tranches(path):
+    conn = sqlite3.connect(path)
+    try:
+        return sorted(r[0] for r in conn.execute(
+            "SELECT tranche FROM golden_ai_backtest_metrics"))
+    finally:
+        conn.close()
+
+
+FOUR = {f'tranche_{n}': FakeReport() for n in range(1, 5)}
+
+
+def test_save_group_replaces_the_partial_set(partial_db):
+    """殘缺的兩份被換成完整的四份，不是疊上去——`save` 沒有唯一鍵，疊上去的話
+    `_normalized()` 的平均會被重複計入的那幾份拉偏。"""
     path, dao = partial_db
-    assert dao.delete_metrics_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 2
-    assert _rows(path) == 0
+    dao.save_group(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                   ranks='1,2,3', reports=FOUR)
+    assert _rows(path) == 4
+    assert _tranches(path) == ['tranche_1', 'tranche_2', 'tranche_3', 'tranche_4']
+
+
+def test_save_group_leaves_the_reports_alone(partial_db):
+    """報告不能跟著整組刪：它們的重寫要先跑 display() 產 HTML，中途掛掉就補不回來了。
+    那半由 `replace_report` 逐份就地換。"""
+    path, dao = partial_db
+    dao.save_group(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                   ranks='1,2,3', reports=FOUR)
     assert _rows(path, 'golden_ai_backtest_reports') == 2
 
 
-def test_delete_metrics_for_date_is_scoped(partial_db):
+def test_save_group_is_scoped(partial_db):
     """別的日期／策略／ranks 不能被掃到。"""
     path, dao = partial_db
-    dao.save(timestamp='2026-08-21 22:45:00', strategy='weekly_4w',
-             tranche='tranche_1', ranks='1,2,3', report=FakeReport())
-    dao.save(timestamp='2026-08-22 22:45:00', strategy='monthly',
-             tranche='tranche_1', ranks='1,2,3', report=FakeReport())
-    dao.save(timestamp='2026-08-22 22:45:00', strategy='weekly_4w',
-             tranche='tranche_1', ranks='1,2', report=FakeReport())
+    for ts, strategy, ranks in [('2026-08-21 22:45:00', 'weekly_4w', '1,2,3'),
+                                ('2026-08-22 22:45:00', 'monthly', '1,2,3'),
+                                ('2026-08-22 22:45:00', 'weekly_4w', '1,2')]:
+        dao.save(timestamp=ts, strategy=strategy, tranche='tranche_1',
+                 ranks=ranks, report=FakeReport())
 
-    assert dao.delete_metrics_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 2
-    assert _rows(path) == 3
+    dao.save_group(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                   ranks='1,2,3', reports=FOUR)
+    assert _rows(path) == 4 + 3        # 換掉的那 2 列不見了，另外三列原封不動
 
 
-def test_delete_metrics_for_date_on_nothing_is_a_no_op(tmp_path):
+def test_save_group_is_atomic(partial_db):
+    """清舊與寫新同一筆 transaction。分開做的話，掛在中間就是把稍早算好的那幾列
+    刪光而且補不回來——`exists_for_date` 永遠只問今天，沒有人會回頭看舊日期。
+
+    製造中途失敗的方式：讓其中一份的指標是 sqlite 綁不了的型別，INSERT 會在
+    DELETE 已經執行之後才炸。"""
+    path, dao = partial_db
+    before = _tranches(path)
+
+    class Unbindable:
+        def get_metrics(self):
+            return {'profitability': {'annualReturn': object()}}
+
+    with pytest.raises(sqlite3.InterfaceError):
+        dao.save_group(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                       ranks='1,2,3', reports=dict(FOUR, tranche_3=Unbindable()))
+
+    assert _tranches(path) == before    # 舊列還在，不是被刪光之後留下空白
+
+
+def test_save_group_on_an_empty_day_just_writes(tmp_path):
     dao = GoldenAIBacktestMetricsDAO(db_path=str(tmp_path / 'empty.db'))
-    assert dao.delete_metrics_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 0
+    dao.save_group(timestamp='2026-08-22 22:45:00', strategy='weekly_4w',
+                   ranks='1,2,3', reports=FOUR)
+    assert _tranches(str(tmp_path / 'empty.db')) == [
+        'tranche_1', 'tranche_2', 'tranche_3', 'tranche_4']
+
+
+def test_save_group_keeps_saving_when_one_report_has_no_metrics(partial_db):
+    """抽不到指標寫 NULL 但不中斷，與 `save` 一致——而且是在開 transaction 之前抽的。"""
+    path, dao = partial_db
+
+    class Broken:
+        def get_metrics(self):
+            raise ValueError('no metrics')
+
+    reports = dict(FOUR, tranche_3=Broken())
+    dao.save_group(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                   ranks='1,2,3', reports=reports)
+    conn = sqlite3.connect(path)
+    try:
+        got = dict(conn.execute(
+            "SELECT tranche, annual_return FROM golden_ai_backtest_metrics"))
+    finally:
+        conn.close()
+    assert got['tranche_3'] is None
+    assert got['tranche_1'] is not None
+    assert len(got) == 4
 
 
 # ── replace_report：逐份就地換掉當天的報告 ──

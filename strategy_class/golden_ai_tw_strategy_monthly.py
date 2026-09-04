@@ -121,12 +121,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         tranche_reports = self._run_core(ranks=ranks)
-        # 走到這裡代表那組不完整（或根本沒有）。先清殘列再寫，免得殘列與完整組並存。
-        # 只清 metrics——報告那半由下面的 `replace_report` 逐份就地換（見那支的說明），
-        # 在這裡一起刪的話，中途掛掉會把上一次算好的報告清光而且補不回來。
-        dao.delete_metrics_for_date(date_str, self.task_name, ranks_str)
-        for tranche_name, report in tranche_reports.items():
-            dao.save(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name, ranks=ranks_str, report=report)
+        # 走到這裡代表那組不完整（或根本沒有）。整組一次換掉：清舊列與寫四份新列在
+        # 同一筆 transaction 裡，中途掛掉不會留下比原本更少的東西（見 `save_group`）。
+        # 報告那半不能這樣做——每份都要先 `display()` 才抽得到 JSON——改由
+        # `replace_report` 逐份就地換。
+        dao.save_group(timestamp=timestamp, strategy=self.task_name,
+                       ranks=ranks_str, reports=tranche_reports)
 
         if report_dir is not None:
             wrapper = MultiReportWrapper(tranche_reports)
