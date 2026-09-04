@@ -121,8 +121,10 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         tranche_reports = self._run_core(ranks=ranks)
-        # 走到這裡代表那組不完整（或根本沒有）。先清殘列再寫，免得殘列與完整組並存
-        dao.delete_for_date(date_str, self.task_name, ranks_str)
+        # 走到這裡代表那組不完整（或根本沒有）。先清殘列再寫，免得殘列與完整組並存。
+        # 只清 metrics——報告那半由下面的 `replace_report` 逐份就地換（見那支的說明），
+        # 在這裡一起刪的話，中途掛掉會把上一次算好的報告清光而且補不回來。
+        dao.delete_metrics_for_date(date_str, self.task_name, ranks_str)
         for tranche_name, report in tranche_reports.items():
             dao.save(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name, ranks=ranks_str, report=report)
 
@@ -141,8 +143,8 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 tranche_path = os.path.join(base_dir, f"{file_base}_{tranche_name}{ext}")
                 rj, pj = _extract_report_json(tranche_path)
                 if rj:
-                    dao.save_report(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name,
-                                    ranks=ranks_str, report_json=rj, position_json=pj)
+                    dao.replace_report(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name,
+                                       ranks=ranks_str, report_json=rj, position_json=pj)
                 else:
                     logger.warning(
                         f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "
@@ -162,8 +164,8 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
                 rj, pj = _extract_report_json(tmp_path)
                 os.unlink(tmp_path)
                 if rj:
-                    dao.save_report(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name,
-                                    ranks=ranks_str, report_json=rj, position_json=pj)
+                    dao.replace_report(timestamp=timestamp, strategy=self.task_name, tranche=tranche_name,
+                                       ranks=ranks_str, report_json=rj, position_json=pj)
                 else:
                     logger.warning(
                         f"報告資料抽取失敗（finlab 輸出格式可能已變），未存入 DB: "

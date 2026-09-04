@@ -308,7 +308,7 @@ def test_the_default_expectation_is_one_row(tmp_path):
 def test_two_overlapping_partial_sets_do_not_add_up_to_done(tmp_path):
     """兩個殘缺組並存時不能用列數湊滿。
 
-    `_run_one_ranks` 會先 `delete_for_date` 再寫，但那是兩個獨立 transaction；
+    `_run_one_ranks` 會先 `delete_metrics_for_date` 再寫，但那是兩個獨立 transaction；
     兩支行程重疊時「B 刪完 → A 寫入 → B 寫入」就會讓兩組並存。數列數的話這裡是 4、
     判定完成、從此永久跳過，而實際上 tranche_4 一次都沒算過。
     """
@@ -335,14 +335,16 @@ def test_a_duplicated_complete_set_still_counts_as_done(tmp_path):
     assert dao.exists_for_date('2026-08-22', 'weekly_4w', '1,2,3', expected=4) is True
 
 
-def test_delete_for_date_clears_both_tables(partial_db):
+def test_delete_metrics_for_date_leaves_the_reports_alone(partial_db):
+    """報告不能跟著整組刪：它們的重寫要先跑 display() 產 HTML，中途掛掉就補不回來了。
+    那半改由 `replace_report` 逐份就地換。"""
     path, dao = partial_db
-    assert dao.delete_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 4   # 2 metrics + 2 reports
+    assert dao.delete_metrics_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 2
     assert _rows(path) == 0
-    assert _rows(path, 'golden_ai_backtest_reports') == 0
+    assert _rows(path, 'golden_ai_backtest_reports') == 2
 
 
-def test_delete_for_date_is_scoped(partial_db):
+def test_delete_metrics_for_date_is_scoped(partial_db):
     """別的日期／策略／ranks 不能被掃到。"""
     path, dao = partial_db
     dao.save(timestamp='2026-08-21 22:45:00', strategy='weekly_4w',
@@ -352,10 +354,71 @@ def test_delete_for_date_is_scoped(partial_db):
     dao.save(timestamp='2026-08-22 22:45:00', strategy='weekly_4w',
              tranche='tranche_1', ranks='1,2', report=FakeReport())
 
-    assert dao.delete_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 4
+    assert dao.delete_metrics_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 2
     assert _rows(path) == 3
 
 
-def test_delete_for_date_on_nothing_is_a_no_op(tmp_path):
+def test_delete_metrics_for_date_on_nothing_is_a_no_op(tmp_path):
     dao = GoldenAIBacktestMetricsDAO(db_path=str(tmp_path / 'empty.db'))
-    assert dao.delete_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 0
+    assert dao.delete_metrics_for_date('2026-08-22', 'weekly_4w', '1,2,3') == 0
+
+
+# ── replace_report：逐份就地換掉當天的報告 ──
+
+def _report_rows(path, tranche):
+    """某一份 tranche 的報告列。`tranche=None` 是 weekly 那條路徑的真實值，不是「全部」。"""
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute(
+            "SELECT timestamp, report_json FROM golden_ai_backtest_reports "
+            "WHERE tranche IS ?", (tranche,)).fetchall()
+    finally:
+        conn.close()
+
+
+def test_replace_report_swaps_that_tranche_only(partial_db):
+    """換掉 tranche_1，tranche_2 上一次的報告原封不動——這正是掛在第 n 份時，
+    還沒輪到的那幾份留著舊報告而不是空白的原因。"""
+    path, dao = partial_db
+    dao.replace_report(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                       tranche='tranche_1', ranks='1,2,3',
+                       report_json='{"new": 1}', position_json='{}')
+    assert _report_rows(path, 'tranche_1') == [('2026-08-22 23:10:00', '{"new": 1}')]
+    assert _report_rows(path, 'tranche_2') == [('2026-08-22 22:45:00', '{}')]
+
+
+def test_replace_report_does_not_accumulate_across_runs(partial_db):
+    """同一天重跑幾次都只留最後一份。`save_report` 是純 INSERT，沒有這個保證，
+    而 get_report 是 LIMIT 1 without ORDER BY——堆起來就會隨機拿到舊的那份。"""
+    path, dao = partial_db
+    for ts in ('2026-08-22 23:10:00', '2026-08-22 23:40:00'):
+        dao.replace_report(timestamp=ts, strategy='weekly_4w', tranche='tranche_1',
+                           ranks='1,2,3', report_json=f'{{"ts": "{ts}"}}', position_json='{}')
+    assert _report_rows(path, 'tranche_1') == [
+        ('2026-08-22 23:40:00', '{"ts": "2026-08-22 23:40:00"}')]
+
+
+def test_replace_report_is_scoped_to_the_same_day(partial_db):
+    """昨天的報告不該被今天的重跑掃掉——那是別一天的資料點。"""
+    path, dao = partial_db
+    dao.save_report(timestamp='2026-08-21 22:45:00', strategy='weekly_4w',
+                    tranche='tranche_1', ranks='1,2,3',
+                    report_json='{"yesterday": 1}', position_json='{}')
+    dao.replace_report(timestamp='2026-08-22 23:10:00', strategy='weekly_4w',
+                       tranche='tranche_1', ranks='1,2,3',
+                       report_json='{"today": 1}', position_json='{}')
+    assert sorted(_report_rows(path, 'tranche_1')) == [
+        ('2026-08-21 22:45:00', '{"yesterday": 1}'),
+        ('2026-08-22 23:10:00', '{"today": 1}'),
+    ]
+
+
+def test_replace_report_matches_a_null_tranche(tmp_path):
+    """weekly 的 tranche 是 NULL，`= NULL` 永遠不成立——用 `IS ?` 才換得掉。"""
+    path = str(tmp_path / 'weekly.db')
+    dao = GoldenAIBacktestMetricsDAO(db_path=path)
+    dao.save_report(timestamp='2026-08-22 22:35:00', strategy='weekly', tranche=None,
+                    ranks='1,2,3', report_json='{"old": 1}', position_json='{}')
+    dao.replace_report(timestamp='2026-08-22 23:00:00', strategy='weekly', tranche=None,
+                       ranks='1,2,3', report_json='{"new": 1}', position_json='{}')
+    assert _report_rows(path, None) == [('2026-08-22 23:00:00', '{"new": 1}')]

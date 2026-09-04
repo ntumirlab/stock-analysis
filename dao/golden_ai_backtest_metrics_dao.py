@@ -165,7 +165,7 @@ class GoldenAIBacktestMetricsDAO:
         缺的那幾份永遠補不回來，而且沒有任何人會發現。
 
         **數的是相異的 tranche，不是列數。**同一天同一組 ranks 可能存在兩個殘缺組——
-        `_run_one_ranks` 雖然會先 `delete_for_date` 再寫，但那是兩個獨立 transaction，
+        `_run_one_ranks` 雖然會先 `delete_metrics_for_date` 再寫，但那是兩個獨立 transaction，
         兩支行程重疊執行時「B 刪完 → A 寫入 → B 寫入」的交錯會讓兩組並存。數列數的話
         1+3 兩份加上另一組的 1+2 就湊滿 4，從此永久跳過，而 `_normalized()` 拿到的是
         重複計入某幾份、又缺了另幾份的平均。相異 tranche 只有三種，不會被湊數騙過。
@@ -189,28 +189,31 @@ class GoldenAIBacktestMetricsDAO:
         finally:
             conn.close()
 
-    def delete_for_date(self, date_str: str, strategy: str, ranks: str) -> int:
-        """清掉這個日期／策略／ranks 的 metrics 與 reports，回傳刪除列數。
+    def delete_metrics_for_date(self, date_str: str, strategy: str, ranks: str) -> int:
+        """清掉這個日期／策略／ranks 的 metrics，回傳刪除列數。
 
         重算之前先清乾淨。`save` 是純 INSERT、沒有唯一鍵，殘缺組直接補寫的話那天會
         同時存在殘列與新的完整組，`_normalized()` 按 (timestamp, ranks) 取平均就會被
         重複計入的那幾份拉偏。
+
+        **只碰 metrics，不碰 reports。**報告那半改由 `replace_report` 逐份就地換掉——
+        它們的重寫要先跑 `display()` 產 HTML 再抽 JSON，四份加起來是以秒計的空窗，
+        在這裡先刪掉的話，那段時間內掛掉就是把上一次算好的報告清光而且補不回來。
+        metrics 這半沒有那個問題：刪完緊接著就是四次 INSERT，中間沒有慢動作。
         """
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
-            deleted = 0
-            for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
-                cursor = conn.execute(
-                    f"DELETE FROM {table} "
-                    f"WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
-                    (strategy, f"{date_str}%", ranks)
-                )
-                deleted += cursor.rowcount
+            cursor = conn.execute(
+                "DELETE FROM golden_ai_backtest_metrics "
+                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
+                (strategy, f"{date_str}%", ranks)
+            )
+            deleted = cursor.rowcount
             conn.commit()
         finally:
             conn.close()
         if deleted:
-            logger.info(f"Cleared {deleted} stale rows: {strategy} Ranks[{ranks}] @ {date_str}")
+            logger.info(f"Cleared {deleted} stale metrics rows: {strategy} Ranks[{ranks}] @ {date_str}")
         return deleted
 
     def load(self, strategy: Optional[str] = None, tranche: Optional[str] = None,
@@ -256,6 +259,34 @@ class GoldenAIBacktestMetricsDAO:
         finally:
             conn.close()
         logger.info(f"Saved report JSON: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
+
+    def replace_report(self, timestamp: str, strategy: str, tranche: Optional[str],
+                       ranks: str, report_json: str, position_json: str) -> None:
+        """換掉這一份 tranche 當天的報告：同一筆 transaction 裡先刪同日舊列再寫新的。
+
+        重跑一組時報告不能像 metrics 那樣先整組刪掉——每一份都要先 `display()` 產 HTML
+        才抽得到 JSON，四份加起來是以秒計的空窗，中途掛掉就是把上一次算好的報告清光
+        而且沒有東西補得回來。改成逐份就地換：空窗縮到單筆 DELETE+INSERT，而且掛在
+        第 n 份時，還沒輪到的那幾份留著的是上一次真的跑出來的報告，不是空白。
+
+        `tranche IS ?` 而不是 `=`：weekly 那半的 tranche 是 NULL，`= NULL` 永遠不成立。
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            conn.execute(
+                "DELETE FROM golden_ai_backtest_reports "
+                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ? AND tranche IS ?",
+                (strategy, f"{timestamp[:10]}%", ranks, tranche)
+            )
+            conn.execute("""
+                INSERT INTO golden_ai_backtest_reports
+                    (timestamp, strategy, tranche, ranks, report_json, position_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (timestamp, strategy, tranche, ranks, report_json, position_json))
+            conn.commit()
+        finally:
+            conn.close()
+        logger.info(f"Replaced report JSON: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
 
     def get_report(self, timestamp: str, strategy: str,
                    tranche: Optional[str] = None,
