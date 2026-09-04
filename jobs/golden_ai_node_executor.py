@@ -36,10 +36,11 @@ from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 
 from core.node_backtest import (
-    HOLD_WEEKS, align_to_sunday, check_trades, is_settled,
+    HOLD_WEEKS, check_trades, is_settled,
     node_dates, node_return, node_window,
 )
 from core.tranche_schedule import tranche_of
+from core.trading_cycles import align_to_sunday
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket

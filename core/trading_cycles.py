@@ -111,9 +111,19 @@ def missing_list_sunday(cycles: List[Cycle], today: pd.Timestamp,
     return expected_sunday
 
 
-def align_to_sunday(date: pd.Timestamp) -> pd.Timestamp:
-    """週日留在當天；週一～週六對齊到下一個週日（與推薦清單批次對齊規則一致）。"""
-    return date + pd.Timedelta(days=6 - date.weekday())
+def align_to_sunday(date) -> pd.Timestamp:
+    """清單日對齊規則：週日留在當天，週一～週六對齊到下一個週日。
+
+    **這是這條規則唯一的實作。**它定義了 `_create_df` 的 `weekly_batches` 用哪個週日
+    當鍵，`owning_sunday` 是它的反向，節點制靠它算「哪些週日真的有清單」——三處講的
+    必須是同一件事，各留一份就等於要靠人手動維持一致。放在這個模組是因為 lite 的
+    白名單有它（`core/node_backtest.py` 在黑名單上，反過來放會讓 client 端 import 不到）。
+
+    收 str 或 Timestamp 都可以：呼叫端多半直接餵 DB 拿到的 `record.date` 字串。
+    整批日期請用 `owning_sunday` 的作法向量化，不要在迴圈裡呼叫這支。
+    """
+    d = pd.Timestamp(date)
+    return d + pd.Timedelta(days=6 - d.weekday())
 
 
 def owning_sunday(dates) -> pd.DatetimeIndex:
@@ -159,7 +169,7 @@ def check_recommendation_freshness(cycles: List[Cycle], today: pd.Timestamp,
             f"DB 無推薦清單：當前週期（買入日 {entry:%Y-%m-%d}）"
             f"需要 {expected_sunday:%Y-%m-%d} 的清單，不下單"
         )
-    aligned = align_to_sunday(pd.to_datetime(latest_rec_date))
+    aligned = align_to_sunday(latest_rec_date)
     if aligned < expected_sunday:
         logger.warning(
             f"推薦清單過期：最新清單日期 {latest_rec_date}（對齊週日 {aligned:%Y-%m-%d}），"

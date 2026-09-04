@@ -39,14 +39,6 @@ def node_dates(list_date, buy_weekday: int, sell_weekday: int, hold_weeks: int):
     return entry_date, exit_date
 
 
-def align_to_sunday(date) -> pd.Timestamp:
-    """推薦清單的日期對齊規則，與 `_create_df` 相同：週中產出的清單算下一個週日，
-    週日當天產出的留在當天。抽出來是為了讓「哪些週日真的有清單」能被獨立算出來。
-    """
-    d = pd.Timestamp(date)
-    return d + pd.Timedelta(days=6 - d.weekday())
-
-
 # 視窗終點在結算日之後還要留幾個交易日。**0 ＝ 賣出當天就收工**：部位在結算日已經出清，
 # 之後的日子只是平盤，對節點沒有任何資訊，卻會讓結果晚好幾天才看得到——週五賣掉要等到
 # 下週三，而這個檢視存在的意義就是「週五收盤就知道上週結果」。

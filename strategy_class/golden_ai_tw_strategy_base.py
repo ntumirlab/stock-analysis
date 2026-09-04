@@ -14,7 +14,7 @@ from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from core.backtest_window import snap_cutoff_to_flat_trading_day
-from core.trading_cycles import owning_sunday
+from core.trading_cycles import align_to_sunday, owning_sunday
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
@@ -130,9 +130,9 @@ class GoldenAITWStrategyBase:
                 continue
 
             dt = pd.to_datetime(date)
-
-            days_to_sunday = 6 - dt.weekday()
-            aligned_date = dt + pd.Timedelta(days=days_to_sunday)
+            # 這條規則只有一份實作（`core.trading_cycles`）：`owning_sunday` 是它的反向、
+            # 節點制靠它算「哪些週日真的有清單」，各留一份就要靠人維持一致。
+            aligned_date = align_to_sunday(dt)
 
             if aligned_date in weekly_batches:
                 existing_original_date, _ = weekly_batches[aligned_date]

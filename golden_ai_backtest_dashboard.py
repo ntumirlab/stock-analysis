@@ -12,7 +12,8 @@ import pandas as pd
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
 from dao.golden_ai_backtest_nodes_dao import GoldenAIBacktestNodesDAO
 from dao.recommendation_dao import RecommendationDAO
-from core.node_backtest import HOLD_WEEKS, align_to_sunday, node_dates
+from core.node_backtest import HOLD_WEEKS, node_dates
+from core.trading_cycles import align_to_sunday
 
 logger = logging.getLogger(__name__)
 

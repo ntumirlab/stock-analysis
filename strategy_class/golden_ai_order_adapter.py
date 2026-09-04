@@ -201,7 +201,7 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
         沒有失敗，摘要通知裡什麼都不會出現。
         """
         cycles = self._compute_cycles(until=today + pd.Timedelta(days=7))
-        list_sundays = {align_to_sunday(pd.Timestamp(r.date))
+        list_sundays = {align_to_sunday(r.date)
                         for r in dao.load() if r.date and r.stocks}
         sunday = missing_list_sunday(cycles, today, list_sundays)
         if sunday is None:

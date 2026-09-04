@@ -9,7 +9,6 @@ import pytest
 
 from core.node_backtest import (
     HOLD_WEEKS,
-    align_to_sunday,
     check_trades,
     is_settled,
     node_dates,
@@ -230,22 +229,6 @@ class TestCheckTrades:
         trades = self._trades(2)
         trades.loc[1, 'exit_date'] = pd.Timestamp('2026-07-17')
         assert check_trades(trades, '2026-07-06', '2026-07-10', 2) == '2 distinct exit dates'
-
-
-class TestAlignToSunday:
-    """對齊規則要跟 _create_df 一致，否則「哪些週日真的有清單」會算錯。"""
-
-    @pytest.mark.parametrize('raw, aligned', [
-        ('2026-08-09', '2026-08-09'),   # 週日當天產出 → 留在當天
-        ('2026-08-10', '2026-08-16'),   # 週一 → 下一個週日
-        ('2026-08-14', '2026-08-16'),   # 週五 → 下一個週日
-        ('2026-08-15', '2026-08-16'),   # 週六 → 隔天
-    ])
-    def test_matches_the_create_df_rule(self, raw, aligned):
-        assert align_to_sunday(raw) == pd.Timestamp(aligned)
-
-    def test_accepts_a_timestamp(self):
-        assert align_to_sunday(pd.Timestamp('2026-08-10')) == pd.Timestamp('2026-08-16')
 
 
 class TestCheckTradesAgainstSignalDates:

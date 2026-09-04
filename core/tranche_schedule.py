@@ -64,7 +64,7 @@ def anchor_sunday(strategy: str) -> pd.Timestamp:
 def tranche_of(strategy: str, list_date) -> int:
     """這份清單屬於第幾份 tranche（1~NUM_TRANCHES）。
 
-    list_date 必須是對齊後的週日（`node_backtest.align_to_sunday` 的輸出、或
+    list_date 必須是對齊後的週日（`trading_cycles.align_to_sunday` 的輸出、或
     `_create_df` 產出的 position index）；相位是按「距離錨點幾週」算的，
     傳非週日進來會算到隔壁的槽位。錨點之前的清單也算得出來（往前繞回）。
     """

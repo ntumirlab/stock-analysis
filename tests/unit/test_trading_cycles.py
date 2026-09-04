@@ -150,12 +150,28 @@ class TestFindCurrentCycle:
 
 
 class TestAlignToSunday:
+    """清單日對齊規則的唯一實作——`_create_df` 的 weekly_batches 鍵、`owning_sunday`
+    的反向、節點制的「哪些週日真的有清單」都是它，算錯三處一起錯。"""
+
     def test_sunday_stays(self):
         assert align_to_sunday(ts("2026-07-05")) == ts("2026-07-05")
 
     def test_weekdays_align_to_next_sunday(self):
         for d in ("2026-06-29", "2026-07-01", "2026-07-04"):  # 一、三、六
             assert align_to_sunday(ts(d)) == ts("2026-07-05")
+
+    @pytest.mark.parametrize('raw, aligned', [
+        ('2026-08-09', '2026-08-09'),   # 週日當天產出 → 留在當天
+        ('2026-08-10', '2026-08-16'),   # 週一 → 下一個週日
+        ('2026-08-14', '2026-08-16'),   # 週五 → 下一個週日
+        ('2026-08-15', '2026-08-16'),   # 週六 → 隔天
+    ])
+    def test_it_takes_the_date_string_straight_from_the_db(self, raw, aligned):
+        """呼叫端多半直接餵 `record.date`（str），不該逼每一處自己先轉。"""
+        assert align_to_sunday(raw) == pd.Timestamp(aligned)
+
+    def test_a_timestamp_works_too(self):
+        assert align_to_sunday(pd.Timestamp('2026-08-10')) == pd.Timestamp('2026-08-16')
 
 
 class TestCheckRecommendationFreshness:
