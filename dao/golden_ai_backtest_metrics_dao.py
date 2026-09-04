@@ -6,8 +6,11 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-def _rename_column_if_needed(cursor, table: str, old: str, new: str) -> bool:
+def rename_column_if_needed(cursor, table: str, old: str, new: str) -> bool:
     """欄位改名，已經改過就跳過。DAO 建構時呼叫，所以每個 process 都會跑到。
+
+    公開的：`GoldenAIBacktestNodesDAO` 也用它改自己那張表。（第三張表也要改名時，
+    就該把它挪去獨立的 migration 模組，而不是繼續從某支 DAO 借。）
 
     回傳「這次呼叫真的改了名」。一份 DB 只會改名成功一次，所以它天然就是呼叫端做
     一次性資料修補的閘門。但閘門不會自己跟修補同進退：sqlite3 的 DDL 走 autocommit，
@@ -82,7 +85,7 @@ class GoldenAIBacktestMetricsDAO:
             # 值從 Week1~4 變成 tranche_1~4，欄位名跟著改。純 metadata 操作，與表裡有幾列無關。
             # 放在 top_n migration 之前，那支重建表時才會讀到已經改好名的來源欄位。
             for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
-                _rename_column_if_needed(cursor, table, 'week', 'tranche')
+                rename_column_if_needed(cursor, table, 'week', 'tranche')
 
             # Migration: if top_n column exists, recreate table without it
             cursor.execute("PRAGMA table_info(golden_ai_backtest_metrics)")

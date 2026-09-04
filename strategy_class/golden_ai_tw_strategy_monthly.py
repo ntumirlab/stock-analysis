@@ -41,12 +41,12 @@ class GoldenAITWStrategyMonthly(GoldenAITWStrategyBase):
             reports = {}
             for offset in range(NUM_TRANCHES):
                 # 進場週由錨點連續輪動決定，與實盤的 tranche 排程同一套定義
-                selected_weeks = tranche_sundays(self.task_name, base_position.index, offset + 1)
+                entry_sundays = tranche_sundays(self.task_name, base_position.index, offset + 1)
                 # 與 `core.node_backtest.node_dates` 同一條算式：持有 NUM_TRANCHES 週。
                 # 偏移量從常數導出，改份數時進場節奏與持有期才會一起動——寫死的話
                 # 只有 NUM_TRANCHES=4 是對的（3 會被上一輪的賣單掃到、只持有 4 天）。
-                entry_dates = selected_weeks + pd.Timedelta(days=1 + self.buy_weekday)
-                exit_dates  = selected_weeks + pd.Timedelta(
+                entry_dates = entry_sundays + pd.Timedelta(days=1 + self.buy_weekday)
+                exit_dates  = entry_sundays + pd.Timedelta(
                     days=(NUM_TRANCHES - 1) * 7 + 1 + self.sell_weekday)
 
                 entry_mask = base_position.index.isin(entry_dates)

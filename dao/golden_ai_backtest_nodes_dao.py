@@ -17,7 +17,7 @@ from typing import Optional
 import pandas as pd
 
 from core.tranche_schedule import TRANCHE_ANCHOR_SUNDAYS, tranche_of
-from dao.golden_ai_backtest_metrics_dao import _rename_column_if_needed
+from dao.golden_ai_backtest_metrics_dao import rename_column_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +100,12 @@ class GoldenAIBacktestNodesDAO:
             #
             # 但只在真的還沒改名時才開。搶寫鎖是有代價的：dashboard 在 module import
             # 就建這個 DAO，回填正在寫的時候，白搶一次鎖會被擋滿 busy timeout、然後
-            # 炸在 import。交易裡的 `_rename_column_if_needed` 會自己重讀欄位快照
+            # 炸在 import。交易裡的 `rename_column_if_needed` 會自己重讀欄位快照
             # （拿到寫鎖之後才讀），所以這個先探不會把競態放回來。
             cursor.execute("PRAGMA table_info(golden_ai_backtest_nodes)")
             if any(row[1] == 'week_of_month' for row in cursor.fetchall()):
                 conn.execute("BEGIN IMMEDIATE")
-                if _rename_column_if_needed(cursor, 'golden_ai_backtest_nodes',
+                if rename_column_if_needed(cursor, 'golden_ai_backtest_nodes',
                                             'week_of_month', 'tranche'):
                     self._relabel_tranches(cursor)
 

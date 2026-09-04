@@ -193,7 +193,7 @@ def test_report_json_is_addressed_by_tranche(tmp_path):
 class _RacingCursor:
     """在 PRAGMA 與 ALTER 之間插隊改名的假 cursor——模擬另一個容器搶先做完。
 
-    真正的競態視窗就在這兩句之間：`_rename_column_if_needed` 讀完欄位快照才發 ALTER，
+    真正的競態視窗就在這兩句之間：`rename_column_if_needed` 讀完欄位快照才發 ALTER，
     中間沒有鎖。用假 cursor 把插隊點釘死，比起真的開兩條 thread 賽跑穩定得多。
     """
 
@@ -218,14 +218,14 @@ class _RacingCursor:
 
 def test_losing_a_rename_race_is_not_an_error(legacy_db):
     """後手的 ALTER 會噴 no such column——先手已經做完了，確認結果對就放行。"""
-    from dao.golden_ai_backtest_metrics_dao import _rename_column_if_needed
+    from dao.golden_ai_backtest_metrics_dao import rename_column_if_needed
 
     conn = sqlite3.connect(legacy_db)
     try:
         cursor = _RacingCursor(
             conn.cursor(), legacy_db,
             "ALTER TABLE golden_ai_backtest_metrics RENAME COLUMN week TO tranche")
-        renamed = _rename_column_if_needed(
+        renamed = rename_column_if_needed(
             cursor, 'golden_ai_backtest_metrics', 'week', 'tranche')
         conn.commit()
     finally:
@@ -239,7 +239,7 @@ def test_losing_a_rename_race_is_not_an_error(legacy_db):
 
 def test_a_rename_that_fails_for_any_other_reason_still_raises():
     """只有「已經被改好了」才吞。欄位仍然不在就是真的壞了，要往外丟。"""
-    from dao.golden_ai_backtest_metrics_dao import _rename_column_if_needed
+    from dao.golden_ai_backtest_metrics_dao import rename_column_if_needed
 
     class _BrokenCursor:
         def execute(self, sql, *args):
@@ -252,7 +252,7 @@ def test_a_rename_that_fails_for_any_other_reason_still_raises():
             return self._rows
 
     with pytest.raises(sqlite3.OperationalError, match='locked'):
-        _rename_column_if_needed(_BrokenCursor(), 'whatever', 'week', 'tranche')
+        rename_column_if_needed(_BrokenCursor(), 'whatever', 'week', 'tranche')
 
 
 # ── 寫到一半的殘缺組 ──

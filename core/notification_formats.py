@@ -92,8 +92,12 @@ def format_universe_missing(missing_ids: List[str]) -> str:
     )
 
 
-def format_missing_week_list(task_name: str, sunday, entry) -> str:
-    """當期該用的週日清單不存在（那一輪 tranche 會空手）的警告內文。"""
+def format_missing_list_sunday(task_name: str, sunday, entry) -> str:
+    """當期該用的週日清單不存在（那一輪 tranche 會空手）的警告內文。
+
+    名字對齊 `core.trading_cycles.missing_list_sunday`——那支負責判斷、這支負責措辭，
+    兩邊講的是同一個週日。
+    """
     return (
         f"{task_name} 本輪買入日 {entry:%Y-%m-%d} 該用 {sunday:%Y-%m-%d}（週日）的清單，"
         f"但 DB 裡沒有這一週的清單。\n"

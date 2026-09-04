@@ -15,8 +15,8 @@ from core.trading_cycles import (
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
-from core.notification_formats import (format_missing_week_list,
-                                      format_universe_missing)
+from core.notification_formats import (format_missing_list_sunday,
+                                       format_universe_missing)
 from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
@@ -217,7 +217,7 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
         GoldenAIOrderAdapter._warned_missing_list_keys.add(warn_key)
         self.notifier.send_warning(
             task_name="當週無推薦清單",
-            body=format_missing_week_list(self.task_name, sunday, entry),
+            body=format_missing_list_sunday(self.task_name, sunday, entry),
         )
 
     def _check_recommendation_freshness(self, latest_rec, today):
