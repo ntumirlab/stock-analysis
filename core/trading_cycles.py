@@ -81,32 +81,98 @@ def find_current_cycle(cycles: List[Cycle], today: pd.Timestamp) -> Optional[Cyc
     return next(((e, x) for e, x in cycles if e <= today <= x), None)
 
 
-def align_to_sunday(date: pd.Timestamp) -> pd.Timestamp:
-    """週日留在當天；週一～週六對齊到下一個週日（與推薦清單批次對齊規則一致）。"""
-    return date + pd.Timedelta(days=6 - date.weekday())
+def missing_list_sunday(cycles: List[Cycle], today: pd.Timestamp,
+                        list_sundays) -> Optional[pd.Timestamp]:
+    """當期進場該用的那個週日根本沒有清單時回傳它，否則 None。
+
+    `check_recommendation_freshness` 看不到這種缺席：它比的是「最新清單」對「當期
+    該用的週日」，而週中才發布的清單會對齊到**下一個**週日、讓判斷式通過。實際資料
+    裡四次缺清單（weekly 2025-12-14、2026-01-11，monthly 2025-10-12、2026-01-11）
+    全是這一種——清單在進場日當天（週一）才發，那一輪於是空手，而且一聲不響。
+
+    只在缺席的那個週日所屬的整週內回報。那一週是清單還補得進來的時間窗（日期記成
+    該週日入庫，每日 sync 就會補進場）；過了就確定空手，4 週策略等於 25% 資金空一輪，
+    每天再喊也改變不了。
+
+    不拋例外：拋出去會擋掉整支 job、連其他 tranche 的賣出都做不成，而這種情況本來
+    就沒東西可買，擋下來沒有意義。`check_recommendation_freshness` 已經按同一個理由
+    改成不拋（見那支的說明），兩邊現在一致＝缺清單只讓當期空手，其餘 tranche 照常。
+    `list_sundays` 是對齊後的清單週日（見 `align_to_sunday`），與 `_create_df` 的
+    `weekly_batches` 同一套鍵。
+    """
+    current = find_current_cycle(cycles, today)
+    if current is None:
+        return None
+    expected_sunday = owning_sunday([current[0]])[0]
+    if expected_sunday in {pd.Timestamp(s).normalize() for s in list_sundays}:
+        return None
+    if owning_sunday([today])[0] != expected_sunday:
+        return None
+    return expected_sunday
+
+
+def align_to_sunday(date) -> pd.Timestamp:
+    """清單日對齊規則：週日留在當天，週一～週六對齊到下一個週日。
+
+    **這是這條規則唯一的實作。**它定義了 `_create_df` 的 `weekly_batches` 用哪個週日
+    當鍵，`owning_sunday` 是它的反向，節點制靠它算「哪些週日真的有清單」——三處講的
+    必須是同一件事，各留一份就等於要靠人手動維持一致。放在這個模組是因為 lite 的
+    白名單有它（`core/node_backtest.py` 在黑名單上，反過來放會讓 client 端 import 不到）。
+
+    收 str 或 Timestamp 都可以：呼叫端多半直接餵 DB 拿到的 `record.date` 字串。
+    整批日期請用 `owning_sunday` 的作法向量化，不要在迴圈裡呼叫這支。
+    """
+    d = pd.Timestamp(date)
+    return d + pd.Timedelta(days=6 - d.weekday())
+
+
+def owning_sunday(dates) -> pd.DatetimeIndex:
+    """每一天用的是哪一份清單＝往前最近的週日（週日算自己）。`align_to_sunday` 的反向。
+
+    `_create_df` 把清單日的內容 resample('D').ffill() 往後鋪，所以「這天的 position
+    是哪個週日的清單」就是這個函式。用途是找出「那個週日根本沒有清單」的日子——
+    那幾天鋪過來的是更早的清單，進場等於買一份從未發布過的名單。
+    """
+    idx = pd.DatetimeIndex(dates)
+    return idx - pd.to_timedelta((idx.dayofweek + 1) % 7, unit='D')
 
 
 def check_recommendation_freshness(cycles: List[Cycle], today: pd.Timestamp,
                                    latest_rec_date: Optional[str]) -> None:
-    """進行中的週期若缺少進場日應使用的週日清單，拋 RuntimeError 擋下下單。
+    """當期缺少進場日該用的週日清單就記警告；DB 一份清單都沒有才拋 RuntimeError。
 
-    清單晚入庫時每日 sync 會自動補進場，寧可晚買也不要默默用過期清單買。
+    **過期清單不再擋下單。**這支原本的工作是「不要默默拿過期清單買」，而
+    `GoldenAITWStrategyBase._create_df` 現在會把沒有清單的那一週整週歸零
+    （見那裡的註解），過期清單買進在結構上已經不可能發生——缺清單的那一份 tranche
+    自己空手，其餘照常。
+
+    留著拋就只剩壞處：`OrderExecutor.run_strategy_and_sync` 對每支策略沒有
+    try/except，任何一份 tranche 拋出去就是整支 job 中止，那天所有 tranche 的
+    **賣出**也一起做不成。實測缺 2026-09-06 清單時，tranche_2 會從週一一路拋到週六，
+    其中週五正是 tranche_3 的賣出日。而且不能改成「catch 起來跳過那一份」——
+    finlab 的 `_prune_removed_strategies` 會把不在 Portfolio 裡的策略整個 pop 掉，
+    等於把那份 tranche 的持股全部賣出，比中止更糟。
+
+    `latest_rec_date is None` 仍然拋：一份清單都沒有時 `_create_df` 連 position
+    都建不起來（空 records 會在 pivot 前 KeyError），與其讓它爆在下游不如講清楚。
+    這種情況也不可能有持股，擋下來沒有賣單的代價。
+
     today 不在任何週期內（錨點前、週期交界的週末）則不檢查。
     """
     current = find_current_cycle(cycles, today)
     if current is None:
         return
     entry = current[0]
-    expected_sunday = entry - pd.Timedelta(days=(entry.dayofweek - 6) % 7)
+    expected_sunday = owning_sunday([entry])[0]
     if latest_rec_date is None:
         raise RuntimeError(
             f"DB 無推薦清單：當前週期（買入日 {entry:%Y-%m-%d}）"
             f"需要 {expected_sunday:%Y-%m-%d} 的清單，不下單"
         )
-    rec_date = pd.to_datetime(latest_rec_date)
-    aligned = align_to_sunday(rec_date)
+    aligned = align_to_sunday(latest_rec_date)
     if aligned < expected_sunday:
-        raise RuntimeError(
+        logger.warning(
             f"推薦清單過期：最新清單日期 {latest_rec_date}（對齊週日 {aligned:%Y-%m-%d}），"
-            f"當前週期買入日 {entry:%Y-%m-%d} 應使用 {expected_sunday:%Y-%m-%d} 的清單，不下單"
+            f"當前週期買入日 {entry:%Y-%m-%d} 應使用 {expected_sunday:%Y-%m-%d} 的清單。"
+            f"本輪空手，其餘 tranche 照常"
         )

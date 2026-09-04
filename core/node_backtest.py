@@ -13,10 +13,14 @@ finlab 淨換倉、記成一筆橫跨兩週的交易。實測 2026-07-05 那份�
 import pandas as pd
 
 from core.backtest_window import snap_cutoff_to_flat_trading_day
+from core.tranche_schedule import NUM_TRANCHES
 
 # 每個策略一個節點持有幾週。weekly 是一週一輪；monthly 與 weekly_4w 行為相同
-# （都是週日清單持有四週），只差清單來源。
-HOLD_WEEKS = {'weekly': 1, 'monthly': 4, 'weekly_4w': 4}
+# （都是週日清單持有 NUM_TRANCHES 週），只差清單來源。
+#
+# 從 NUM_TRANCHES 導出而不是另寫 4：那個常數就是「持有幾週」，寫兩次就會有一天只改一邊，
+# 屆時單期清單算出來的進出場日會與策略實際跑的那組錯開，兩個檢視講不同的交易。
+HOLD_WEEKS = {'weekly': 1, 'monthly': NUM_TRANCHES, 'weekly_4w': NUM_TRANCHES}
 
 
 def node_dates(list_date, buy_weekday: int, sell_weekday: int, hold_weeks: int):
@@ -33,38 +37,6 @@ def node_dates(list_date, buy_weekday: int, sell_weekday: int, hold_weeks: int):
     entry_date = list_date + pd.Timedelta(days=1 + buy_weekday)
     exit_date = list_date + pd.Timedelta(days=(hold_weeks - 1) * 7 + 1 + sell_weekday)
     return entry_date, exit_date
-
-
-def align_to_sunday(date) -> pd.Timestamp:
-    """推薦清單的日期對齊規則，與 `_create_df` 相同：週中產出的清單算下一個週日，
-    週日當天產出的留在當天。抽出來是為了讓「哪些週日真的有清單」能被獨立算出來。
-    """
-    d = pd.Timestamp(date)
-    return d + pd.Timedelta(days=6 - d.weekday())
-
-
-def nth_sunday_of_month(list_date) -> int:
-    """清單日是當月第幾個週日（1 起算）。
-
-    4W／月策略的 Week1~4 就是這個維度：正式策略用 `_get_nth_sundays` 挑當月第 n 個
-    週日當進場週，節點制不必為此跑四份回測，存下這個值之後篩即可。
-    """
-    d = pd.Timestamp(list_date)
-    first = d.replace(day=1)
-    first_sunday = first + pd.Timedelta(days=(6 - first.weekday()) % 7)
-    return (d - first_sunday).days // 7 + 1
-
-
-def is_tradable_list_date(list_date, hold_weeks: int) -> bool:
-    """這份清單在正式策略裡真的會被買進嗎？
-
-    4 週／月策略的進場週由 `GoldenAITWStrategyMonthly._get_nth_sundays` 決定，而那支
-    只跑 n=1~4——**當月第 5 個週日的清單從來不會進場**。節點制若照跑，會生出策略
-    根本沒持有過的部位（實測 2025-11-30、2026-03-29、2026-05-31 三份清單就是）。
-
-    weekly 每週都進場，不受這個限制。
-    """
-    return hold_weeks == 1 or nth_sunday_of_month(list_date) <= 4
 
 
 # 視窗終點在結算日之後還要留幾個交易日。**0 ＝ 賣出當天就收工**：部位在結算日已經出清，

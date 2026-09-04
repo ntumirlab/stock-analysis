@@ -19,7 +19,10 @@ import sqlite3
 import argparse
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)   # 直接執行時 sys.path[0] 是 scripts/，dao 才 import 得到
 ASSETS = os.path.join(PROJECT_ROOT, 'assets')
+
+from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO  # noqa: E402
 
 STRATEGY_DIRS = {
     'weekly':    'GoldenAITWStrategyWeekly',
@@ -28,7 +31,9 @@ STRATEGY_DIRS = {
 }
 
 FILE_PATTERN = re.compile(
-    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d))?\.html$'
+    # `Week\d` 是月索引時代的檔名，`tranche_\d` 是錨點輪動之後的（見 MultiReportWrapper）。
+    # 兩種都要認：只認舊的會讓新產出的檔案靜默不匹配、整批跳過。
+    r'^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_Ranks\[(.+?)\](?:_(Week\d|tranche_\d))?\.html$'
 )
 
 
@@ -68,13 +73,15 @@ def migrate(strategy, db_path, dry_run=False, batch_size=500):
             skipped += 1
             continue
 
-        date_str, time_str, ranks_str, week_str = m.groups()
+        date_str, time_str, ranks_str, tranche_str = m.groups()
         timestamp = f"{date_str} {time_str.replace('-', ':')}"
+        # 值照檔名原樣寫入，不轉換：`Week1` 真的就是「當月第 1 個週日」，改標成
+        # `tranche_1` 會誤述它涵蓋哪幾週——那是另一組進場週。
 
         existing = conn.execute(
             "SELECT 1 FROM golden_ai_backtest_reports "
-            "WHERE strategy=? AND timestamp=? AND ranks=? AND week IS ? LIMIT 1",
-            (strategy, timestamp, ranks_str, week_str)
+            "WHERE strategy=? AND timestamp=? AND ranks=? AND tranche IS ? LIMIT 1",
+            (strategy, timestamp, ranks_str, tranche_str)
         ).fetchone()
         if existing:
             skipped += 1
@@ -95,9 +102,9 @@ def migrate(strategy, db_path, dry_run=False, batch_size=500):
 
         conn.execute(
             "INSERT INTO golden_ai_backtest_reports "
-            "(timestamp, strategy, week, ranks, report_json, position_json) "
+            "(timestamp, strategy, tranche, ranks, report_json, position_json) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (timestamp, strategy, week_str, ranks_str, rj, pj)
+            (timestamp, strategy, tranche_str, ranks_str, rj, pj)
         )
         inserted += 1
 
@@ -126,6 +133,12 @@ def main():
     print(f"DB: {args.db}")
     print(f"Dry run: {args.dry_run}")
     print()
+
+    # 這支自己開裸連線查 `tranche`，schema migration 全靠 DAO 建構時跑。指向一份還沒被
+    # 新版 DAO 開過的 DB（例如還原出來的備份）時少了這一步，第一句查詢就是
+    # `no such column: tranche`。dry run 不寫 DB，也就不該動 schema。
+    if not args.dry_run:
+        GoldenAIBacktestMetricsDAO(db_path=args.db)
 
     t_start = time.monotonic()
     total_inserted = 0

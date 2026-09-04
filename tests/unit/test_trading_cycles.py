@@ -4,16 +4,20 @@
 weekday 慣例：pandas dayofweek，週一=0。kiri 實際設定 = 週一買(0)、週五賣(4)、hold 4 週。
 """
 
+import logging
+
 import pandas as pd
 import pytest
 
 from core.trading_cycles import (
     align_to_sunday,
     build_tranche_specs,
+    owning_sunday,
     check_recommendation_freshness,
     compute_cycles,
     compute_historical_cycles,
     find_current_cycle,
+    missing_list_sunday,
 )
 
 
@@ -146,12 +150,28 @@ class TestFindCurrentCycle:
 
 
 class TestAlignToSunday:
+    """清單日對齊規則的唯一實作——`_create_df` 的 weekly_batches 鍵、`owning_sunday`
+    的反向、節點制的「哪些週日真的有清單」都是它，算錯三處一起錯。"""
+
     def test_sunday_stays(self):
         assert align_to_sunday(ts("2026-07-05")) == ts("2026-07-05")
 
     def test_weekdays_align_to_next_sunday(self):
         for d in ("2026-06-29", "2026-07-01", "2026-07-04"):  # 一、三、六
             assert align_to_sunday(ts(d)) == ts("2026-07-05")
+
+    @pytest.mark.parametrize('raw, aligned', [
+        ('2026-08-09', '2026-08-09'),   # 週日當天產出 → 留在當天
+        ('2026-08-10', '2026-08-16'),   # 週一 → 下一個週日
+        ('2026-08-14', '2026-08-16'),   # 週五 → 下一個週日
+        ('2026-08-15', '2026-08-16'),   # 週六 → 隔天
+    ])
+    def test_it_takes_the_date_string_straight_from_the_db(self, raw, aligned):
+        """呼叫端多半直接餵 `record.date`（str），不該逼每一處自己先轉。"""
+        assert align_to_sunday(raw) == pd.Timestamp(aligned)
+
+    def test_a_timestamp_works_too(self):
+        assert align_to_sunday(pd.Timestamp('2026-08-10')) == pd.Timestamp('2026-08-16')
 
 
 class TestCheckRecommendationFreshness:
@@ -167,16 +187,91 @@ class TestCheckRecommendationFreshness:
         # 週期中 DB 出現更新的清單（7/12）不該誤判為過期
         check_recommendation_freshness(kiri_cycles(), ts("2026-07-13"), "2026-07-12")
 
-    def test_stale_list_raises(self):
-        # 2026-07-02 容器實測過的情境：7/13 重放時 DB 最新只有 6/28 → 擋下
-        with pytest.raises(RuntimeError, match="推薦清單過期"):
+    def test_a_stale_list_only_warns(self, caplog):
+        """過期清單不再擋下單：`_create_df` 已經把缺清單那週歸零，這一份 tranche
+        自己空手就好。拋出去會連帶擋掉當天其他 tranche 的賣出。"""
+        # 2026-07-02 容器實測過的情境：7/13 重放時 DB 最新只有 6/28
+        with caplog.at_level(logging.WARNING, logger="core.trading_cycles"):
             check_recommendation_freshness(kiri_cycles(), ts("2026-07-13"), "2026-06-28")
+        assert "推薦清單過期" in caplog.text
 
-    def test_missing_list_raises(self):
+    def test_an_entry_day_with_the_previous_weeks_list_only_warns(self, caplog):
+        """進場日當天清單還是上上週的——最該空手的一天，也不該拋。"""
+        with caplog.at_level(logging.WARNING, logger="core.trading_cycles"):
+            check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), "2026-06-28")
+        assert "推薦清單過期" in caplog.text
+
+    def test_an_empty_db_still_raises(self):
+        """一份清單都沒有時 `_create_df` 連 position 都建不起來，讓它講清楚再死。
+        這種情況不可能有持股，擋下來沒有賣不掉的代價。"""
         with pytest.raises(RuntimeError, match="DB 無推薦清單"):
             check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), None)
 
-    def test_entry_day_with_previous_week_list_raises(self):
-        # 進場日當天清單還是上上週的 → 不下單
-        with pytest.raises(RuntimeError, match="推薦清單過期"):
-            check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), "2026-06-28")
+
+class TestOwningSunday:
+    """每一天用的是哪一份清單。`_create_df` 靠它找出「那週根本沒清單」的日子。"""
+
+    def test_a_sunday_owns_itself(self):
+        assert list(owning_sunday(['2026-01-11'])) == [pd.Timestamp('2026-01-11')]
+
+    def test_the_whole_week_after_a_sunday_belongs_to_it(self):
+        week = pd.date_range('2026-01-11', '2026-01-17', freq='D')   # 日 ~ 六
+        assert set(owning_sunday(week)) == {pd.Timestamp('2026-01-11')}
+
+    def test_the_next_sunday_starts_a_new_owner(self):
+        assert owning_sunday(['2026-01-18'])[0] == pd.Timestamp('2026-01-18')
+
+    def test_it_is_the_inverse_of_align_to_sunday(self):
+        """align_to_sunday 把清單日推到它生效的那個週日；這支把任一天推回它的清單日。"""
+        for d in pd.date_range('2026-01-04', '2026-02-15', freq='D'):
+            sunday = owning_sunday([d])[0]
+            assert sunday.weekday() == 6
+            assert sunday <= d < sunday + pd.Timedelta(days=7)
+
+    def test_an_empty_input_gives_an_empty_index(self):
+        assert len(owning_sunday(pd.DatetimeIndex([]))) == 0
+
+
+class TestMissingListSunday:
+    """當期該用的週日沒有清單——freshness 檢查看不到的那種缺席。
+
+    kiri 的排程：週一買、hold 4 週，第一個週期 2026-07-06 ~ 07-31，
+    該用的是 07-05（週日）的清單。
+    """
+
+    def test_a_present_list_is_not_reported(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"),
+                                   [ts("2026-07-05")]) is None
+
+    def test_a_missing_list_is_reported_on_the_entry_day(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"),
+                                   [ts("2026-06-28")]) == ts("2026-07-05")
+
+    def test_it_keeps_reporting_for_the_rest_of_that_week(self):
+        """那一週清單還補得進來，補了就會進場，所以整週都該喊。"""
+        for d in ("2026-07-07", "2026-07-09", "2026-07-11"):   # 二、四、六
+            assert missing_list_sunday(kiri_cycles(), ts(d), [ts("2026-06-28")]) == ts("2026-07-05")
+
+    def test_it_goes_quiet_once_that_week_is_over(self):
+        """過了那週該輪確定空手，每天再喊也改變不了。"""
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-13"), [ts("2026-06-28")]) is None
+
+    def test_outside_any_cycle_is_not_reported(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-02"), []) is None
+
+    def test_it_catches_exactly_what_freshness_misses(self):
+        """實盤四次缺清單的共同形狀：清單在進場日當天（週一）才發。
+
+        對齊規則把它推到**下一個**週日，於是 freshness 通過（07-12 >= 07-05），
+        但當期該用的 07-05 仍然不存在——那一輪空手。
+        """
+        monday_list = "2026-07-06"
+        check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), monday_list)   # 不拋
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"),
+                                   [align_to_sunday(ts(monday_list))]) == ts("2026-07-05")
+
+    def test_an_empty_db_is_reported_too(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"), []) == ts("2026-07-05")
+
+    def test_it_accepts_plain_strings_as_list_sundays(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"), ["2026-07-05"]) is None

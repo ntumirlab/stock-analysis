@@ -9,14 +9,11 @@ import pytest
 
 from core.node_backtest import (
     HOLD_WEEKS,
-    align_to_sunday,
     check_trades,
     is_settled,
-    is_tradable_list_date,
     node_dates,
     node_return,
     node_window,
-    nth_sunday_of_month,
     settle_day,
     window_end,
 )
@@ -56,7 +53,8 @@ class TestNodeDates:
         assert x == pd.Timestamp(exit_)
 
     def test_four_week_exit_matches_the_production_offset(self):
-        # 正式策略寫的是 list_date + 22 + sell_weekday
+        # 正式策略現在寫的是 (NUM_TRANCHES - 1) * 7 + 1 + sell_weekday。
+        # 這裡刻意留字面值 22 當外部釘樁：兩邊都從常數導出的話就沒人守著實際數字了。
         list_date = pd.Timestamp('2026-07-05')
         _, x = node_dates(list_date, MON, FRI, HOLD_WEEKS['monthly'])
         assert x == list_date + pd.Timedelta(days=22 + FRI)
@@ -64,30 +62,16 @@ class TestNodeDates:
 
     def test_monthly_and_weekly_4w_hold_the_same_length(self):
         assert HOLD_WEEKS['monthly'] == HOLD_WEEKS['weekly_4w'] == 4
-        assert node_dates('2026-07-05', MON, FRI, 4) == node_dates('2026-07-05', MON, FRI, 4)
+        # 兩支各自算出來的日期都釘死值——原本這裡是 node_dates(...) == node_dates(...)
+        # 左右完全相同的空轉斷言，永遠成立、測不到任何東西。
+        expected = (pd.Timestamp('2026-07-06'), pd.Timestamp('2026-07-31'))
+        assert node_dates('2026-07-05', MON, FRI, HOLD_WEEKS['monthly']) == expected
+        assert node_dates('2026-07-05', MON, FRI, HOLD_WEEKS['weekly_4w']) == expected
 
     def test_entry_follows_a_different_buy_weekday(self):
         e, x = node_dates('2026-07-05', 2, FRI, 1)  # 週三買
         assert e == pd.Timestamp('2026-07-08')
         assert x == pd.Timestamp('2026-07-10')
-
-
-class TestNthSundayOfMonth:
-    @pytest.mark.parametrize('list_date, nth', [
-        ('2026-07-05', 1),
-        ('2026-07-12', 2),
-        ('2026-07-19', 3),
-        ('2026-07-26', 4),
-        ('2026-08-02', 1),
-        ('2026-08-09', 2),
-    ])
-    def test_counts_sundays_within_the_month(self, list_date, nth):
-        assert nth_sunday_of_month(list_date) == nth
-
-    def test_month_starting_on_a_sunday_counts_from_day_one(self):
-        assert pd.Timestamp('2026-03-01').weekday() == 6
-        assert nth_sunday_of_month('2026-03-01') == 1
-        assert nth_sunday_of_month('2026-03-08') == 2
 
 
 class TestNodeWindow:
@@ -202,28 +186,6 @@ class TestIsSettled:
         assert is_settled('2026-08-14', td) is False
 
 
-class TestIsTradableListDate:
-    """4 週策略的進場週來自 `_get_nth_sundays`，而那支只跑 n=1~4。"""
-
-    FIFTH_SUNDAYS = ['2025-11-30', '2026-03-29', '2026-05-31']
-
-    @pytest.mark.parametrize('list_date', FIFTH_SUNDAYS)
-    def test_a_four_week_strategy_never_enters_on_a_fifth_sunday(self, list_date):
-        assert nth_sunday_of_month(list_date) == 5
-        assert is_tradable_list_date(list_date, HOLD_WEEKS['monthly']) is False
-        assert is_tradable_list_date(list_date, HOLD_WEEKS['weekly_4w']) is False
-
-    @pytest.mark.parametrize('list_date', FIFTH_SUNDAYS)
-    def test_weekly_enters_on_every_sunday(self, list_date):
-        assert is_tradable_list_date(list_date, HOLD_WEEKS['weekly']) is True
-
-    @pytest.mark.parametrize('list_date', [
-        '2026-07-05', '2026-07-12', '2026-07-19', '2026-07-26'])
-    def test_the_first_four_sundays_are_tradable_either_way(self, list_date):
-        assert is_tradable_list_date(list_date, 1) is True
-        assert is_tradable_list_date(list_date, 4) is True
-
-
 class TestNodeReturn:
     def test_plain_average_of_the_per_stock_returns(self):
         trades = pd.DataFrame({'return': [0.10, -0.04, 0.03]})
@@ -267,22 +229,6 @@ class TestCheckTrades:
         trades = self._trades(2)
         trades.loc[1, 'exit_date'] = pd.Timestamp('2026-07-17')
         assert check_trades(trades, '2026-07-06', '2026-07-10', 2) == '2 distinct exit dates'
-
-
-class TestAlignToSunday:
-    """對齊規則要跟 _create_df 一致，否則「哪些週日真的有清單」會算錯。"""
-
-    @pytest.mark.parametrize('raw, aligned', [
-        ('2026-08-09', '2026-08-09'),   # 週日當天產出 → 留在當天
-        ('2026-08-10', '2026-08-16'),   # 週一 → 下一個週日
-        ('2026-08-14', '2026-08-16'),   # 週五 → 下一個週日
-        ('2026-08-15', '2026-08-16'),   # 週六 → 隔天
-    ])
-    def test_matches_the_create_df_rule(self, raw, aligned):
-        assert align_to_sunday(raw) == pd.Timestamp(aligned)
-
-    def test_accepts_a_timestamp(self):
-        assert align_to_sunday(pd.Timestamp('2026-08-10')) == pd.Timestamp('2026-08-16')
 
 
 class TestCheckTradesAgainstSignalDates:

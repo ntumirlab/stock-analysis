@@ -92,6 +92,21 @@ def format_universe_missing(missing_ids: List[str]) -> str:
     )
 
 
+def format_missing_list_sunday(task_name: str, sunday, entry) -> str:
+    """當期該用的週日清單不存在（那一輪 tranche 會空手）的警告內文。
+
+    名字對齊 `core.trading_cycles.missing_list_sunday`——那支負責判斷、這支負責措辭，
+    兩邊講的是同一個週日。
+    """
+    return (
+        f"{task_name} 本輪買入日 {entry:%Y-%m-%d} 該用 {sunday:%Y-%m-%d}（週日）的清單，"
+        f"但 DB 裡沒有這一週的清單。\n"
+        f"這一輪不進場——照舊清單買等於買一份從未發布過的名單，寧可空手。\n"
+        f"清單若在本週內補進 DB（日期記為 {sunday:%Y-%m-%d}），每日 sync 會自動補進場；"
+        f"過了本週這一輪就確定空手，要等下一輪。"
+    )
+
+
 def format_no_new_recommendations(task_name: str) -> str:
     """週日執行卻沒有新清單檔案的警告內文（weekly 與 monthly 上游均每週更新）。"""
     return (

@@ -16,6 +16,9 @@ from typing import Optional
 
 import pandas as pd
 
+from core.tranche_schedule import TRANCHE_ANCHOR_SUNDAYS, tranche_of
+from dao.golden_ai_backtest_metrics_dao import rename_column_if_needed
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +61,7 @@ class GoldenAIBacktestNodesDAO:
                     ranks         TEXT NOT NULL,
                     entry_date    TEXT NOT NULL,
                     exit_date     TEXT NOT NULL,
-                    week_of_month INTEGER,
+                    tranche       INTEGER,
                     n_stocks      INTEGER NOT NULL,
                     node_return   REAL NOT NULL,
                     annual_return REAL,
@@ -80,9 +83,90 @@ class GoldenAIBacktestNodesDAO:
                 CREATE INDEX IF NOT EXISTS idx_nodes_series
                 ON golden_ai_backtest_nodes(strategy, ranks, exit_date)
             """)
+
+            # Migration: 相位改由錨點連續輪動定義後，`week_of_month`（當月第幾個週日）
+            # 沒有日曆語意了，改名為 `tranche`，既有的值也要跟著換算。
+            #
+            # 節點可以就地重算、metrics/reports 不行，差別在身分：節點的進出場日與
+            # 報酬只由 (list_date, ranks) 決定（見 `jobs.golden_ai_node_executor.run_node`），
+            # 換排程不影響任何數字，`tranche` 是唯一失真的欄位；metrics 那邊的 `Week1~4`
+            # 記的是舊排程當時真的買了哪幾週，改標才是說謊。
+            #
+            # `BEGIN IMMEDIATE` 是這裡的關鍵：sqlite3 只在 DML 之前隱式開 transaction，
+            # DDL 走 autocommit——改名一下去就落地了。少了這句，改標中途失敗會留下
+            # 「名改了、值沒補」，而且下次啟動已經沒得改名、閘門不會再開，錯的標籤就
+            # 永遠留著。順帶先把寫鎖拿到手：多個容器同時啟動時，後手會等先手 commit
+            # 完再讀欄位快照，而不是撞在改名與改標之間。
+            #
+            # 但只在真的還沒改名時才開。搶寫鎖是有代價的：dashboard 在 module import
+            # 就建這個 DAO，回填正在寫的時候，白搶一次鎖會被擋滿 busy timeout、然後
+            # 炸在 import。交易裡的 `rename_column_if_needed` 會自己重讀欄位快照
+            # （拿到寫鎖之後才讀），所以這個先探不會把競態放回來。
+            cursor.execute("PRAGMA table_info(golden_ai_backtest_nodes)")
+            if any(row[1] == 'week_of_month' for row in cursor.fetchall()):
+                conn.execute("BEGIN IMMEDIATE")
+                if rename_column_if_needed(cursor, 'golden_ai_backtest_nodes',
+                                            'week_of_month', 'tranche'):
+                    self._relabel_tranches(cursor)
+
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _relabel_tranches(cursor) -> None:
+        """把改名前寫進來的相位值換算成新定義。與改名一起成敗——同進同退靠的是呼叫端
+        開的 `BEGIN IMMEDIATE`，不是 driver 自己會包。
+
+        `tranche IS NULL` 的列（weekly，一週一輪、沒有相位）原樣不動。相位是
+        (strategy, list_date) 的純函數，所以同一份清單的所有 ranks 一次更新。
+
+        算不出新標籤的一律清成 NULL：改名是一次性閘門，這一輪 commit 完欄位就叫
+        `tranche`、之後不會再有人來補，留著舊的月份索引等於讓每個讀的人把它當錨點
+        相位讀（而且月份索引可以是 5，根本不在 1~4 裡）。沒有標籤是誠實的，
+        錯的標籤不是。算不出來有兩種：
+
+        - **策略沒有錨點**（不在 `TRANCHE_ANCHOR_SUNDAYS` 裡）
+        - **`list_date` 不是週日**。相位是按「距離錨點幾週」算的，`tranche_of` 收到
+          非週日會靜默算到隔壁的槽位（見它的 docstring）。寫入端都走 `align_to_sunday`
+          所以正常不會有，但這裡是不可逆的一次性換算，寧可標成不知道也不要標錯。
+        """
+        rows = cursor.execute(
+            "SELECT DISTINCT strategy, list_date FROM golden_ai_backtest_nodes "
+            "WHERE tranche IS NOT NULL"
+        ).fetchall()
+
+        updates, unknown, unaligned = [], set(), []
+        for strategy, list_date in rows:
+            if strategy not in TRANCHE_ANCHOR_SUNDAYS:
+                unknown.add(strategy)
+                updates.append((None, strategy, list_date))
+                continue
+            if pd.Timestamp(list_date).weekday() != 6:
+                unaligned.append(list_date)
+                updates.append((None, strategy, list_date))
+                continue
+            updates.append((tranche_of(strategy, list_date), strategy, list_date))
+
+        if unknown:
+            logger.warning(f"有相位值卻沒有 tranche 錨點，標籤清成 NULL: {sorted(unknown)}")
+        if unaligned:
+            logger.warning(
+                f"list_date 不是週日、算不出相位，標籤清成 NULL: {sorted(set(unaligned))}"
+            )
+        if not updates:
+            return
+
+        # 這個數字是操作人員確認改標真的動到東西的唯一依據，所以不靠 `executemany`
+        # 之後的 `cursor.rowcount`（driver 的累加行為），改用連線層實際數過的差值。
+        changed_before = cursor.connection.total_changes
+        cursor.executemany(
+            "UPDATE golden_ai_backtest_nodes SET tranche = ? "
+            "WHERE strategy = ? AND list_date = ?",
+            updates,
+        )
+        changed = cursor.connection.total_changes - changed_before
+        logger.info(f"tranche 標籤已重算: {len(updates)} 份清單、{changed} 列")
 
     def stored_list_dates(self, strategy: str, ranks: str) -> set:
         """某策略某組 ranks 已經存過的清單日。
@@ -104,7 +188,7 @@ class GoldenAIBacktestNodesDAO:
 
     def save(self, strategy: str, list_date: str, ranks: str, entry_date: str,
              exit_date: str, n_stocks: int, node_return: float,
-             week_of_month: Optional[int] = None, report=None,
+             tranche: Optional[int] = None, report=None,
              created_at: Optional[str] = None) -> bool:
         """寫入一個已結算的節點。已存在則不動，回傳 False。
 
@@ -120,12 +204,12 @@ class GoldenAIBacktestNodesDAO:
         try:
             cursor = conn.execute("""
                 INSERT OR IGNORE INTO golden_ai_backtest_nodes
-                    (strategy, list_date, ranks, entry_date, exit_date, week_of_month,
+                    (strategy, list_date, ranks, entry_date, exit_date, tranche,
                      n_stocks, node_return, annual_return, sharpe, sortino,
                      max_drawdown, win_ratio, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                strategy, list_date, ranks, entry_date, exit_date, week_of_month,
+                strategy, list_date, ranks, entry_date, exit_date, tranche,
                 n_stocks, node_return, metrics['annual_return'], metrics['sharpe'],
                 metrics['sortino'], metrics['max_drawdown'], metrics['win_ratio'],
                 created_at,

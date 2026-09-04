@@ -14,7 +14,7 @@ from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from core.backtest_window import snap_cutoff_to_flat_trading_day
-from core.report_rewrap import extract_report_data
+from core.trading_cycles import align_to_sunday, owning_sunday
 from utils.config_loader import ConfigLoader
 from dao.recommendation_dao import RecommendationDAO
 from dao.golden_ai_backtest_metrics_dao import GoldenAIBacktestMetricsDAO
@@ -55,12 +55,44 @@ def _golden_ai_process_worker(args):
     strategy._run_one_ranks(ranks, dao, timestamp, date_str, time_str, report_dir, i, total)
 
 
+def rank_subsets(rank_start: int, rank_end: int, only=None):
+    """要回測哪幾組 ranks。`only` 不給就是 rank_start~rank_end 的完整 powerset。
+
+    `only` 傳一組（如 `[1, 2, 3, 4, 5, 6, 7, 8]`）時只跑那一組。補跑歷史時 255 組
+    與 1 組差 255 倍的 sim 次數，而多數時候只需要主力那一組先有線可看。
+
+    超出 pool 的名次直接拒絕：清單只有 rank_start~rank_end 這幾檔，寫進去的 ranks
+    字串 dashboard 的名次選單也選不到，那筆資料等於存了沒人看得到。
+    """
+    pool = list(range(rank_start, rank_end + 1))
+    if only is None:
+        return [list(c) for r in range(1, len(pool) + 1) for c in combinations(pool, r)]
+
+    only = list(only)
+    outside = sorted(set(only) - set(pool))
+    if outside:
+        raise ValueError(
+            f'ranks {outside} 不在 {rank_start}~{rank_end} 的範圍內，'
+            f'清單沒有這幾個名次'
+        )
+    if not only:
+        raise ValueError('ranks 不能是空的')
+    return [only]
+
+
 def _extract_report_json(html_path):
     """從 finlab 產出的報告 HTML 抽出 reportJson / positionJson。
 
     以整份 HTML 搜尋（見 core/report_rewrap.py），不依賴資料在第幾行 —
     finlab 2.x 改版報告前端後行號已位移。
+
+    **`core.report_rewrap` 刻意在函式內 import**：它在 lite 的「開發方模組不得混入
+    image」黑名單上，而這個檔案（base）是 lite 白名單的一員。放到 module level 會讓
+    lite build 期的白名單完整性檢查直接失敗。這支只有回測路徑會呼叫（`_run_one_ranks`），
+    lite 的下單 adapter 覆寫了 `run_strategy`、永遠走不到這裡。
     """
+    from core.report_rewrap import extract_report_data
+
     with open(html_path, 'r', encoding='utf-8') as f:
         html = f.read()
     report_json, position_json = extract_report_data(html)
@@ -123,9 +155,9 @@ class GoldenAITWStrategyBase:
                 continue
 
             dt = pd.to_datetime(date)
-
-            days_to_sunday = 6 - dt.weekday()
-            aligned_date = dt + pd.Timedelta(days=days_to_sunday)
+            # 這條規則只有一份實作（`core.trading_cycles`）：`owning_sunday` 是它的反向、
+            # 節點制靠它算「哪些週日真的有清單」，各留一份就要靠人維持一致。
+            aligned_date = align_to_sunday(dt)
 
             if aligned_date in weekly_batches:
                 existing_original_date, _ = weekly_batches[aligned_date]
@@ -200,6 +232,22 @@ class GoldenAITWStrategyBase:
             position = position[position.index <= end]
             sl_df    = sl_df[sl_df.index <= end]
             tp_df    = tp_df[tp_df.index <= end]
+
+        # 缺清單的那一週不進場。上面的 resample('D').ffill() 會把缺席那週填成上一份
+        # 清單，照著跑就是買進一份從未發布過的清單——實測 2026-01-11 沒有 weekly
+        # 清單，進場日 01-12 拿到的是 01-04 那五檔。
+        #
+        # 這一行是實盤「缺清單就空手」的唯一保證，不是備援。原本擋這件事的是
+        # `check_recommendation_freshness` 的 RuntimeError，但它擋的範圍太大——一份
+        # tranche 拋出去就是整支 job 中止，那天其他 tranche 的賣出也一起做不成——
+        # 所以它已經改成只記警告（見 `core.trading_cycles`）。改動這裡之前先想清楚：
+        # 歸零沒做到就是拿舊清單下真單，沒有第二道關卡。
+        #
+        # sl_df / tp_df 不跟著歸零：它們只產生出場訊號，而 hold_until 只出場真的持有中
+        # 的部位，所以空手那幾天的訊號是 no-op。反過來歸零才有害——sl_df 的 0 會被
+        # replace 成 NaN、比較恆為 False，跨週持有到那幾天的部位會整週失去停損門檻。
+        real_sundays = pd.DatetimeIndex(sorted(weekly_batches))
+        position.loc[~owning_sunday(position.index).isin(real_sundays)] = 0
 
         position = position.reindex(columns=universe.columns, fill_value=0)
         sl_df    = sl_df.reindex(columns=universe.columns, fill_value=0)
@@ -370,7 +418,7 @@ class GoldenAITWStrategyBase:
             return
         print(f"[{i}/{total}] 回測 Ranks[{ranks_str}]...")
         report = self._run_core(ranks=ranks)
-        dao.save(timestamp=timestamp, strategy=self.task_name, week=None, ranks=ranks_str, report=report)
+        dao.save(timestamp=timestamp, strategy=self.task_name, tranche=None, ranks=ranks_str, report=report)
 
         if report_dir is not None:
             html_path = os.path.join(report_dir, f"{date_str}_{time_str}_Ranks[{ranks_str}].html")
@@ -392,7 +440,7 @@ class GoldenAITWStrategyBase:
         if cleanup:
             os.unlink(html_path)
         if rj:
-            dao.save_report(timestamp=timestamp, strategy=self.task_name, week=None,
+            dao.save_report(timestamp=timestamp, strategy=self.task_name, tranche=None,
                             ranks=ranks_str, report_json=rj, position_json=pj)
         else:
             logger.warning(
@@ -400,7 +448,8 @@ class GoldenAITWStrategyBase:
                 f"{self.task_name} Ranks[{ranks_str}] @ {timestamp}"
             )
 
-    def run_strategy(self, report_dir=None, num_workers=None):
+    def run_strategy(self, report_dir=None, num_workers=None, ranks=None):
+        """`ranks` 不給就跑完整 powerset（排程走這條）；給一組就只跑那一組（補跑用）。"""
         if num_workers is None:
             num_workers = self.num_workers
 
@@ -416,8 +465,7 @@ class GoldenAITWStrategyBase:
         if report_dir is not None:
             os.makedirs(report_dir, exist_ok=True)
 
-        ranks_pool = list(range(self.rank_start, self.rank_end + 1))
-        all_subsets = [list(c) for r in range(1, len(ranks_pool) + 1) for c in combinations(ranks_pool, r)]
+        all_subsets = rank_subsets(self.rank_start, self.rank_end, only=ranks)
         total = len(all_subsets)
         print(f"[{self.task_name}] 策略參數: 週{'一二三四五'[self.buy_weekday]}買, 週{'一二三四五'[self.sell_weekday]}賣, Rank {self.rank_start}~{self.rank_end}")
         print(f"開始執行 {total} 組 Ranks 回測（workers={num_workers}）...")

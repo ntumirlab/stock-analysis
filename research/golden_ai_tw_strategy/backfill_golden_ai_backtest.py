@@ -30,8 +30,19 @@ def parse_args():
     group.add_argument('--date-range', nargs=2, metavar=('START', 'END'), help='補跑 START~END 每天（含兩端）')
 
     parser.add_argument('--workers', type=int, default=1, metavar='N', help='平行 worker 數（預設 1，sequential）')
+    # 預設維持完整 powerset（255 組），與排程走的路徑一致。節點制那支的預設相反
+    # （單一組合），因為它從第一天就是這樣，兩邊各自照自己的歷史。
+    parser.add_argument('--ranks', metavar='1,2,3',
+                        help='只跑這一組（如 1,2,3,4,5,6,7,8）。不給＝跑完整 powerset '
+                             '255 組，補跑一整段歷史時那是 255 倍的 sim 次數')
 
     return parser.parse_args()
+
+
+def parse_ranks(raw):
+    if raw is None:
+        return None
+    return [int(r) for r in raw.split(',')]
 
 
 def resolve_dates(args):
@@ -50,26 +61,28 @@ def resolve_dates(args):
         return dates
 
 
-def run_one(strategy_name, backtest_date, num_workers=1):
+def run_one(strategy_name, backtest_date, num_workers=1, ranks=None):
     strategy = STRATEGY_CLASS_MAP[strategy_name](
         config_path=CONFIG_PATH,
         override_params={'backtest_date': backtest_date},
     )
-    strategy.run_strategy(num_workers=num_workers)
+    strategy.run_strategy(num_workers=num_workers, ranks=ranks)
 
 
 def main():
     args = parse_args()
     dates = resolve_dates(args)
+    ranks = parse_ranks(args.ranks)
 
-    print(f"補跑 {args.strategy}，共 {len(dates)} 天：{dates[0]} ~ {dates[-1]}")
+    scope = f"Ranks[{args.ranks}] 一組" if ranks else "完整 powerset 255 組"
+    print(f"補跑 {args.strategy}，共 {len(dates)} 天：{dates[0]} ~ {dates[-1]}（{scope}）")
 
     success, failed = 0, []
     for d in dates:
         print(f"\n{'='*60}")
         print(f"[{d}] 開始補跑")
         try:
-            run_one(args.strategy, d, num_workers=args.workers)
+            run_one(args.strategy, d, num_workers=args.workers, ranks=ranks)
             success += 1
             print(f"[{d}] 完成")
         except Exception:

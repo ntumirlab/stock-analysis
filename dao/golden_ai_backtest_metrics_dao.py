@@ -6,6 +6,39 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def rename_column_if_needed(cursor, table: str, old: str, new: str) -> bool:
+    """欄位改名，已經改過就跳過。DAO 建構時呼叫，所以每個 process 都會跑到。
+
+    公開的：`GoldenAIBacktestNodesDAO` 也用它改自己那張表。（第三張表也要改名時，
+    就該把它挪去獨立的 migration 模組，而不是繼續從某支 DAO 借。）
+
+    回傳「這次呼叫真的改了名」。一份 DB 只會改名成功一次，所以它天然就是呼叫端做
+    一次性資料修補的閘門。但閘門不會自己跟修補同進退：sqlite3 的 DDL 走 autocommit，
+    ALTER 一下去就落地，之後的 UPDATE 失敗只會退掉 UPDATE。要做資料修補的呼叫端
+    因此必須自己把兩者包進一筆 `BEGIN IMMEDIATE`（見
+    `GoldenAIBacktestNodesDAO._create_table`），否則會留下「名改了、值沒補」而且
+    再也補不回來的狀態。
+
+    讀 PRAGMA 與 ALTER 之間沒有鎖，部署時多個容器同時啟動的話，後手拿到的欄位快照
+    會是舊的、ALTER 會噴 `no such column`。那不是錯誤——先手已經把事情做完了，確認
+    結果對就好，不對才往外丟。（呼叫端若已在 `BEGIN IMMEDIATE` 裡則走不到這條路：
+    後手會擋在寫鎖上，等先手 commit 完才讀到快照。）
+    """
+    cursor.execute(f"PRAGMA table_info({table})")
+    cols = {row[1] for row in cursor.fetchall()}
+    if old not in cols or new in cols:
+        return False
+    try:
+        cursor.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+    except sqlite3.OperationalError:
+        cursor.execute(f"PRAGMA table_info({table})")
+        if new not in {row[1] for row in cursor.fetchall()}:
+            raise
+        logger.info(f"{table}.{old} 已由其他 process 改名為 {new}")
+        return False
+    return True
+
+
 class GoldenAIBacktestMetricsDAO:
     def __init__(self, db_path="data_prod.db"):
         self.db_path = db_path
@@ -22,7 +55,7 @@ class GoldenAIBacktestMetricsDAO:
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp     TEXT NOT NULL,
                     strategy      TEXT NOT NULL,
-                    week          TEXT,
+                    tranche       TEXT,
                     ranks         TEXT NOT NULL DEFAULT '',
                     annual_return REAL,
                     sharpe        REAL,
@@ -37,7 +70,7 @@ class GoldenAIBacktestMetricsDAO:
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp     TEXT NOT NULL,
                     strategy      TEXT NOT NULL,
-                    week          TEXT,
+                    tranche       TEXT,
                     ranks         TEXT NOT NULL DEFAULT '',
                     report_json   TEXT NOT NULL,
                     position_json TEXT NOT NULL
@@ -47,6 +80,12 @@ class GoldenAIBacktestMetricsDAO:
                 CREATE INDEX IF NOT EXISTS idx_reports_lookup
                 ON golden_ai_backtest_reports(strategy, timestamp, ranks)
             """)
+
+            # Migration: 4 週策略的相位改由錨點連續輪動定義（見 core/tranche_schedule），
+            # 值從 Week1~4 變成 tranche_1~4，欄位名跟著改。純 metadata 操作，與表裡有幾列無關。
+            # 放在 top_n migration 之前，那支重建表時才會讀到已經改好名的來源欄位。
+            for table in ('golden_ai_backtest_metrics', 'golden_ai_backtest_reports'):
+                rename_column_if_needed(cursor, table, 'week', 'tranche')
 
             # Migration: if top_n column exists, recreate table without it
             cursor.execute("PRAGMA table_info(golden_ai_backtest_metrics)")
@@ -58,7 +97,7 @@ class GoldenAIBacktestMetricsDAO:
                         id            INTEGER PRIMARY KEY AUTOINCREMENT,
                         timestamp     TEXT NOT NULL,
                         strategy      TEXT NOT NULL,
-                        week          TEXT,
+                        tranche       TEXT,
                         ranks         TEXT NOT NULL DEFAULT '',
                         annual_return REAL,
                         sharpe        REAL,
@@ -69,8 +108,8 @@ class GoldenAIBacktestMetricsDAO:
                 """)
                 cursor.execute("""
                     INSERT INTO golden_ai_backtest_metrics
-                        (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
-                    SELECT timestamp, strategy, week,
+                        (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+                    SELECT timestamp, strategy, tranche,
                         COALESCE(NULLIF(ranks, ''), CAST(top_n AS TEXT), ''),
                         annual_return, sharpe, sortino, max_drawdown, win_ratio
                     FROM golden_ai_backtest_metrics_old
@@ -95,45 +134,121 @@ class GoldenAIBacktestMetricsDAO:
         finally:
             conn.close()
 
-    def save(self, timestamp: str, strategy: str, week: Optional[str], ranks: str, report) -> None:
+    _INSERT_METRICS = """
+        INSERT INTO golden_ai_backtest_metrics
+            (timestamp, strategy, tranche, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    @staticmethod
+    def _metric_values(report, strategy: str, tranche: Optional[str], ranks: str):
+        """從 report 取出要寫的五個指標。抽不到就記 warning 寫 NULL，不中斷。
+
+        刻意與寫入分開：`save_group` 的四份必須在開 transaction **之前**全部抽完，
+        transaction 裡只留 DB 操作。`get_metrics()` 是 finlab 的計算、可能很慢也可能拋，
+        擺在交易中間就等於把好不容易縮短的空窗又拉開。
+        """
         try:
             metrics = report.get_metrics()
-            annual_return = metrics.get('profitability', {}).get('annualReturn')
-            sharpe        = metrics.get('ratio', {}).get('sharpeRatio')
-            sortino       = metrics.get('ratio', {}).get('sortinoRatio')
-            max_drawdown  = metrics.get('risk', {}).get('maxDrawdown')
-            win_ratio     = metrics.get('winrate', {}).get('winRate')
+            return (
+                metrics.get('profitability', {}).get('annualReturn'),
+                metrics.get('ratio', {}).get('sharpeRatio'),
+                metrics.get('ratio', {}).get('sortinoRatio'),
+                metrics.get('risk', {}).get('maxDrawdown'),
+                metrics.get('winrate', {}).get('winRate'),
+            )
         except Exception as e:
-            logger.warning(f"get_metrics() failed for {strategy} {week} Ranks[{ranks}]: {e}. Saving NULLs.")
-            annual_return = sharpe = sortino = max_drawdown = win_ratio = None
+            logger.warning(f"get_metrics() failed for {strategy} {tranche} Ranks[{ranks}]: {e}. Saving NULLs.")
+            return (None, None, None, None, None)
+
+    def save(self, timestamp: str, strategy: str, tranche: Optional[str], ranks: str, report) -> None:
+        values = self._metric_values(report, strategy, tranche, ranks)
 
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
-            conn.execute("""
-                INSERT INTO golden_ai_backtest_metrics
-                    (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (timestamp, strategy, week, ranks, annual_return, sharpe, sortino, max_drawdown, win_ratio))
+            conn.execute(self._INSERT_METRICS,
+                         (timestamp, strategy, tranche, ranks) + values)
             conn.commit()
         finally:
             conn.close()
 
-        logger.info(f"Saved metrics: {strategy} {week} Ranks[{ranks}] @ {timestamp}")
+        logger.info(f"Saved metrics: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
 
-    def exists_for_date(self, date_str: str, strategy: str, ranks: str) -> bool:
-        """檢查指定日期、策略、ranks 是否已有紀錄"""
+    def save_group(self, timestamp: str, strategy: str, ranks: str, reports: dict) -> None:
+        """把某日某組 ranks 的整組 tranche metrics 換掉：清舊列與寫新列同一筆 transaction。
+
+        重算之前一定要清乾淨——`save` 是純 INSERT、沒有唯一鍵，殘缺組直接補寫的話那天
+        會同時存在殘列與新的完整組，而 `_normalized()` 是按 (timestamp, ranks) 取平均，
+        被重複計入的那幾份會把數字拉偏。
+
+        但「先刪、再分四次寫」中間掛掉就是把稍早算好的那幾列刪光而且補不回來：
+        `exists_for_date` 永遠只問今天的 date_str，沒有任何東西會回頭看舊日期，
+        那個洞是永久的。包成一筆之後，要嘛整組換成功、要嘛什麼都沒動。
+
+        指標在開 transaction 之前就抽完（見 `_metric_values`），交易裡只有
+        一個 DELETE 加 N 個 INSERT。
+        """
+        rows = [
+            (timestamp, strategy, tranche, ranks) + self._metric_values(report, strategy, tranche, ranks)
+            for tranche, report in reports.items()
+        ]
+
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM golden_ai_backtest_metrics WHERE strategy = ? AND timestamp LIKE ? AND ranks = ? LIMIT 1",
-                (strategy, f"{date_str}%", ranks)
+            cursor = conn.execute(
+                "DELETE FROM golden_ai_backtest_metrics "
+                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?",
+                (strategy, f"{timestamp[:10]}%", ranks)
             )
-            return cursor.fetchone() is not None
+            cleared = cursor.rowcount
+            conn.executemany(self._INSERT_METRICS, rows)
+            conn.commit()
         finally:
             conn.close()
 
-    def load(self, strategy: Optional[str] = None, week: Optional[str] = None,
+        logger.info(
+            f"Saved metrics group: {strategy} Ranks[{ranks}] @ {timestamp} "
+            f"({len(rows)} tranches, cleared {cleared} stale rows)"
+        )
+
+    def exists_for_date(self, date_str: str, strategy: str, ranks: str,
+                        expected: int = 1) -> bool:
+        """這個日期／策略／ranks 是否已經有**完整的一組**紀錄。
+
+        `expected` 是一組幾份：weekly 一份，4 週策略每份 tranche 一份。只問「有沒有」
+        的話，寫到一半掛掉（例如 DB 鎖住）留下的殘缺組會被判定成已存在，隔天整組跳過，
+        缺的那幾份永遠補不回來，而且沒有任何人會發現。
+
+        **數的是相異的 tranche，不是列數。**這支不控制誰寫進來，而它讀到的東西可能
+        比 `save_group` 老：正式機累積的舊列是「先刪、再分四次 INSERT」那版寫的，
+        當年掛在中間就會留下殘缺組，甚至兩組交錯並存。數列數的話 1+3 兩份加上另一組的
+        1+2 就湊滿 4、判定完成而永久跳過，`_normalized()` 拿到的則是重複計入某幾份、
+        又缺了另幾份的平均。相異 tranche 只有三種，不會被湊數騙過。
+
+        走 `save_group` 之後 4 週策略這側不會再產生殘缺組（整組換是一筆 transaction，
+        要嘛四份都在、要嘛什麼都沒動），所以這裡是對既有資料與未來其他寫入者的防線，
+        不是對現行寫入路徑的。
+
+        `tranche IS NULL`（weekly，沒有相位）在 SQLite 的 DISTINCT 下算同一個值，
+        所以那條路徑仍然是「有沒有那一列」，與改動前逐字相同。
+
+        只看 metrics 不看 reports：報告抽取失敗是既有的容許狀況（finlab 輸出格式變動時
+        會 log warning 後繼續），拿它當閘門會讓正常情況也一直重算。
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM ("
+                "  SELECT DISTINCT tranche FROM golden_ai_backtest_metrics "
+                "  WHERE strategy = ? AND timestamp LIKE ? AND ranks = ?"
+                ")",
+                (strategy, f"{date_str}%", ranks)
+            )
+            return cursor.fetchone()[0] >= expected
+        finally:
+            conn.close()
+
+    def load(self, strategy: Optional[str] = None, tranche: Optional[str] = None,
              ranks: Optional[str] = None) -> pd.DataFrame:
         conditions = []
         params = []
@@ -141,9 +256,9 @@ class GoldenAIBacktestMetricsDAO:
         if strategy is not None:
             conditions.append("strategy = ?")
             params.append(strategy)
-        if week is not None:
-            conditions.append("week = ?")
-            params.append(week)
+        if tranche is not None:
+            conditions.append("tranche = ?")
+            params.append(tranche)
         if ranks is not None:
             conditions.append("ranks = ?")
             params.append(ranks)
@@ -163,28 +278,56 @@ class GoldenAIBacktestMetricsDAO:
 
     # ── Report JSON persistence ──
 
-    def save_report(self, timestamp: str, strategy: str, week: Optional[str],
+    def save_report(self, timestamp: str, strategy: str, tranche: Optional[str],
                     ranks: str, report_json: str, position_json: str) -> None:
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
             conn.execute("""
                 INSERT INTO golden_ai_backtest_reports
-                    (timestamp, strategy, week, ranks, report_json, position_json)
+                    (timestamp, strategy, tranche, ranks, report_json, position_json)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (timestamp, strategy, week, ranks, report_json, position_json))
+            """, (timestamp, strategy, tranche, ranks, report_json, position_json))
             conn.commit()
         finally:
             conn.close()
-        logger.info(f"Saved report JSON: {strategy} {week} Ranks[{ranks}] @ {timestamp}")
+        logger.info(f"Saved report JSON: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
+
+    def replace_report(self, timestamp: str, strategy: str, tranche: Optional[str],
+                       ranks: str, report_json: str, position_json: str) -> None:
+        """換掉這一份 tranche 當天的報告：同一筆 transaction 裡先刪同日舊列再寫新的。
+
+        重跑一組時報告不能像 metrics 那樣先整組刪掉——每一份都要先 `display()` 產 HTML
+        才抽得到 JSON，四份加起來是以秒計的空窗，中途掛掉就是把上一次算好的報告清光
+        而且沒有東西補得回來。改成逐份就地換：空窗縮到單筆 DELETE+INSERT，而且掛在
+        第 n 份時，還沒輪到的那幾份留著的是上一次真的跑出來的報告，不是空白。
+
+        `tranche IS ?` 而不是 `=`：weekly 那半的 tranche 是 NULL，`= NULL` 永遠不成立。
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            conn.execute(
+                "DELETE FROM golden_ai_backtest_reports "
+                "WHERE strategy = ? AND timestamp LIKE ? AND ranks = ? AND tranche IS ?",
+                (strategy, f"{timestamp[:10]}%", ranks, tranche)
+            )
+            conn.execute("""
+                INSERT INTO golden_ai_backtest_reports
+                    (timestamp, strategy, tranche, ranks, report_json, position_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (timestamp, strategy, tranche, ranks, report_json, position_json))
+            conn.commit()
+        finally:
+            conn.close()
+        logger.info(f"Replaced report JSON: {strategy} {tranche} Ranks[{ranks}] @ {timestamp}")
 
     def get_report(self, timestamp: str, strategy: str,
-                   week: Optional[str] = None,
+                   tranche: Optional[str] = None,
                    ranks: Optional[str] = None) -> Optional[Tuple[str, str]]:
         conditions = ["strategy = ?", "timestamp = ?"]
         params: list = [strategy, timestamp]
-        if week is not None:
-            conditions.append("week = ?")
-            params.append(week)
+        if tranche is not None:
+            conditions.append("tranche = ?")
+            params.append(tranche)
         if ranks is not None:
             conditions.append("ranks = ?")
             params.append(ranks)
@@ -217,7 +360,7 @@ class GoldenAIBacktestMetricsDAO:
         conn = sqlite3.connect(self.db_path, timeout=30)
         try:
             df = pd.read_sql_query(
-                f"SELECT timestamp, strategy, week, ranks "
+                f"SELECT timestamp, strategy, tranche, ranks "
                 f"FROM golden_ai_backtest_reports "
                 f"WHERE {' AND '.join(conditions)} "
                 f"ORDER BY timestamp DESC",
