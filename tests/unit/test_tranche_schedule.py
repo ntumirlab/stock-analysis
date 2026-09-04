@@ -104,6 +104,24 @@ class TestTrancheSundays:
     def test_an_empty_range_picks_nothing(self, strategy):
         assert len(tranche_sundays(strategy, pd.DatetimeIndex([]), 1)) == 0
 
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    def test_a_range_starting_mid_week_still_covers_its_first_days(self, strategy):
+        """range 從週一開始時，涵蓋那幾天的清單日是**上一個**週日、在 range 之前。
+        用 idx.min() 當起點的話它會整個掉出去，開頭那幾天於是沒有任何 tranche 進場。"""
+        rng = pd.date_range('2026-01-05', '2026-02-28', freq='D')   # 週一開始
+        owner = pd.Timestamp('2026-01-04')                          # 擁有 01-05 的週日
+        picked = set().union(*(set(tranche_sundays(strategy, rng, t))
+                               for t in range(1, NUM_TRANCHES + 1)))
+        assert owner in picked
+
+    @pytest.mark.parametrize('strategy', FOUR_WEEK_STRATEGIES)
+    def test_a_range_starting_on_a_sunday_is_unchanged(self, strategy):
+        """週日開頭時起點就是它自己——退起點這件事不能動到既有結果。"""
+        rng = pd.date_range('2026-01-04', '2026-02-28', freq='D')
+        picked = set().union(*(set(tranche_sundays(strategy, rng, t))
+                               for t in range(1, NUM_TRANCHES + 1)))
+        assert min(picked) == pd.Timestamp('2026-01-04')
+
 
 class TestFifthSundaysAreNoLongerSkipped:
     """月索引時代 `_get_nth_sundays` 只跑 n=1~4，這三份清單從來不會進場。"""

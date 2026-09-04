@@ -121,26 +121,39 @@ class GoldenAIBacktestNodesDAO:
         `tranche IS NULL` 的列（weekly，一週一輪、沒有相位）原樣不動。相位是
         (strategy, list_date) 的純函數，所以同一份清單的所有 ranks 一次更新。
 
-        算不出新標籤的（策略沒有錨點）一律清成 NULL：改名是一次性閘門，這一輪
-        commit 完欄位就叫 `tranche`、之後不會再有人來補，留著舊的月份索引等於讓
-        每個讀的人把它當錨點相位讀（而且月份索引可以是 5，根本不在 1~4 裡）。
-        沒有標籤是誠實的，錯的標籤不是。
+        算不出新標籤的一律清成 NULL：改名是一次性閘門，這一輪 commit 完欄位就叫
+        `tranche`、之後不會再有人來補，留著舊的月份索引等於讓每個讀的人把它當錨點
+        相位讀（而且月份索引可以是 5，根本不在 1~4 裡）。沒有標籤是誠實的，
+        錯的標籤不是。算不出來有兩種：
+
+        - **策略沒有錨點**（不在 `TRANCHE_ANCHOR_SUNDAYS` 裡）
+        - **`list_date` 不是週日**。相位是按「距離錨點幾週」算的，`tranche_of` 收到
+          非週日會靜默算到隔壁的槽位（見它的 docstring）。寫入端都走 `align_to_sunday`
+          所以正常不會有，但這裡是不可逆的一次性換算，寧可標成不知道也不要標錯。
         """
         rows = cursor.execute(
             "SELECT DISTINCT strategy, list_date FROM golden_ai_backtest_nodes "
             "WHERE tranche IS NOT NULL"
         ).fetchall()
 
-        updates, unknown = [], set()
+        updates, unknown, unaligned = [], set(), []
         for strategy, list_date in rows:
             if strategy not in TRANCHE_ANCHOR_SUNDAYS:
                 unknown.add(strategy)
+                updates.append((None, strategy, list_date))
+                continue
+            if pd.Timestamp(list_date).weekday() != 6:
+                unaligned.append(list_date)
                 updates.append((None, strategy, list_date))
                 continue
             updates.append((tranche_of(strategy, list_date), strategy, list_date))
 
         if unknown:
             logger.warning(f"有相位值卻沒有 tranche 錨點，標籤清成 NULL: {sorted(unknown)}")
+        if unaligned:
+            logger.warning(
+                f"list_date 不是週日、算不出相位，標籤清成 NULL: {sorted(set(unaligned))}"
+            )
         if not updates:
             return
 

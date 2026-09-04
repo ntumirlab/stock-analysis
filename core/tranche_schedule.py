@@ -14,6 +14,8 @@
 
 import pandas as pd
 
+from core.trading_cycles import owning_sunday
+
 # 一輪有幾份 tranche。**這個數字同時是「開幾份」與「每份持有幾週」**——週頻進場、
 # 持有 N 週，就要恰好 N 份錯開 7 天才無縫接上（出場後隔 3 天、也就是週五賣下週一買，
 # 就輪到自己再進場），所以兩者必須相等，只留一個常數。
@@ -87,6 +89,10 @@ def tranche_sundays(strategy: str, date_range, tranche: int) -> pd.DatetimeIndex
     idx = pd.DatetimeIndex(date_range)
     if len(idx) == 0:
         return pd.DatetimeIndex([])
-    sundays = pd.date_range(start=idx.min(), end=idx.max(), freq='W-SUN')
+    # 起點退到「擁有 idx.min() 的那個週日」而不是 idx.min() 本身：`freq='W-SUN'` 是從
+    # start 往後找第一個週日，所以 range 不是週日開頭時，涵蓋開頭那幾天的清單日
+    # （在 start 之前）會整個掉出去——那幾天於是沒有任何 tranche 進場。
+    # 傳進來已經是週日時 `owning_sunday` 回它自己，這行不改變任何既有結果。
+    sundays = pd.date_range(start=owning_sunday([idx.min()])[0], end=idx.max(), freq='W-SUN')
     weeks = (sundays - anchor_sunday(strategy)).days // 7
     return sundays[weeks % NUM_TRANCHES == tranche - 1]

@@ -340,6 +340,33 @@ def test_a_strategy_without_an_anchor_is_left_unlabelled_instead_of_blowing_up(t
     assert _tranche(path, "some_future_strategy", "2026-07-19") == {None}
 
 
+def test_a_list_date_that_is_not_a_sunday_is_left_unlabelled(tmp_path):
+    """相位是按「距離錨點幾週」算的，非週日會靜默算到隔壁的槽位。
+
+    改名是一次性、不可逆的閘門——標錯之後 `week_of_month` 已經不在了，沒有人能發現，
+    也沒有人能補。寧可標成不知道。
+    """
+    import sqlite3
+
+    path = str(tmp_path / "unaligned.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(OLD_NODES_SCHEMA)
+    for list_date in ("2026-07-19", "2026-07-22"):        # 週日、週三
+        conn.execute(
+            "INSERT INTO golden_ai_backtest_nodes (strategy, list_date, ranks, "
+            "entry_date, exit_date, week_of_month, n_stocks, node_return, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("weekly_4w", list_date, "1,2", "2026-07-20", "2026-08-14",
+             3, 2, 0.01, "2026-08-23 23:20:00"),
+        )
+    conn.commit()
+    conn.close()
+
+    GoldenAIBacktestNodesDAO(db_path=path)
+    assert _tranche(path, "weekly_4w", "2026-07-22") == {None}     # 週三 → 不知道
+    assert _tranche(path, "weekly_4w", "2026-07-19") == {3}        # 同批的週日照算
+
+
 def test_unlabelling_an_unknown_strategy_does_not_touch_the_known_ones(legacy_nodes_db):
     """混在同一批裡時，沒錨點的被清成 NULL，有錨點的照樣算出新標籤。"""
     import sqlite3
