@@ -81,6 +81,34 @@ def find_current_cycle(cycles: List[Cycle], today: pd.Timestamp) -> Optional[Cyc
     return next(((e, x) for e, x in cycles if e <= today <= x), None)
 
 
+def missing_list_sunday(cycles: List[Cycle], today: pd.Timestamp,
+                        list_sundays) -> Optional[pd.Timestamp]:
+    """當期進場該用的那個週日根本沒有清單時回傳它，否則 None。
+
+    `check_recommendation_freshness` 看不到這種缺席：它比的是「最新清單」對「當期
+    該用的週日」，而週中才發布的清單會對齊到**下一個**週日、讓判斷式通過。實際資料
+    裡四次缺清單（weekly 2025-12-14、2026-01-11，monthly 2025-10-12、2026-01-11）
+    全是這一種——清單在進場日當天（週一）才發，那一輪於是空手，而且一聲不響。
+
+    只在缺席的那個週日所屬的整週內回報。那一週是清單還補得進來的時間窗（日期記成
+    該週日入庫，每日 sync 就會補進場）；過了就確定空手，4 週策略等於 25% 資金空一輪，
+    每天再喊也改變不了。
+
+    不拋例外：拋出去會擋掉整支 job、連其他 tranche 的賣出都做不成，而這種情況本來
+    就沒東西可買，擋下來沒有意義。`list_sundays` 是對齊後的清單週日（見
+    `align_to_sunday`），與 `_create_df` 的 `weekly_batches` 同一套鍵。
+    """
+    current = find_current_cycle(cycles, today)
+    if current is None:
+        return None
+    expected_sunday = owning_sunday([current[0]])[0]
+    if expected_sunday in {pd.Timestamp(s).normalize() for s in list_sundays}:
+        return None
+    if owning_sunday([today])[0] != expected_sunday:
+        return None
+    return expected_sunday
+
+
 def align_to_sunday(date: pd.Timestamp) -> pd.Timestamp:
     """週日留在當天；週一～週六對齊到下一個週日（與推薦清單批次對齊規則一致）。"""
     return date + pd.Timedelta(days=6 - date.weekday())

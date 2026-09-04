@@ -15,6 +15,7 @@ from core.trading_cycles import (
     compute_cycles,
     compute_historical_cycles,
     find_current_cycle,
+    missing_list_sunday,
 )
 
 
@@ -205,3 +206,48 @@ class TestOwningSunday:
 
     def test_an_empty_input_gives_an_empty_index(self):
         assert len(owning_sunday(pd.DatetimeIndex([]))) == 0
+
+
+class TestMissingListSunday:
+    """當期該用的週日沒有清單——freshness 檢查看不到的那種缺席。
+
+    kiri 的排程：週一買、hold 4 週，第一個週期 2026-07-06 ~ 07-31，
+    該用的是 07-05（週日）的清單。
+    """
+
+    def test_a_present_list_is_not_reported(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"),
+                                   [ts("2026-07-05")]) is None
+
+    def test_a_missing_list_is_reported_on_the_entry_day(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"),
+                                   [ts("2026-06-28")]) == ts("2026-07-05")
+
+    def test_it_keeps_reporting_for_the_rest_of_that_week(self):
+        """那一週清單還補得進來，補了就會進場，所以整週都該喊。"""
+        for d in ("2026-07-07", "2026-07-09", "2026-07-11"):   # 二、四、六
+            assert missing_list_sunday(kiri_cycles(), ts(d), [ts("2026-06-28")]) == ts("2026-07-05")
+
+    def test_it_goes_quiet_once_that_week_is_over(self):
+        """過了那週該輪確定空手，每天再喊也改變不了。"""
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-13"), [ts("2026-06-28")]) is None
+
+    def test_outside_any_cycle_is_not_reported(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-02"), []) is None
+
+    def test_it_catches_exactly_what_freshness_misses(self):
+        """實盤四次缺清單的共同形狀：清單在進場日當天（週一）才發。
+
+        對齊規則把它推到**下一個**週日，於是 freshness 通過（07-12 >= 07-05），
+        但當期該用的 07-05 仍然不存在——那一輪空手。
+        """
+        monday_list = "2026-07-06"
+        check_recommendation_freshness(kiri_cycles(), ts("2026-07-06"), monday_list)   # 不拋
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"),
+                                   [align_to_sunday(ts(monday_list))]) == ts("2026-07-05")
+
+    def test_an_empty_db_is_reported_too(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"), []) == ts("2026-07-05")
+
+    def test_it_accepts_plain_strings_as_list_sundays(self):
+        assert missing_list_sunday(kiri_cycles(), ts("2026-07-06"), ["2026-07-05"]) is None

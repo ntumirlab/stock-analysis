@@ -3,6 +3,7 @@
 from core.notification_formats import (
     format_fetch_failures,
     format_fetch_success,
+    format_missing_week_list,
     format_no_new_recommendations,
     format_order_summary,
     format_parse_failures,
@@ -90,6 +91,16 @@ def test_no_new_recommendations_content():
     body = format_no_new_recommendations("monthly")
     assert "monthly" in body
     assert "沒有發現新的推薦清單" in body
+
+
+def test_missing_week_list_content():
+    import pandas as pd
+
+    body = format_missing_week_list("weekly_4w", pd.Timestamp("2026-01-11"),
+                                    pd.Timestamp("2026-01-12"))
+    assert "weekly_4w" in body
+    assert "2026-01-11" in body and "2026-01-12" in body
+    assert "不進場" in body
 
 
 def test_universe_missing_content():

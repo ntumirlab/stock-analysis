@@ -5,14 +5,18 @@ from finlab import data
 from finlab.backtest import sim
 from finlab.dataframe import FinlabDataFrame
 from core.trading_cycles import (
+    align_to_sunday,
     compute_cycles,
     compute_historical_cycles,
     check_recommendation_freshness,
+    find_current_cycle,
+    missing_list_sunday,
 )
 from strategy_class.golden_ai_tw_strategy_base import GoldenAITWStrategyBase
 from dao.recommendation_dao import RecommendationDAO
 from markets.target_weekday_tw_market import TargetWeekdayTWMarket
-from core.notification_formats import format_universe_missing
+from core.notification_formats import (format_missing_week_list,
+                                      format_universe_missing)
 from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
@@ -29,6 +33,8 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
     # 同一次執行會建多個 tranche adapter（清單相同），用 class 層級去重
     # 避免同一批缺漏股重複通知
     _warned_universe_keys = set()
+    # 缺清單的那一週同理：同一策略的四個 tranche 只該喊一次
+    _warned_missing_list_keys = set()
 
     def __init__(self, frequency='weekly', hold_weeks=1, cycle_start_date=None,
                  config_path="config.yaml", backtest_date=None):
@@ -189,6 +195,31 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
         finally:
             data.truncate_end = None
 
+    def _warn_if_the_weeks_list_is_missing(self, dao, today):
+        """當期該用的週日清單不存在＝這一輪空手，而 freshness 檢查看不到（見
+        `core.trading_cycles.missing_list_sunday`）。只記 log 不夠：空手沒有委託、
+        沒有失敗，摘要通知裡什麼都不會出現。
+        """
+        cycles = self._compute_cycles(until=today + pd.Timedelta(days=7))
+        list_sundays = {align_to_sunday(pd.Timestamp(r.date))
+                        for r in dao.load() if r.date and r.stocks}
+        sunday = missing_list_sunday(cycles, today, list_sundays)
+        if sunday is None:
+            return
+
+        entry = find_current_cycle(cycles, today)[0]
+        logger.warning(
+            f"當週無推薦清單（{sunday:%Y-%m-%d}）：本輪買入日 {entry:%Y-%m-%d} 不進場"
+        )
+        warn_key = (self.task_name, str(sunday.date()))
+        if warn_key in GoldenAIOrderAdapter._warned_missing_list_keys:
+            return
+        GoldenAIOrderAdapter._warned_missing_list_keys.add(warn_key)
+        self.notifier.send_warning(
+            task_name="當週無推薦清單",
+            body=format_missing_week_list(self.task_name, sunday, entry),
+        )
+
     def _check_recommendation_freshness(self, latest_rec, today):
         cycles = self._compute_cycles(until=today + pd.Timedelta(days=7))
         latest_rec_date = latest_rec.date if latest_rec else None
@@ -218,6 +249,9 @@ class GoldenAIOrderAdapter(GoldenAITWStrategyBase):
             self._latest_selected_ids = []
 
         today = self.backtest_date if self.backtest_date is not None else pd.Timestamp.today().normalize()
+        # 先發缺清單的警告再做 freshness 檢查：清單整週沒進來時 freshness 會拋，
+        # 拋在前面的話這則警告就永遠送不出去。
+        self._warn_if_the_weeks_list_is_missing(dao, today)
         self._check_recommendation_freshness(latest_rec, today)
 
         return self._run_core(self.ranks)
