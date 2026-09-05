@@ -138,6 +138,10 @@ def compute_screen() -> dict:
     industry_map = _valid(sec_cat['category'])
     name_map = _valid(sec_cat['name'])
 
+    # 類股→顏色對照：依名稱排序固定指派（跨日期一致），計算一次供繪圖直接查表
+    all_cats = sorted(set(industry_map.values()) | {'未分類'})
+    color_map = {c: _PALETTE[i % len(_PALETTE)] for i, c in enumerate(all_cats)}
+
     close = close.loc[_COMPUTE_START:]
     adj_close = adj_close.loc[_COMPUTE_START:]
     adj_low = adj_low.loc[_COMPUTE_START:]
@@ -198,6 +202,7 @@ def compute_screen() -> dict:
             'low_ratio': _align(low_ratio),
         },
         'industry': industry_map,
+        'colors': color_map,
         'names': name_map,
         'updated': datetime.now(TZ).strftime('%Y-%m-%d %H:%M'),
     }
@@ -217,9 +222,8 @@ def _snap_date(date_str: str) -> str | None:
 
 
 def _category_color(category: str) -> str:
-    """類股顏色：依全部類股名稱排序後固定指派，跨日期一致。"""
-    all_cats = sorted(set(_CACHE['industry'].values()) | {'未分類'})
-    return _PALETTE[all_cats.index(category) % len(_PALETTE)]
+    """類股顏色：查快取中預建的固定對照表（跨日期一致）。"""
+    return _CACHE['colors'].get(category, _PALETTE[0])
 
 
 def _stock_rows(date_str: str) -> list[dict]:
@@ -426,7 +430,8 @@ def layout():
 def shift_date(_prev, _next, current):
     """‹ › 按鈕沿交易日移動。"""
     dates = _CACHE['dates']
-    snapped = _snap_date(current[:10]) or dates[0]
+    # str(... or '')：防範 DatePicker 回傳 None 或 date 物件
+    snapped = _snap_date(str(current or '')[:10]) or dates[0]
     idx = dates.index(snapped)
     if ctx.triggered_id == 'ls-prev-day-btn':
         idx = max(0, idx - 1)
@@ -464,7 +469,8 @@ def refresh_data(_n_clicks):
 )
 def update_view(picked):
     """依選定日期重繪族群分布與個股明細。"""
-    date_str = _snap_date(picked[:10]) or _CACHE['dates'][0]
+    # str(... or '')：防範 DatePicker 回傳 None 或 date 物件
+    date_str = _snap_date(str(picked or '')[:10]) or _CACHE['dates'][0]
     rows = _stock_rows(date_str)
     fig = _build_figure(date_str, rows)
 
