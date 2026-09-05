@@ -1,7 +1,7 @@
 """
 Alan 儀表板共用樣式與元件
 =========================
-供 alan_dashboards.py 與 pages/ 下各頁面共用，統一視覺風格。
+供 alan_dashboard/app.py 與 pages/ 下各頁面共用，統一視覺風格。
 """
 
 from zoneinfo import ZoneInfo

@@ -52,7 +52,8 @@ app.layout = html.Div([
                                 page['name'], href=page['relative_path'],
                                 active='exact', style={'fontSize': '14px'},
                             )
-                            for page in dash.page_registry.values()
+                            for page in sorted(dash.page_registry.values(),
+                                               key=lambda p: p.get('order') or 0)
                         ],
                         pills=True,
                     ),

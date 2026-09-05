@@ -203,7 +203,7 @@ def compute_screen() -> dict:
     }
 
 
-# 首次計算（每個 worker process 只執行一次；FinLab 登入由 alan_dashboards.py 負責）
+# 首次計算（每個 worker process 只執行一次；FinLab 登入由 alan_dashboard/app.py 負責）
 _CACHE = compute_screen()
 
 
