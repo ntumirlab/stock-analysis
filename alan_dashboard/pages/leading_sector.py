@@ -94,11 +94,14 @@ def _chip_rank_masks(top_ns):
 
     main_force_shares = (top15_buy - top15_sell) * 1000
 
+    # 發行股數為事件型資料（增減資基準日常為非交易日），相除對齊時會產生
+    # ffill 幽靈列；rolling 累計按列數取窗會把前一交易日重複計入，
+    # 故先將各比例鎖回分子（買賣超資料）的交易日索引
     ratios = {
-        '外資': foreign / shares_outstanding,
-        '投信': trust / shares_outstanding,
-        '自營商': dealer / shares_outstanding,
-        '主力': main_force_shares / shares_outstanding,
+        '外資': (foreign / shares_outstanding).reindex(foreign.index),
+        '投信': (trust / shares_outstanding).reindex(trust.index),
+        '自營商': (dealer / shares_outstanding).reindex(dealer.index),
+        '主力': (main_force_shares / shares_outstanding).reindex(top15_buy.index),
     }
 
     masks = {n: {} for n in top_ns}
