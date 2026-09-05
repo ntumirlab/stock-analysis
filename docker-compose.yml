@@ -59,10 +59,10 @@ services:
       - stock-network
     command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8051", "golden_ai_backtest_dashboard:server"]
 
-  tw-market-regime-dashboard:
+  alan-dashboards:
     platform: linux/amd64
     build: .
-    container_name: tw-market-regime-dashboard
+    container_name: alan-dashboards
     restart: unless-stopped
     volumes:
       - ./.env:/app/.env:ro
@@ -73,7 +73,9 @@ services:
       - "8052:8052"
     networks:
       - stock-network
-    command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8052", "--timeout", "120", "tw_market_regime_dashboard:server"]
+    # 單一 worker：_CACHE 存於 process 記憶體，多 worker 會因「重新整理」只更新
+    # 其中一個 worker 而出現資料不同步；此服務流量小，單 worker 足夠
+    command: ["gunicorn", "-w", "1", "-b", "0.0.0.0:8052", "--timeout", "300", "alan_dashboard.app:server"]
 
   stock-scheduler:
     platform: linux/amd64
