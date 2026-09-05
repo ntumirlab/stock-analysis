@@ -100,10 +100,17 @@ class AlanTWStrategyBase:
 
     def _build_chip_buy_condition(self, top_n):
         """建立籌碼面條件"""
-        # 計算外資、投信、自營商的買賣超佔發行量比例
-        foreign_net_buy_ratio = self.foreign_net_buy_shares / self.shares_outstanding
-        investment_trust_net_buy_ratio = self.investment_trust_net_buy_shares / self.shares_outstanding
-        dealer_self_net_buy_ratio = self.dealer_self_net_buy_shares / self.shares_outstanding
+        # 計算外資、投信、自營商的買賣超佔發行量比例。
+        # 發行股數為事件型資料（增減資基準日常為非交易日），相除對齊時會產生
+        # ffill 幽靈列；rolling 累計按列數取窗會把前一交易日重複計入，
+        # 故先將各比例鎖回分子（買賣超資料）的交易日索引
+        trading_days = self.foreign_net_buy_shares.index
+        foreign_net_buy_ratio = (
+            self.foreign_net_buy_shares / self.shares_outstanding).reindex(trading_days)
+        investment_trust_net_buy_ratio = (
+            self.investment_trust_net_buy_shares / self.shares_outstanding).reindex(trading_days)
+        dealer_self_net_buy_ratio = (
+            self.dealer_self_net_buy_shares / self.shares_outstanding).reindex(trading_days)
 
         # 計算累積買超比例
         foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2).sum()
@@ -139,7 +146,8 @@ class AlanTWStrategyBase:
             top15_sell_shares = data.get('etl:broker_transactions:top15_sell').astype('float64')
 
         net_buy_shares = (top15_buy_shares - top15_sell_shares) * 1000
-        net_buy_ratio = net_buy_shares / self.shares_outstanding
+        net_buy_ratio = (
+            net_buy_shares / self.shares_outstanding).reindex(top15_buy_shares.index)
         net_buy_ratio_2d_sum = net_buy_ratio.rolling(2).sum()
         net_buy_ratio_3d_sum = net_buy_ratio.rolling(3).sum()
 
