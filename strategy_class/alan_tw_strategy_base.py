@@ -104,13 +104,15 @@ class AlanTWStrategyBase:
         # 發行股數為事件型資料（增減資基準日常為非交易日），相除對齊時會產生
         # ffill 幽靈列；rolling 累計按列數取窗會把前一交易日重複計入，
         # 故先將各比例鎖回分子（買賣超資料）的交易日索引
-        trading_days = self.foreign_net_buy_shares.index
         foreign_net_buy_ratio = (
-            self.foreign_net_buy_shares / self.shares_outstanding).reindex(trading_days)
+            self.foreign_net_buy_shares / self.shares_outstanding
+        ).reindex(self.foreign_net_buy_shares.index)
         investment_trust_net_buy_ratio = (
-            self.investment_trust_net_buy_shares / self.shares_outstanding).reindex(trading_days)
+            self.investment_trust_net_buy_shares / self.shares_outstanding
+        ).reindex(self.investment_trust_net_buy_shares.index)
         dealer_self_net_buy_ratio = (
-            self.dealer_self_net_buy_shares / self.shares_outstanding).reindex(trading_days)
+            self.dealer_self_net_buy_shares / self.shares_outstanding
+        ).reindex(self.dealer_self_net_buy_shares.index)
 
         # 計算累積買超比例
         foreign_net_buy_ratio_2d_sum = foreign_net_buy_ratio.rolling(2).sum()
