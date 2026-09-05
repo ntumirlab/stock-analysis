@@ -49,8 +49,10 @@ jobs:
             echo "$ENV_FILE" > .env
 
             # 先 build 成功再停服務：build 失敗時舊容器繼續跑，避免停機卡在壞版本
+            # --remove-orphans：服務改名後的舊容器會變孤兒、繼續佔用端口
+            # （如 tw-market-regime-dashboard 佔 8052 導致 alan-dashboards 起不來）
             docker compose build
-            docker compose down
-            docker compose up -d
+            docker compose down --remove-orphans
+            docker compose up -d --remove-orphans
 
             docker image prune -f
