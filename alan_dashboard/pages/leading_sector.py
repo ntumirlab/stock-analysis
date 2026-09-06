@@ -5,7 +5,7 @@
 並提供 date picker 瀏覽歷史分布。
 
 篩選條件（1、4、5、6 為 AND；2 與 3 之間為 OR）：
-    1. 收盤價 >= 480 天新高 * 90%
+    1. 收盤價 >= 480 天新高 * 90%（新高取盤中最高價，非收盤新高）
     2. 營益率增 12%  + 買超排行前 40 檔
     3. 營益率增 0.1% + 買超排行前 20 檔
     4. 60 日均線乖離 < 28%
@@ -36,17 +36,21 @@ dash.register_page(__name__, path='/leading-sector', name='領先潛力族群',
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# 類股色盤（依類股名稱固定指派，超過 8 個類股時循環使用；
-# 類股身分以座標軸標籤為準，顏色僅輔助區隔）
+# 類股色盤：依「當日」類股柱順序（家數多→少）逐一指派，同一畫面相鄰不重色，
+# 單日類股超過 12 個才會循環重複；顏色不跨日期固定，類股身分以座標軸標籤為準
 _PALETTE = [
     '#2a78d6',  # blue
     '#eb6834',  # orange
     '#1baf7a',  # aqua
+    '#4a3aa7',  # violet
     '#eda100',  # yellow
+    '#e34948',  # red
+    '#0e7f8c',  # teal
     '#e87ba4',  # magenta
     '#008300',  # green
-    '#4a3aa7',  # violet
-    '#e34948',  # red
+    '#91622f',  # brown
+    '#64748b',  # slate
+    '#b3437a',  # plum
 ]
 
 # 條件參數
@@ -127,6 +131,7 @@ def compute_screen() -> dict:
     with data.universe(market='TSE_OTC'):
         close = data.get('price:收盤價')
         adj_close = data.get('etl:adj_close')
+        adj_high = data.get('etl:adj_high')
         adj_low = data.get('etl:adj_low')
         operating_margin = data.get('fundamental_features:營業利益率')
 
@@ -141,16 +146,13 @@ def compute_screen() -> dict:
     industry_map = _valid(sec_cat['category'])
     name_map = _valid(sec_cat['name'])
 
-    # 類股→顏色對照：依名稱排序固定指派（跨日期一致），計算一次供繪圖直接查表
-    all_cats = sorted(set(industry_map.values()) | {'未分類'})
-    color_map = {c: _PALETTE[i % len(_PALETTE)] for i, c in enumerate(all_cats)}
-
     close = close.loc[_COMPUTE_START:]
     adj_close = adj_close.loc[_COMPUTE_START:]
+    adj_high = adj_high.loc[_COMPUTE_START:]
     adj_low = adj_low.loc[_COMPUTE_START:]
 
-    # 條件 1：收盤價 >= 480 天新高 * 90%（還原價）
-    high_480 = adj_close.rolling(_NEW_HIGH_DAYS).max()
+    # 條件 1：收盤價 >= 480 天新高 * 90%（新高取「盤中最高價」而非收盤新高；還原價）
+    high_480 = adj_high.rolling(_NEW_HIGH_DAYS).max()
     high_ratio = adj_close / high_480
     cond1 = high_ratio >= _NEW_HIGH_PCT
 
@@ -205,7 +207,6 @@ def compute_screen() -> dict:
             'low_ratio': _align(low_ratio),
         },
         'industry': industry_map,
-        'colors': color_map,
         'names': name_map,
         'updated': datetime.now(TZ).strftime('%Y-%m-%d %H:%M'),
     }
@@ -222,11 +223,6 @@ def _snap_date(date_str: str) -> str | None:
     dates = _CACHE['dates']
     candidates = [d for d in dates if d <= date_str]
     return candidates[-1] if candidates else None
-
-
-def _category_color(category: str) -> str:
-    """類股顏色：查快取中預建的固定對照表（跨日期一致）。"""
-    return _CACHE['colors'].get(category, _PALETTE[0])
 
 
 def _stock_rows(date_str: str) -> list[dict]:
@@ -283,6 +279,8 @@ def _build_figure(date_str: str, rows: list[dict]) -> go.Figure:
     counts = pd.Series([r['category'] for r in rows]).value_counts()
     categories = list(counts.index)  # 已依家數排序
     tick_labels = {c: f'{c}<br>({counts[c]} 檔)' for c in categories}
+    # 顏色依當日柱順序指派：相鄰柱必不同色，超過色盤數才循環
+    day_colors = {c: _PALETTE[i % len(_PALETTE)] for i, c in enumerate(categories)}
 
     for r in rows:
         cat = r['category']
@@ -293,7 +291,7 @@ def _build_figure(date_str: str, rows: list[dict]) -> go.Figure:
             textposition='inside',
             insidetextanchor='middle',
             textfont={'color': 'white', 'size': 13, 'family': FONT},
-            marker={'color': _category_color(cat),
+            marker={'color': day_colors[cat],
                     'line': {'color': 'white', 'width': 2}},
             customdata=[[r['name'], r['stock_id'], f"{r['close']:.2f}",
                          f"{r['bias60']:+.1%}", f"{r['bias120']:+.1%}",
