@@ -12,7 +12,7 @@
     5. 120 日均線乖離 < 45%
     6. 收盤價 <= 近 15 天最低價 * 132%
 
-價格一律使用還原價格（etl:adj_close / etl:adj_low），
+價格一律使用還原價格（etl:adj_close / etl:adj_high / etl:adj_low），
 買超排行與營益率增邏輯與 strategy_class.alan_tw_strategy_base 一致：
     - 買超排行：外資 / 投信 / 自營商 / 主力（top15 分點）四者擇一（OR 聯集），
       各以「買賣超股數 ÷ 發行股數」之 1 日 / 2 日累計 / 3 日累計
