@@ -67,15 +67,21 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - ./finlab_db:/root/finlab_db
+      - ./logs:/app/logs
     environment:
       - TZ=Asia/Taipei
     ports:
       - "8052:8052"
     networks:
       - stock-network
-    # 單一 worker：_CACHE 存於 process 記憶體，多 worker 會因「重新整理」只更新
-    # 其中一個 worker 而出現資料不同步；此服務流量小，單 worker 足夠
-    command: ["gunicorn", "-w", "1", "-b", "0.0.0.0:8052", "--timeout", "300", "alan_dashboard.app:server"]
+    # 單一 process + 多執行緒：頁面快取存於 process 記憶體，多 process 會因「重新整理」
+    # 只更新其中一個而資料不同步；gthread 讓一個人的重算不會卡住其他人的請求。
+    # access log 由 docker/gunicorn_alan_dashboards_logging.json 寫到 logs/alan_dashboards_access.log
+    #（10 MB 輪替、保留 3 份），錯誤與啟動訊息仍進 docker logs
+    command: ["gunicorn", "-w", "1", "-k", "gthread", "--threads", "4",
+              "-b", "0.0.0.0:8052", "--timeout", "300",
+              "--log-config-json", "docker/gunicorn_alan_dashboards_logging.json",
+              "alan_dashboard.app:server"]
 
   stock-scheduler:
     platform: linux/amd64

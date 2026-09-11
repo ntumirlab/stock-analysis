@@ -336,7 +336,7 @@ stock-analysis/
 | ------------------------------ | ------------------ | ---- |
 | `stock-analysis-app`           | Dashboard 網頁介面 | 5000 |
 | `golden-ai-backtest-dashboard` | GoldenAI 回測報告  | 8051 |
-| `tw-market-regime-dashboard`   | 台股多空轉折模型   | 8052 |
+| `alan-dashboards`              | Alan 台股儀表板（多空轉折、領先族群） | 8052 |
 | `stock-scheduler`              | 定時排程執行器     | -    |
 
 ### Volume 掛載說明
