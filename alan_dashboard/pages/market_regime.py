@@ -2,11 +2,13 @@
 台股多空轉折模型頁面
 ====================
 顯示 TAIEX K 線 + 均線條件式 S4 分數柱狀圖。
-預設顯示最近 2 個月，可切換時間範圍。
+預設顯示最近 2 個月，可切換時間範圍（最長 1 年）。
+
+資料與分數於啟動時計算一次並快取於伺服器記憶體（見 alan_dashboard/cache.py），
+每次請求只回傳選定期間的圖表。
 """
 
-import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import dash
 from dash import dcc, html, Input, Output, callback
@@ -18,7 +20,8 @@ from finlab import data
 import talib
 from talib import abstract
 
-from alan_dashboard.theme import TZ, COLOR, FONT, CARD_STYLE, kpi_card
+from alan_dashboard.cache import PageCache, REFRESH_LABEL
+from alan_dashboard.theme import COLOR, FONT, CARD_STYLE, kpi_card
 
 dash.register_page(__name__, path='/', name='多空轉折模型', title='台股多空轉折模型', order=0)
 
@@ -34,7 +37,7 @@ _SCORE_COLOR = {
 
 _PERIOD_DAYS = {
     '1M': 30, '2M': 60, '3M': 90,
-    '6M': 180, '1Y': 365, 'All': None,
+    '6M': 180, '1Y': 365,
 }
 _DEFAULT_PERIOD = '2M'
 
@@ -107,40 +110,36 @@ def compute_score(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: int) ->
     )
 
 
-# ── Data loading ───────────────────────────────────────────────────────────────
+# ── Data loading & cache ───────────────────────────────────────────────────────
 
-def _load_taiex() -> pd.DataFrame:
-    """載入 TAIEX OHLC（全歷史）。"""
-    return pd.DataFrame({
-        'open':  data.get('taiex_total_index:開盤指數')['TAIEX'],
-        'high':  data.get('taiex_total_index:最高指數')['TAIEX'],
-        'low':   data.get('taiex_total_index:最低指數')['TAIEX'],
-        'close': data.get('taiex_total_index:收盤指數')['TAIEX'],
+_TAIEX_DATASETS = {
+    'open':  'taiex_total_index:開盤指數',
+    'high':  'taiex_total_index:最高指數',
+    'low':   'taiex_total_index:最低指數',
+    'close': 'taiex_total_index:收盤指數',
+}
+
+
+def _load_inputs() -> dict:
+    """載入各市場 OHLC（全歷史，指標暖身用）。"""
+    taiex = pd.DataFrame({
+        col: data.get(name)['TAIEX'] for col, name in _TAIEX_DATASETS.items()
     }).dropna()
+    return {'TAIEX': taiex}
 
 
-def _build_store(market: str) -> dict:
-    """拉取資料並計算分數，打包為可序列化的 dict。"""
-    cfg = _MARKET_CONFIG[market]
-    dmi_hi, dmi_mid, dmi_lo = cfg['dmi']
+def _build(inputs: dict) -> dict:
+    """對每個市場計算分數；快取內容為 {market: {'ohlc': DataFrame, 'score': Series}}。"""
+    markets = {}
+    for market, cfg in _MARKET_CONFIG.items():
+        ohlc = inputs[market]
+        score = compute_score(ohlc, *cfg['dmi']).fillna(0).astype(int)
+        markets[market] = {'ohlc': ohlc, 'score': score}
+    return {'markets': markets}
 
-    if market == 'TAIEX':
-        ohlc = _load_taiex()
-    else:
-        raise NotImplementedError(f'Market {market} not implemented yet.')
 
-    score = compute_score(ohlc, dmi_hi, dmi_mid, dmi_lo)
-
-    return {
-        'ohlc': ohlc.reset_index().rename(columns={'index': 'date'}).assign(
-            date=lambda df: df['date'].astype(str)
-        ).to_dict('records'),
-        'score': score.reset_index().rename(columns={'index': 'date', 0: 'score'}).assign(
-            date=lambda df: df['date'].astype(str),
-            score=lambda df: df['score'].fillna(0).astype(int),
-        ).to_dict('records'),
-        'updated': datetime.now(TZ).strftime('%Y-%m-%d %H:%M'),
-    }
+_page_cache = PageCache('market_regime', _load_inputs, _build)
+_page_cache.refresh()  # 啟動時計算一次（失敗即讓 worker 啟動失敗，與先前行為一致）
 
 
 # ── Layout helpers ─────────────────────────────────────────────────────────────
@@ -157,8 +156,6 @@ def _signal_badge(score_val: int) -> tuple[str, str, str]:
 # ── Page layout ────────────────────────────────────────────────────────────────
 
 layout = html.Div([
-    dcc.Store(id='mr-data-store'),
-
     # ── Control bar ──────────────────────────────────────────────────────────
     html.Div([
         dbc.Container([
@@ -187,20 +184,6 @@ layout = html.Div([
                         inline=True,
                     ),
                     width='auto', className='d-flex align-items-center',
-                ),
-                dbc.Col(
-                    dbc.Button(
-                        '↻ 重新整理', id='mr-refresh-btn',
-                        color='light', size='sm',
-                        style={'border': f"1px solid {COLOR['border']}", 'fontSize': '13px'},
-                    ),
-                    width='auto', className='d-flex align-items-center',
-                ),
-                dbc.Col(
-                    html.Div(id='mr-loading-indicator', style={
-                        'fontSize': '12px', 'color': COLOR['text_muted'],
-                    }),
-                    className='d-flex align-items-center ms-auto',
                 ),
             ], className='g-2 align-items-center'),
         ], fluid=True),
@@ -239,58 +222,26 @@ layout = html.Div([
 # ── Callbacks ──────────────────────────────────────────────────────────────────
 
 @callback(
-    Output('mr-data-store', 'data'),
-    Output('mr-loading-indicator', 'children'),
-    Input('mr-market-dropdown', 'value'),
-    Input('mr-refresh-btn', 'n_clicks'),
-)
-def load_data(market, _n_clicks):
-    """載入 FinLab 資料並計算分數，存入 dcc.Store。"""
-    try:
-        store = _build_store(market)
-        # 更新時間統一顯示於「訊號日」卡片，這裡僅在失敗時顯示訊息
-        return json.dumps(store), ''
-    except Exception as e:
-        return None, f'載入失敗：{e}'
-
-
-@callback(
     Output('mr-main-chart', 'figure'),
     Output('mr-kpi-date', 'children'),
     Output('mr-kpi-score', 'children'),
     Output('mr-kpi-signal', 'children'),
-    Input('mr-data-store', 'data'),
+    Input('mr-market-dropdown', 'value'),
     Input('mr-period-selector', 'value'),
 )
-def update_chart(store_json, period):
+def update_chart(market, period):
     """依 period 截切日期並繪製雙行圖表。"""
-    empty_fig = go.Figure().update_layout(
-        plot_bgcolor='white', paper_bgcolor='rgba(0,0,0,0)',
-        annotations=[{'text': '載入中…', 'showarrow': False,
-                      'font': {'size': 16, 'color': COLOR['text_muted']}}],
-    )
-    blank = kpi_card('—', '—')
-    if not store_json:
-        return empty_fig, blank, blank, blank
+    cache = _page_cache.data  # 取快照：整個 callback 只讀這一份，不受背景重算影響
+    cached = cache['markets'][market]
+    updated = cache['updated']
 
-    store   = json.loads(store_json)
-    ohlc_df = pd.DataFrame(store['ohlc']).set_index('date')
-    ohlc_df.index = pd.to_datetime(ohlc_df.index)
-    ohlc_df = ohlc_df.sort_index()
-    score_df = pd.DataFrame(store['score']).set_index('date')
-    score_df.index = pd.to_datetime(score_df.index)
-    score_df = score_df.sort_index()
-    updated = store.get('updated', '—')
+    # Date filter（以最新交易日往前推算）
+    days = _PERIOD_DAYS.get(period, _PERIOD_DAYS[_DEFAULT_PERIOD])
+    cutoff = cached['ohlc'].index[-1] - timedelta(days=days)
+    ohlc_df = cached['ohlc'].loc[cutoff:]
+    scores  = cached['score'].loc[cutoff:]
 
-    # Date filter
-    days = _PERIOD_DAYS.get(period)
-    if days:
-        cutoff = ohlc_df.index[-1] - timedelta(days=days)
-        ohlc_df  = ohlc_df[ohlc_df.index >= cutoff]
-        score_df = score_df[score_df.index >= cutoff]
-
-    dates  = ohlc_df.index
-    scores = score_df['score']
+    dates = ohlc_df.index
 
     # Bar colors
     bar_colors = [
@@ -391,7 +342,7 @@ def update_chart(store_json, period):
 
     last_date = dates[-1].strftime('%Y-%m-%d') if len(dates) > 0 else '—'
     kpi_date    = kpi_card('訊號日（收盤資料）', last_date,
-                           subtitle=f'供下一交易日操作參考｜資料更新：{updated}')
+                           subtitle=f'供下一交易日操作參考｜資料更新：{updated}（{REFRESH_LABEL}）')
     score_sign = f'+{last_score}' if last_score > 0 else str(last_score)
     kpi_score   = kpi_card('當前分數', score_sign,
                            subtitle='範圍 -9 ~ +9（均線 + DMI + MACD + KD）')

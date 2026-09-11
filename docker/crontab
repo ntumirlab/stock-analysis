@@ -5,6 +5,9 @@
 # 沒有這行的話 job 內的 log 時間戳會顯示 UTC。排程時間不受此行影響（daemon 已是台北時區）。
 TZ=Asia/Taipei
 
+# 注意：Alan 儀表板（alan-dashboards 容器）不走 cron，每天 21:45 由服務內的背景執行緒重算快取
+#（alan_dashboard/cache.py 的 REFRESH_AT）。排回測時間時請避開 21:45 前後，以免記憶體同時吃緊。
+
 # 每天 20:30 - 抓取當日持股和帳戶資訊
 30 20 * * * cd /app && /opt/conda/envs/stock-analysis/bin/python -m jobs.scheduler --user_name=kiri --broker_name=shioaji >> /app/logs/fetch.log 2>&1
 
