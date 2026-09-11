@@ -30,6 +30,7 @@ app = dash.Dash(
     use_pages=True,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     title='Alan 台股儀表板',
+    compress=True,  # gzip 回應（需 flask-compress），plotly.js 與 callback JSON 皆可減少約 75%
 )
 app.config.suppress_callback_exceptions = True
 server = app.server  # gunicorn 進入點
