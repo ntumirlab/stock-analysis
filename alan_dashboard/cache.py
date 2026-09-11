@@ -2,9 +2,9 @@
 頁面資料快取與每日更新
 ======================
 每個頁面在 import 時建立一個 ``PageCache``：啟動時計算一次，之後由
-``start_daily_refresh`` 的執行緒每天固定時間（``REFRESH_AT``，台北時間）重算；
-重算失敗時每 ``RETRY_INTERVAL`` 秒重試，最多 ``MAX_RETRIES`` 次。
-沒有手動「重新整理」：需要立即重算時重啟服務即可（啟動時會算一次）。
+``start_daily_refresh`` 的執行緒每天固定時間（``REFRESH_AT``，台北時間）重算。
+失敗只記 log、不重試（與 docker/crontab 的 job 一致；重試會撞上 21:55 起的回測時段），
+隔天同一時間再算；需要立即重算時重啟服務即可（啟動時會算一次）。
 
 為什麼是固定時間而不是偵測新資料：資料為日 K，且 FinLab 各資料集是陸續更新的
 （價格先到、法人與分點稍晚），若一有新資料就重算，會出現「價格是今天、籌碼還是昨天」
@@ -31,9 +31,6 @@ logger = logging.getLogger(__name__)
 # 每日重算時間（台北）：FinLab 日資料（含分點）於 19:00 前更新完畢；
 # 排在 docker/crontab 的回測（21:55 起）之前，避免兩個容器同時佔用記憶體
 REFRESH_AT = dtime(21, 45)
-# 重算失敗（如 FinLab 暫時故障）時的重試間隔與次數
-RETRY_INTERVAL = 10 * 60
-MAX_RETRIES = 3
 # 顯示於各頁「訊號日」卡片，讓使用者知道何時會換成當日資料
 REFRESH_LABEL = f'每日 {REFRESH_AT:%H:%M} 自動更新'
 
@@ -75,32 +72,15 @@ def _seconds_until(at: dtime) -> float:
     return (target - now).total_seconds()
 
 
-def _refresh_all(sleep=time.sleep) -> None:
-    """對所有快取重算；失敗的每 RETRY_INTERVAL 秒重試，最多 MAX_RETRIES 次。"""
-    pending = list(_REGISTRY)
-    for attempt in range(MAX_RETRIES + 1):
-        if attempt:
-            logger.warning('daily refresh retry %d/%d in %ds for %s', attempt, MAX_RETRIES,
-                           RETRY_INTERVAL, [c.name for c in pending])
-            sleep(RETRY_INTERVAL)
-        failed = []
-        for cache in pending:
-            try:
-                cache.refresh()
-            except Exception:
-                logger.exception('[%s] daily refresh failed', cache.name)
-                failed.append(cache)
-        pending = failed
-        if not pending:
-            return
-    logger.error('daily refresh gave up after %d retries for %s',
-                 MAX_RETRIES, [c.name for c in pending])
-
-
 def _refresh_loop(at: dtime) -> None:
     while True:
         time.sleep(_seconds_until(at))
-        _refresh_all()
+        for cache in _REGISTRY:
+            try:
+                cache.refresh()
+            except Exception:
+                logger.exception('[%s] daily refresh failed; keeping previous cache until next run',
+                                 cache.name)
 
 
 def start_daily_refresh(at: dtime = REFRESH_AT) -> None:
