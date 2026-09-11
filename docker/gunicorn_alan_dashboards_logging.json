@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "generic": {
+      "format": "%(asctime)s [%(process)d] [%(levelname)s] %(name)s: %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S"
+    },
+    "access": {
+      "format": "%(message)s"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "formatter": "generic",
+      "stream": "ext://sys.stderr"
+    },
+    "access_file": {
+      "class": "logging.handlers.RotatingFileHandler",
+      "formatter": "access",
+      "filename": "logs/alan_dashboards_access.log",
+      "maxBytes": 10485760,
+      "backupCount": 3,
+      "encoding": "utf-8"
+    }
+  },
+  "loggers": {
+    "gunicorn.error": {
+      "level": "INFO",
+      "handlers": ["console"],
+      "propagate": false
+    },
+    "gunicorn.access": {
+      "level": "INFO",
+      "handlers": ["access_file"],
+      "propagate": false
+    }
+  },
+  "root": {
+    "level": "INFO",
+    "handlers": ["console"]
+  }
+}

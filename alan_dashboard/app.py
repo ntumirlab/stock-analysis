@@ -18,10 +18,11 @@ from dash import html
 import dash_bootstrap_components as dbc
 
 from utils.finlab_auth import login_finlab
+from alan_dashboard.cache import start_daily_refresh
 from alan_dashboard.theme import COLOR
 
 # FinLab 登入須在 app 建立前完成：use_pages 會在建立 app 時載入 pages/
-#（相對於本檔所在目錄），而 leading_sector 於 import 階段即需拉取資料計算
+#（相對於本檔所在目錄），而各頁面於 import 階段即需拉取資料建立快取
 login_finlab()
 
 app = dash.Dash(
@@ -29,9 +30,13 @@ app = dash.Dash(
     use_pages=True,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     title='Alan 台股儀表板',
+    compress=True,  # gzip 回應（需 flask-compress），plotly.js 與 callback JSON 皆可減少約 75%
 )
 app.config.suppress_callback_exceptions = True
 server = app.server  # gunicorn 進入點
+
+# 各頁面快取已於 use_pages 載入時建立；背景執行緒每天 21:45（台北）重算
+start_daily_refresh()
 
 app.layout = html.Div([
     # ── 全域導覽列 ────────────────────────────────────────────────────────────

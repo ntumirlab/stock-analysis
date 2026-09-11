@@ -35,6 +35,7 @@ dependencies:
       - google-auth-httplib2==0.3.0
       - google.genai==1.59.0
       - flask-autoindex==0.6.6
+      - flask-compress==1.24
       - keyring==23.5.0
       - scikit-learn
       - psycopg2-binary

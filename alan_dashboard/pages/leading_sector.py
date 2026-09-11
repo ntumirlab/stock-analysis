@@ -20,7 +20,7 @@
     - 營益率增：本季營益率 > 前一季營益率 * 門檻
 """
 
-from datetime import datetime
+from datetime import timedelta
 
 import dash
 from dash import dcc, html, dash_table, Input, Output, State, callback, ctx
@@ -29,7 +29,8 @@ import plotly.graph_objects as go
 import pandas as pd
 from finlab import data
 
-from alan_dashboard.theme import TZ, COLOR, FONT, CARD_STYLE, kpi_card
+from alan_dashboard.cache import PageCache, REFRESH_LABEL
+from alan_dashboard.theme import COLOR, FONT, CARD_STYLE, kpi_card
 
 dash.register_page(__name__, path='/leading-sector', name='領先潛力族群',
                    title='領先潛力族群', order=1)
@@ -66,12 +67,27 @@ _COND3 = {'op_growth': 1.001, 'top_n': 20, 'label': '營益率增0.1%+買超前2
 # 主力（top15 分點）買超比例絕對門檻，與 Alan 策略一致
 _MAIN_FORCE_MIN = {1: 0.0008, 2: 0.0015, 3: 0.0025}
 
-# 資料起算日：需保留 480 交易日 rolling 視窗的暖身期
-_COMPUTE_START = '2020-06-01'
-# 儀表板可瀏覽的歷史起點
-_HISTORY_START = '2023-01-01'
+# 儀表板可瀏覽的歷史範圍：最新交易日往前一年
+_HISTORY_DAYS = 365
+# 計算起點再往前推的暖身期（日曆日）：需涵蓋 480 交易日 rolling 視窗（約 690 日曆日）
+_WARMUP_DAYS = 800
 
 _CHIP_SOURCES = ('外資', '投信', '自營商', '主力')
+
+_DATASETS = {
+    'close': 'price:收盤價',
+    'adj_close': 'etl:adj_close',
+    'adj_high': 'etl:adj_high',
+    'adj_low': 'etl:adj_low',
+    'operating_margin': 'fundamental_features:營業利益率',
+    'foreign': 'institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)',
+    'trust': 'institutional_investors_trading_summary:投信買賣超股數',
+    'dealer': 'institutional_investors_trading_summary:自營商買賣超股數(自行買賣)',
+    'shares_outstanding': 'internal_equity_changes:發行股數',
+    'top15_buy': 'etl:broker_transactions:top15_buy',
+    'top15_sell': 'etl:broker_transactions:top15_sell',
+    'security_categories': 'security_categories',
+}
 
 _CONDITION_NOTE = (
     '條件：收盤 ≥ 480日高×90%｜（營益率增12%+買超前40 或 營益率增0.1%+買超前20）'
@@ -81,20 +97,28 @@ _CONDITION_NOTE = (
 
 # ── Screen computation ─────────────────────────────────────────────────────────
 
-def _chip_rank_masks(top_ns):
+def _load_inputs() -> dict:
+    """拉取所有 FinLab 資料集（未到期時直接讀本機快取）。"""
+    with data.universe(market='TSE_OTC'):
+        inputs = {key: data.get(name) for key, name in _DATASETS.items()
+                  if key != 'security_categories'}
+    inputs['security_categories'] = data.get(_DATASETS['security_categories'])
+    return inputs
+
+
+def _chip_rank_masks(inputs: dict, compute_start: str, top_ns):
     """計算各買超來源進前 N 檔的條件。
 
     Returns:
         dict: {top_n: {source: bool DataFrame}}
     """
-    with data.universe(market='TSE_OTC'):
-        foreign = data.get('institutional_investors_trading_summary:外陸資買賣超股數(不含外資自營商)')
-        trust = data.get('institutional_investors_trading_summary:投信買賣超股數')
-        dealer = data.get('institutional_investors_trading_summary:自營商買賣超股數(自行買賣)')
-        shares_outstanding = data.get('internal_equity_changes:發行股數')
-        # finlab 2.x 將分點資料載為 nullable Int64，rank() 會 TypeError，統一轉 float64
-        top15_buy = data.get('etl:broker_transactions:top15_buy').astype('float64')
-        top15_sell = data.get('etl:broker_transactions:top15_sell').astype('float64')
+    foreign = inputs['foreign']
+    trust = inputs['trust']
+    dealer = inputs['dealer']
+    shares_outstanding = inputs['shares_outstanding']
+    # finlab 2.x 將分點資料載為 nullable Int64，rank() 會 TypeError，統一轉 float64
+    top15_buy = inputs['top15_buy'].astype('float64')
+    top15_sell = inputs['top15_sell'].astype('float64')
 
     main_force_shares = (top15_buy - top15_sell) * 1000
 
@@ -110,7 +134,7 @@ def _chip_rank_masks(top_ns):
 
     masks = {n: {} for n in top_ns}
     for source, ratio in ratios.items():
-        ratio = ratio.loc[_COMPUTE_START:]
+        ratio = ratio.loc[compute_start:]
         windows = {1: ratio, 2: ratio.rolling(2).sum(), 3: ratio.rolling(3).sum()}
         ranks = {d: w.rank(axis=1, ascending=False) for d, w in windows.items()}
 
@@ -126,18 +150,17 @@ def _chip_rank_masks(top_ns):
     return masks
 
 
-def compute_screen() -> dict:
+def compute_screen(inputs: dict) -> dict:
     """計算六項條件的篩選結果，回傳儀表板所需的快取資料。"""
-    with data.universe(market='TSE_OTC'):
-        close = data.get('price:收盤價')
-        adj_close = data.get('etl:adj_close')
-        adj_high = data.get('etl:adj_high')
-        adj_low = data.get('etl:adj_low')
-        operating_margin = data.get('fundamental_features:營業利益率')
+    close = inputs['close']
+    adj_close = inputs['adj_close']
+    adj_high = inputs['adj_high']
+    adj_low = inputs['adj_low']
+    operating_margin = inputs['operating_margin']
 
     # 產業分類與名稱：security_categories 保留已下市股票的列（company_basic_info
     # 為當前快照、下市即消失），且現存股票的分類與簡稱經比對與 company_basic_info 完全一致
-    sec_cat = data.get('security_categories').set_index('stock_id')
+    sec_cat = inputs['security_categories'].set_index('stock_id')
 
     def _valid(series):
         # 過濾 NaN 與字串 'nan'（finlab 部分欄位以文字儲存缺值）
@@ -146,10 +169,15 @@ def compute_screen() -> dict:
     industry_map = _valid(sec_cat['category'])
     name_map = _valid(sec_cat['name'])
 
-    close = close.loc[_COMPUTE_START:]
-    adj_close = adj_close.loc[_COMPUTE_START:]
-    adj_high = adj_high.loc[_COMPUTE_START:]
-    adj_low = adj_low.loc[_COMPUTE_START:]
+    # 可瀏覽範圍與計算起點皆以最新交易日動態推算
+    latest = adj_close.index[-1]
+    history_start = (latest - timedelta(days=_HISTORY_DAYS)).strftime('%Y-%m-%d')
+    compute_start = (latest - timedelta(days=_HISTORY_DAYS + _WARMUP_DAYS)).strftime('%Y-%m-%d')
+
+    close = close.loc[compute_start:]
+    adj_close = adj_close.loc[compute_start:]
+    adj_high = adj_high.loc[compute_start:]
+    adj_low = adj_low.loc[compute_start:]
 
     # 條件 1：收盤價 >= 480 天新高 * 90%（新高取「盤中最高價」而非收盤新高；還原價）
     high_480 = adj_high.rolling(_NEW_HIGH_DAYS).max()
@@ -160,7 +188,7 @@ def compute_screen() -> dict:
     fund12 = operating_margin > (operating_margin.shift(1) * _COND2['op_growth'])
     fund001 = operating_margin > (operating_margin.shift(1) * _COND3['op_growth'])
 
-    chip_masks = _chip_rank_masks(top_ns=(_COND2['top_n'], _COND3['top_n']))
+    chip_masks = _chip_rank_masks(inputs, compute_start, top_ns=(_COND2['top_n'], _COND3['top_n']))
     src40 = chip_masks[_COND2['top_n']]
     src20 = chip_masks[_COND3['top_n']]
     chip40 = src40['外資'] | src40['投信'] | src40['自營商'] | src40['主力']
@@ -185,7 +213,7 @@ def compute_screen() -> dict:
     # 發行股數為事件型資料（日期不限交易日），條件對齊時索引會混入非交易日，
     # 且訊號值被 ffill 帶入而價格欄為 NaN；一律鎖回實際交易日（adj_close 的索引）
     signal = signal.reindex(adj_close.index.intersection(signal.index))
-    signal = signal.fillna(False).astype(bool).loc[_HISTORY_START:]
+    signal = signal.fillna(False).astype(bool).loc[history_start:]
 
     def _align(df, fill=None):
         if fill is None:
@@ -208,45 +236,45 @@ def compute_screen() -> dict:
         },
         'industry': industry_map,
         'names': name_map,
-        'updated': datetime.now(TZ).strftime('%Y-%m-%d %H:%M'),
     }
 
 
-# 首次計算（每個 worker process 只執行一次；FinLab 登入由 alan_dashboard/app.py 負責）
-_CACHE = compute_screen()
+# 啟動時計算一次（FinLab 登入由 alan_dashboard/app.py 負責；失敗即讓 worker 啟動失敗）
+_page_cache = PageCache('leading_sector', _load_inputs, compute_screen)
+_page_cache.refresh()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _snap_date(date_str: str) -> str | None:
+def _snap_date(cache: dict, date_str: str) -> str | None:
     """把任意日期貼齊到最近一個（<= 該日）的交易日；早於歷史起點回傳 None。"""
-    dates = _CACHE['dates']
+    dates = cache['dates']
     candidates = [d for d in dates if d <= date_str]
     return candidates[-1] if candidates else None
 
 
-def _stock_rows(date_str: str) -> list[dict]:
+def _stock_rows(cache: dict, date_str: str) -> list[dict]:
     """整理指定交易日入選個股的明細（依類股家數多寡排序）。"""
-    signal = _CACHE['signal']
+    signal = cache['signal']
     row = signal.loc[date_str]
     stock_ids = [sid for sid, v in row.items() if bool(v)]
 
     rows = []
     for sid in stock_ids:
-        category = _CACHE['industry'].get(sid) or '未分類'
+        category = cache['industry'].get(sid) or '未分類'
         matched = []
         sources = set()
-        if bool(_CACHE['cond2'].loc[date_str, sid]):
+        if bool(cache['cond2'].loc[date_str, sid]):
             matched.append(_COND2['label'])
-            sources |= {s for s in _CHIP_SOURCES if bool(_CACHE['src40'][s].loc[date_str, sid])}
-        if bool(_CACHE['cond3'].loc[date_str, sid]):
+            sources |= {s for s in _CHIP_SOURCES if bool(cache['src40'][s].loc[date_str, sid])}
+        if bool(cache['cond3'].loc[date_str, sid]):
             matched.append(_COND3['label'])
-            sources |= {s for s in _CHIP_SOURCES if bool(_CACHE['src20'][s].loc[date_str, sid])}
+            sources |= {s for s in _CHIP_SOURCES if bool(cache['src20'][s].loc[date_str, sid])}
 
-        detail = _CACHE['detail']
+        detail = cache['detail']
         rows.append({
             'stock_id': sid,
-            'name': _CACHE['names'].get(sid, sid),
+            'name': cache['names'].get(sid, sid),
             'category': category,
             'close': detail['close'].loc[date_str, sid],
             'high_ratio': detail['high_ratio'].loc[date_str, sid],
@@ -340,6 +368,7 @@ def _build_figure(date_str: str, rows: list[dict]) -> go.Figure:
 
 def layout():
     """以函式回傳 layout，讓 date picker 邊界每次進入頁面時取自最新快取。"""
+    cache = _page_cache.data
     return html.Div([
         # ── Control bar ──────────────────────────────────────────────────────
         html.Div([
@@ -350,29 +379,15 @@ def layout():
                                    style={'border': f"1px solid {COLOR['border']}"}),
                         dcc.DatePickerSingle(
                             id='ls-date-picker',
-                            date=_CACHE['dates'][-1],
-                            min_date_allowed=_CACHE['dates'][0],
-                            max_date_allowed=_CACHE['dates'][-1],
+                            date=cache['dates'][-1],
+                            min_date_allowed=cache['dates'][0],
+                            max_date_allowed=cache['dates'][-1],
                             display_format='YYYY-MM-DD',
                             style={'margin': '0 6px'},
                         ),
                         dbc.Button('›', id='ls-next-day-btn', color='light', size='sm',
                                    style={'border': f"1px solid {COLOR['border']}"}),
                     ], width='auto', className='d-flex align-items-center'),
-                    dbc.Col(
-                        dbc.Button(
-                            '↻ 重新整理', id='ls-refresh-btn',
-                            color='light', size='sm',
-                            style={'border': f"1px solid {COLOR['border']}", 'fontSize': '13px'},
-                        ),
-                        width='auto', className='d-flex align-items-center',
-                    ),
-                    dbc.Col(
-                        html.Div(id='ls-loading-indicator', style={
-                            'fontSize': '12px', 'color': COLOR['text_muted'],
-                        }),
-                        className='d-flex align-items-center ms-auto',
-                    ),
                 ], className='g-2 align-items-center'),
                 html.Div(_CONDITION_NOTE, style={
                     'fontSize': '11px', 'color': COLOR['text_muted'], 'marginTop': '6px',
@@ -430,34 +445,16 @@ def layout():
 )
 def shift_date(_prev, _next, current):
     """‹ › 按鈕沿交易日移動。"""
-    dates = _CACHE['dates']
+    cache = _page_cache.data
+    dates = cache['dates']
     # str(... or '')：防範 DatePicker 回傳 None 或 date 物件
-    snapped = _snap_date(str(current or '')[:10]) or dates[0]
+    snapped = _snap_date(cache, str(current or '')[:10]) or dates[0]
     idx = dates.index(snapped)
     if ctx.triggered_id == 'ls-prev-day-btn':
         idx = max(0, idx - 1)
     else:
         idx = min(len(dates) - 1, idx + 1)
     return dates[idx]
-
-
-@callback(
-    Output('ls-date-picker', 'min_date_allowed'),
-    Output('ls-date-picker', 'max_date_allowed'),
-    Output('ls-date-picker', 'date', allow_duplicate=True),
-    Output('ls-loading-indicator', 'children'),
-    Input('ls-refresh-btn', 'n_clicks'),
-    prevent_initial_call=True,
-)
-def refresh_data(_n_clicks):
-    """重新拉取 FinLab 資料並重算篩選結果。"""
-    global _CACHE
-    try:
-        _CACHE = compute_screen()
-        # 更新時間統一顯示於「訊號日」卡片，這裡僅在失敗時顯示訊息
-        return _CACHE['dates'][0], _CACHE['dates'][-1], _CACHE['dates'][-1], ''
-    except Exception as e:
-        return dash.no_update, dash.no_update, dash.no_update, f'載入失敗：{e}'
 
 
 @callback(
@@ -470,14 +467,15 @@ def refresh_data(_n_clicks):
 )
 def update_view(picked):
     """依選定日期重繪族群分布與個股明細。"""
+    cache = _page_cache.data  # 取快照：整個 callback 只讀這一份，不受背景重算影響
     # str(... or '')：防範 DatePicker 回傳 None 或 date 物件
-    date_str = _snap_date(str(picked or '')[:10]) or _CACHE['dates'][0]
-    rows = _stock_rows(date_str)
+    date_str = _snap_date(cache, str(picked or '')[:10]) or cache['dates'][0]
+    rows = _stock_rows(cache, date_str)
     fig = _build_figure(date_str, rows)
 
     n_groups = len({r['category'] for r in rows})
     kpi_date = kpi_card('訊號日（收盤資料）', date_str,
-                        subtitle=f"供下一交易日操作參考｜資料更新：{_CACHE['updated']}")
+                        subtitle=f"供下一交易日操作參考｜資料更新：{cache['updated']}（{REFRESH_LABEL}）")
     kpi_stocks = kpi_card('入選檔數', f'{len(rows)} 檔')
     kpi_groups = kpi_card('類股族群數', f'{n_groups} 個',
                           subtitle='依證交所產業分類')
