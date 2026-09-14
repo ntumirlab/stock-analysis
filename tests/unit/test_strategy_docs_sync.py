@@ -27,6 +27,8 @@ STRATEGIES = [
     ('alan_tw_strategy_ace_simple.md', 'alan_tw_strategy_ace_simple.py', 'AlanTWStrategyACESimple'),
     ('alan_tw_strategy_efg_not_start.md', 'alan_tw_strategy_efg_not_start.py',
      'AlanTWStrategyEFGNotStart'),
+    ('alan_tw_strategy_leading_ae90_simple.md', 'alan_tw_strategy_leading_ae90_simple.py',
+     'AlanTWStrategyLeadingAE90Simple'),
 ]
 
 # 類別名 → 檔名（跨檔繼承時解析 configs / 屬性用）
@@ -36,6 +38,7 @@ CLASS_FILES = {
     'AlanTWStrategyEFG95Full': 'alan_tw_strategy_efg95_full.py',
     'AlanTWStrategyACESimple': 'alan_tw_strategy_ace_simple.py',
     'AlanTWStrategyEFGNotStart': 'alan_tw_strategy_efg_not_start.py',
+    'AlanTWStrategyLeadingAE90Simple': 'alan_tw_strategy_leading_ae90_simple.py',
 }
 
 # 基底類別的預設值（供子類未覆寫時回退）
