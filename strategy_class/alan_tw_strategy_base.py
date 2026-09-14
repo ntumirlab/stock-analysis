@@ -50,6 +50,7 @@ class AlanTWStrategyBase:
     """
 
     SELL_TYPES = ('bare', 'simple', 'full')
+    NEW_HIGH_SOURCES = ('close', 'high')
 
     # 買進 DMI 門檻
     entry_plus_di_min = 24
@@ -188,12 +189,21 @@ class AlanTWStrategyBase:
 
     def _build_technical_buy_condition(self, bias_5_range, bias_10_range, bias_20_range,
                                        bias_60_range, bias_120_range, bias_240_range,
-                                       new_high_days=120, new_high_pct=1.0, min_amount=None):
-        """建立技術面條件"""
+                                       new_high_days=120, new_high_pct=1.0, min_amount=None,
+                                       new_high_source='close'):
+        """建立技術面條件
+
+        new_high_source: 創新高的比較基準，'close' 為 N 日收盤最高價（七模型），
+        'high' 為 N 日盤中最高價（領先潛力族群）。
+        """
         # Validate new_high_pct to avoid degenerate or unsafe signal behavior
         if not (0 < new_high_pct <= 1.0):
             raise ValueError(
                 f"new_high_pct must be in the range (0, 1.0], got {new_high_pct!r}"
+            )
+        if new_high_source not in self.NEW_HIGH_SOURCES:
+            raise ValueError(
+                f"new_high_source must be one of {self.NEW_HIGH_SOURCES}, got {new_high_source!r}"
             )
         if min_amount is None:
             min_amount = self.min_amount
@@ -272,8 +282,9 @@ class AlanTWStrategyBase:
 
         macd_dif_buy_condition = dif > dif.shift(1)
 
-        # 創新高 (支援百分比，如 0.95 代表 95% 新高)
-        high_n = self.adj_close.rolling(window=new_high_days).max()
+        # 創新高 (支援百分比，如 0.95 代表 95% 新高；基準可為收盤價或盤中最高價)
+        high_base = self.adj_high if new_high_source == 'high' else self.adj_close
+        high_n = high_base.rolling(window=new_high_days).max()
         new_high_condition = self.adj_close >= (high_n * new_high_pct)
 
         # 收盤價不可離近期低點拉開太多（收盤 ÷ 近 N 日最低價 <= 上限）
@@ -375,6 +386,7 @@ class AlanTWStrategyBase:
                 - bias_ranges: 乖離率範圍 dict
                 - new_high_days: 創新高天數
                 - new_high_pct: 創新高百分比 (預設 1.0，即 100%)
+                - new_high_source: 創新高基準 'close'（預設）或 'high'（盤中最高價）
 
         Returns:
             buy_signal: 買入訊號 DataFrame
@@ -388,7 +400,8 @@ class AlanTWStrategyBase:
             bias_120_range=config['bias_ranges']['bias_120'],
             bias_240_range=config['bias_ranges']['bias_240'],
             new_high_days=config['new_high_days'],
-            new_high_pct=config.get('new_high_pct', 1.0)
+            new_high_pct=config.get('new_high_pct', 1.0),
+            new_high_source=config.get('new_high_source', 'close'),
         )
         fundamental_condition = self._build_fundamental_buy_condition(config['op_growth'])
 
@@ -506,7 +519,8 @@ class AlanTWStrategyBase:
         print(f"策略組合: {' | '.join([c['name'] for c in configs])}")
         for config in configs:
             new_high_pct = config.get('new_high_pct', 1.0)
-            new_high_str = f"創{config['new_high_days']}天新高"
+            high_label = '盤中高' if config.get('new_high_source') == 'high' else '新高'
+            new_high_str = f"創{config['new_high_days']}天{high_label}"
             if new_high_pct != 1.0:
                 new_high_str += f"*{new_high_pct:.0%}"
             print(f"  - 策略 {config['name']}: top_n={config['top_n']}, "
