@@ -177,6 +177,12 @@ def test_strategy_doc_matches_code(md_file, py_file, cls_name):
         for key in ('top_n', 'new_high_days'):
             if str(cfg[key]) not in md:
                 missing.append(f'子策略{name} {key} = {cfg[key]}')
+        # 發動型的創新高門檻：文件參數表須寫成「N 天 … × pct」（如 480天×100%、480天盤中高×90%），
+        # 只查 pct 字串不夠——文件敘述中可能提到其他版本的百分比（未發動型為區間寫法，另行檢查）
+        days, pct = cfg['new_high_days'], _pct(cfg.get('new_high_pct', 1.0))
+        if cls_name not in NOT_START_CLASSES and \
+                not re.search(rf'{days}天[^|×]{{0,8}}×\*{{0,2}}{re.escape(pct)}', md):
+            missing.append(f'子策略{name} 創新高 {days}天×{pct}')
         if cfg.get('extra_new_high'):
             days, pct = cfg['extra_new_high']
             if str(days) not in md or _pct(pct) not in md:
@@ -278,3 +284,18 @@ def test_combo_doc_matches_code(combo_cls, expected_sell, md_file, py_file):
                     missing.append(f'{key} 的{label}欄寫 {nums[0]}，程式碼為 {expected}')
 
     assert not missing, f'{md_file} 與程式碼不符：\n  - ' + '\n  - '.join(missing)
+
+
+@pytest.mark.parametrize('py_file,cls_name,expected_pct', [
+    ('alan_tw_strategy_leading_ae90_simple.py', 'AlanTWStrategyLeadingAE90Simple', 0.90),
+    ('alan_tw_strategy_leading_ae95_simple.py', 'AlanTWStrategyLeadingAE95Simple', 0.95),
+])
+def test_leading_ae_new_high_threshold(py_file, cls_name, expected_pct):
+    """AE 90%／95% 只差 new_high_pct；95% 版繼承 configs，需確認覆寫後解析到的門檻正確，
+    且兩個子策略都以盤中最高價為基準"""
+    configs, attrs = _collect(py_file, cls_name)
+    assert attrs['new_high_pct'] == expected_pct
+    for cfg in configs:
+        assert cfg['new_high_pct'] == expected_pct, f"{cls_name} 子策略{cfg['name']} 的 new_high_pct"
+        assert cfg['new_high_days'] == 480
+        assert cfg.get('new_high_source') == 'high'
