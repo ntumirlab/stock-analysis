@@ -10,6 +10,7 @@ from .alan_tw_strategy_efg_not_start import AlanTWStrategyEFGNotStart
 from .alan_tw_strategy_efg95_ace_full import AlanTWStrategyEFG95ACEFull
 from .alan_tw_strategy_efg95_ace_simple import AlanTWStrategyEFG95ACESimple
 from .alan_tw_strategy_leading_ae90_simple import AlanTWStrategyLeadingAE90Simple
+from .alan_tw_strategy_leading_ae95_simple import AlanTWStrategyLeadingAE95Simple
 
 from .oscar.oscar_strategy_andor import OscarAndOrStrategy
 from .oscar.oscar_strategy_composite import OscarCompositeStrategy
