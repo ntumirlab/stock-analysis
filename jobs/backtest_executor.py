@@ -24,6 +24,7 @@ BACKTEST_STRATEGIES = {
     'AlanTWStrategyEFG95ACEFull': ('strategy_class.alan_tw_strategy_efg95_ace_full', 'AlanTWStrategyEFG95ACEFull'),
     'AlanTWStrategyEFG95ACESimple': ('strategy_class.alan_tw_strategy_efg95_ace_simple', 'AlanTWStrategyEFG95ACESimple'),
     'AlanTWStrategyLeadingAE90Simple': ('strategy_class.alan_tw_strategy_leading_ae90_simple', 'AlanTWStrategyLeadingAE90Simple'),
+    'AlanTWStrategyLeadingAE95Simple': ('strategy_class.alan_tw_strategy_leading_ae95_simple', 'AlanTWStrategyLeadingAE95Simple'),
     'RAndDManagementStrategy': ('strategy_class.r_and_d_management_strategy', 'RAndDManagementStrategy'),
     'GoldenAITWStrategyWeekly': ('strategy_class.golden_ai_tw_strategy_weekly', 'GoldenAITWStrategyWeekly'),
     'GoldenAITWStrategyMonthly': ('strategy_class.golden_ai_tw_strategy_monthly', 'GoldenAITWStrategyMonthly'),

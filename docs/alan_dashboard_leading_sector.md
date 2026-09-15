@@ -120,7 +120,7 @@ N 依條件而定：條件 2 為 40、條件 3 為 20。
 
 核心架構相同（籌碼＋基本面配對：買超前 40＋營益率 +12%、買超前 20＋營益率 +0.1%；480 天盤中高 × 90%；收盤/15 日低 ≤ 1.32），定位互補：
 
-| | 儀表板（本頁） | 策略（`AlanTWStrategyLeadingAE90Simple`，見 `docs/alan_tw_strategy_leading_ae90_simple.md`） |
+| | 儀表板（本頁） | 策略（`AlanTWStrategyLeadingAE90Simple`，見 `docs/alan_tw_strategy_leading_ae90_simple.md`；另有 95% 版 `AlanTWStrategyLeadingAE95Simple`） |
 | --- | --- | --- |
 | 定位 | 觀察雷達：判斷行情位置 | 交易系統：決定買賣點，可回測 |
 | 發動條件 | 無——瀕臨新高即上榜，不論量能 | 有——量能翻倍、DMI、KD 雙升、DIF 上升，等爆量發動才進場 |
