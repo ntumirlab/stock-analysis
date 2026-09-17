@@ -10,8 +10,11 @@
 - 均線分（−2 ~ +2）：收盤與 MA5／MA10／MA20 的相對位置
 - DMI 分（−4 ~ +4）：+DI 與 −DI 各依門檻計分
 - 動能微調（−3 ~ +3）：小計 < 5 時 DIF／MACD／KD 下彎各 −1；小計 > −5 時上彎各 +1
-- 現貨分（−1 ~ +1）：市值前 150 檔中「三條均線同時向上」減「同時向下」的檔數差，
-  > +25 為 +1、< −25 為 −1，直接加在最後，不影響動能微調的觸發條件
+- 現貨分（−1 ~ +1）：台灣50 + 中型100（以市值前 150 檔模擬）中「三條均線同時向上」減
+  「同時向下」的檔數差，> +25 為 +1、< −25 為 −1，直接加在最後，不影響動能微調的觸發條件
+
+MACD 與 KD 採 strategy_class 的台股自訂算法（taiwan_macd：加權收盤價 (H+L+2C)/4；
+taiwan_kd_fast：alpha = 1/3），與各策略一致；DMI 用 talib。
 """
 
 import pandas as pd
@@ -19,6 +22,16 @@ import pandas as pd
 TOP_N = 150             # 台灣50 + 台灣中型100
 BREADTH_THRESHOLD = 25  # 檔數差門檻
 MA_WINDOWS = (5, 10, 20)
+
+# 台灣50／中型100 季度審核（FTSE TWSE Taiwan Index Series Ground Rules 6.1、6.3）：
+# 每年 3、6、9、12 月審核，變動於該月第三個星期五收盤後生效（即下一個交易日，通常是星期一），
+# 審核資料為生效日前四週星期一的收盤資料。
+# 緩衝規則：非成分股市值排名升至 ENTRY_RANK 以上才納入，成分股排名跌至 EXIT_RANK 以下才剔除，
+# 名單數目維持固定（不足由排名最高的非成分股遞補、超出則剔除排名最低者）。
+# 這裡模擬的是 150 檔合併名單，只需要 150 名邊界的門檻（中型100 為 130／171；台灣50 本身是 40／61）。
+REVIEW_MONTHS = (3, 6, 9, 12)
+ENTRY_RANK = 130
+EXIT_RANK = 171
 
 
 # ── 現貨：市值前 150 檔 ────────────────────────────────────────────────────────
@@ -32,19 +45,56 @@ def listed_common_stocks(categories: pd.DataFrame) -> list[str]:
     return ids[keep].tolist()
 
 
-def top_n_membership(market_value: pd.DataFrame, universe: list[str], n: int = TOP_N) -> pd.DataFrame:
-    """每季末以市值重排一次、整季鎖定的前 n 大成分（bool，日期 × 股票）。
+def _third_friday(year: int, month: int) -> pd.Timestamp:
+    first = pd.Timestamp(year=year, month=month, day=1)
+    return first + pd.Timedelta(days=(4 - first.weekday()) % 7 + 14)
 
-    以每季最後一個交易日的市值排名，自次一交易日起生效，直到下一季末；
-    對應台灣50／中型100 每季審核換股的行為（近似，官方另有自由流通與緩衝規則）。
+
+def review_schedule(trading_days: pd.DatetimeIndex) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """回傳每次季度審核的 (資料截止日, 生效日)。
+
+    生效日 = 3/6/9/12 月第三個星期五之後的第一個交易日；
+    截止日 = 名義生效日（第三個星期五的下一個星期一）往前四週當天或之前最近的交易日。
+    生效日尚未有交易資料的審核不列入（例如 9 月的審核在第三個星期五後才生效，之前仍沿用 6 月名單）。
+    """
+    schedule = []
+    for year in range(trading_days[0].year, trading_days[-1].year + 1):
+        for month in REVIEW_MONTHS:
+            third_friday = _third_friday(year, month)
+            after = trading_days[trading_days > third_friday]
+            on_or_before_cutoff = trading_days[trading_days <= third_friday + pd.Timedelta(days=3 - 28)]
+            if len(after) == 0 or len(on_or_before_cutoff) == 0:
+                continue
+            schedule.append((on_or_before_cutoff[-1], after[0]))
+    return schedule
+
+
+def top_n_membership(market_value: pd.DataFrame, universe: list[str], n: int = TOP_N,
+                     entry_rank: int = ENTRY_RANK, exit_rank: int = EXIT_RANK) -> pd.DataFrame:
+    """依季度審核時程與緩衝規則模擬的前 n 大成分（bool，日期 × 股票）。
+
+    第一次審核直接取市值前 n 名；之後每次審核：排名跌到 exit_rank（含）以下的成分股剔除、
+    排名升到 entry_rank（含）以上的非成分股納入，再以排名補足／削減到 n 檔。
     """
     cols = [c for c in universe if c in market_value.columns]
     mv = market_value[cols]
-    quarterly = mv.resample('QE').last().dropna(how='all')
-    rank = quarterly.rank(axis=1, ascending=False, method='first')
-    member_q = (rank <= n).astype(float)  # float：reindex/shift 產生的 NaN 不會變成 object dtype
-    member = member_q.reindex(mv.index, method='ffill').shift(1)  # 季末次一交易日生效
-    return member.fillna(0).astype(bool)
+    member = pd.DataFrame(False, index=mv.index, columns=cols)
+    current: set[str] = set()
+    for cutoff, effective in review_schedule(mv.index):
+        rank = mv.loc[cutoff].dropna().rank(ascending=False, method='first')
+        if not current:
+            current = set(rank[rank <= n].index)
+        else:
+            keep = {s for s in current if rank.get(s, float('inf')) < exit_rank}
+            new = keep | set(rank[rank <= entry_rank].index)
+            if len(new) < n:  # 遞補：排名最高的非成分股
+                new |= set(rank.drop(list(new)).nsmallest(n - len(new)).index)
+            elif len(new) > n:  # 削減：排名最低的成分股
+                new -= set(rank.reindex(list(new)).nlargest(len(new) - n).index)
+            current = new
+        member.loc[effective:] = False
+        member.loc[effective:, list(current)] = True
+    return member
 
 
 def ma_direction_breadth(close: pd.DataFrame, membership: pd.DataFrame) -> pd.Series:
@@ -60,9 +110,10 @@ def ma_direction_breadth(close: pd.DataFrame, membership: pd.DataFrame) -> pd.Se
         rising &= ma > ma.shift(1)
         falling &= ma < ma.shift(1)
     diff = (rising & member).sum(axis=1) - (falling & member).sum(axis=1)
-    # 個股價格尚未更新（該日成分股有收盤價的不足半數）時視為無值，避免被算成 0
+    # 尚無成分名單、或個股價格尚未更新（該日成分股有收盤價的不足半數）時視為無值，避免被算成 0
+    n_member = member.sum(axis=1)
     valid = (c.notna() & member).sum(axis=1)
-    return diff.where(valid * 2 >= member.sum(axis=1)).astype(float)
+    return diff.where((n_member > 0) & (valid * 2 >= n_member)).astype(float)
 
 
 def breadth_score(diff: pd.Series, threshold: int = BREADTH_THRESHOLD) -> pd.Series:
@@ -85,10 +136,15 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
     dif_dir, dif_score, macd_dir, macd_score, kd_dir, kd_score,
     breadth_diff, breadth_score, total
     """
-    import talib
+    import contextlib
+    import io
     from talib import abstract
+    from strategy_class.taiwan_kd import taiwan_kd_fast
+    from strategy_class.taiwan_macd import taiwan_macd
 
     close, high, low = ohlc['close'], ohlc['high'], ohlc['low']
+    # 自訂指標吃「欄為股票」的 DataFrame，指數以單欄 DataFrame 傳入
+    frames = tuple(x.to_frame('idx') for x in (high, low, close))
 
     plus_di  = abstract.Function('PLUS_DI')(ohlc, timeperiod=14)
     minus_di = abstract.Function('MINUS_DI')(ohlc, timeperiod=14)
@@ -103,15 +159,12 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
       + (minus_di < dmi_lo).astype(int)                             *  2
     )
 
-    dif, macd, _ = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
-    dif_dir, macd_dir = _direction(dif), _direction(macd)
+    dif, dea, _ = taiwan_macd(*frames, fastperiod=12, slowperiod=26, signalperiod=9)
+    dif_dir, macd_dir = _direction(dif['idx']), _direction(dea['idx'])
 
-    low9  = low.rolling(9).min()
-    high9 = high.rolling(9).max()
-    rsv   = ((close - low9) / (high9 - low9).replace(0, float('nan')) * 100).fillna(50)
-    K = rsv.ewm(com=2, adjust=False).mean()
-    D = K.ewm(com=2, adjust=False).mean()
-    k_dir, d_dir = _direction(K), _direction(D)
+    with contextlib.redirect_stdout(io.StringIO()):  # taiwan_kd_fast 會 print 進度
+        K, D = taiwan_kd_fast(*frames, fastk_period=9, alpha=1 / 3)
+    k_dir, d_dir = _direction(K['idx']), _direction(D['idx'])
     kd_dir = ((k_dir == 1) & (d_dir == 1)).astype(int) - ((k_dir == -1) & (d_dir == -1)).astype(int)
 
     above = {w: close > close.rolling(w).mean() for w in MA_WINDOWS}

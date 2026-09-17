@@ -69,17 +69,17 @@ def _load_inputs() -> dict:
     }).dropna()
     return {
         'TAIEX': taiex,
-        'close': data.get('price:收盤價'),
+        'adj_close': data.get('etl:adj_close'),  # 均線方向用還原價，避免除權息造成假跌
         'market_value': data.get('etl:market_value'),
         'categories': data.get('security_categories'),
     }
 
 
 def _tw_top150_breadth(inputs: dict) -> pd.Series:
-    """台灣50 + 台灣中型100 的近似（上市普通股市值前 150、每季末重排）三線同向檔數差。"""
+    """台灣50 + 台灣中型100（以市值前 150、季度審核與緩衝規則模擬）三線同向檔數差（還原價）。"""
     universe = listed_common_stocks(inputs['categories'])
     membership = top_n_membership(inputs['market_value'], universe, n=TOP_N)
-    return ma_direction_breadth(inputs['close'], membership)
+    return ma_direction_breadth(inputs['adj_close'], membership)
 
 
 def _build(inputs: dict) -> dict:
@@ -120,7 +120,7 @@ def _arrow(direction: int, score: int) -> str:
 
 
 _DETAIL_COLUMNS = [
-    ('date', '日期'), ('close', '收盤'),
+    ('date', '日期'), ('close', '收盤指數'),
     ('ma_above', '站上均線'), ('ma_score', '均線分'),
     ('di_vals', '+DI / −DI'), ('di_score', 'DMI分'),
     ('subtotal', '小計'),
@@ -272,8 +272,8 @@ layout = html.Div([
                 html.Div(
                     '均線分 + DMI分 = 小計；小計 < 5 時 DIF／MACD／KD 下彎各 −1，小計 > −5 時上彎各 +1'
                     '（箭頭為方向、數字為實際計分）；'
-                    f'現貨 = 市值前 {TOP_N} 檔中 5／10／20 日均線同時向上減同時向下的檔數，'
-                    f'> +{BREADTH_THRESHOLD} 為 +1、< −{BREADTH_THRESHOLD} 為 −1。',
+                    f'現貨 = 台灣50 + 中型100（市值前 {TOP_N} 檔模擬）中 5／10／20 日均線同時向上減同時向下的檔數'
+                    f'（還原價），> +{BREADTH_THRESHOLD} 為 +1、< −{BREADTH_THRESHOLD} 為 −1。',
                     style={'fontSize': '11px', 'color': COLOR['text_muted'], 'margin': '0 0 8px 8px'},
                 ),
                 html.Div(id='mr-detail-table'),
