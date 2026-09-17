@@ -21,7 +21,9 @@ import pandas as pd
 
 TOP_N = 150             # 台灣50 + 台灣中型100
 BREADTH_THRESHOLD = 25  # 檔數差門檻
+BREADTH_MIN_COVERAGE = 0.9  # 當日有收盤價的成分股比例低於此值視為資料未更新（容許少數停牌）
 MA_WINDOWS = (5, 10, 20)
+MA_DIRECTION_TOL = 1e-9  # 均線變動的相對容忍值：rolling mean 滑動累加會有 1e-13 等級的浮點誤差，持平不可視為向上
 
 # 台灣50／中型100 季度審核（FTSE TWSE Taiwan Index Series Ground Rules 6.1、6.3）：
 # 每年 3、6、9、12 月審核，變動於該月第三個星期五收盤後生效（即下一個交易日，通常是星期一），
@@ -111,13 +113,15 @@ def ma_direction_breadth(close: pd.DataFrame, membership: pd.DataFrame) -> pd.Se
     falling = rising.copy()
     for w in MA_WINDOWS:
         ma = c.rolling(w).mean()
-        rising &= ma > ma.shift(1)
-        falling &= ma < ma.shift(1)
+        delta, tol = ma - ma.shift(1), ma.abs() * MA_DIRECTION_TOL
+        rising &= delta > tol
+        falling &= delta < -tol
     diff = (rising & member).sum(axis=1) - (falling & member).sum(axis=1)
-    # 尚無成分名單、或個股價格尚未更新（該日成分股有收盤價的不足半數）時視為無值，避免被算成 0
+    # 尚無成分名單、或個股價格尚未更新／只更新一部分時視為無值：缺價的股票既不算向上也不算向下，
+    # 部分更新會讓檔數差失真，所以要求當日有收盤價的成分股達 BREADTH_MIN_COVERAGE（容許少數停牌）
     n_member = member.sum(axis=1)
     valid = (c.notna() & member).sum(axis=1)
-    return diff.where((n_member > 0) & (valid * 2 >= n_member)).astype(float)
+    return diff.where((n_member > 0) & (valid >= n_member * BREADTH_MIN_COVERAGE)).astype(float)
 
 
 def breadth_score(diff: pd.Series, threshold: int = BREADTH_THRESHOLD) -> pd.Series:
@@ -137,11 +141,9 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
     """回傳每日各條件的數值與分數（DataFrame），``total`` 欄為總分。
 
     欄位：close, above_ma5/10/20, ma_score, plus_di, minus_di, di_score, subtotal,
-    dif_dir, dif_score, macd_dir, macd_score, kd_dir, kd_score,
+    dif_dir, dif_score, macd_dir, macd_score, k_dir, d_dir, kd_dir, kd_score,
     breadth_diff, breadth_score, total
     """
-    import contextlib
-    import io
     from talib import abstract
     from strategy_class.taiwan_kd import taiwan_kd_fast
     from strategy_class.taiwan_macd import taiwan_macd
@@ -166,8 +168,7 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
     dif, dea, _ = taiwan_macd(*frames, fastperiod=12, slowperiod=26, signalperiod=9)
     dif_dir, macd_dir = _direction(dif['idx']), _direction(dea['idx'])
 
-    with contextlib.redirect_stdout(io.StringIO()):  # taiwan_kd_fast 會 print 進度
-        K, D = taiwan_kd_fast(*frames, fastk_period=9, alpha=1 / 3)
+    K, D = taiwan_kd_fast(*frames, fastk_period=9, alpha=1 / 3, verbose=False)
     k_dir, d_dir = _direction(K['idx']), _direction(D['idx'])
     kd_dir = ((k_dir == 1) & (d_dir == 1)).astype(int) - ((k_dir == -1) & (d_dir == -1)).astype(int)
 
@@ -205,7 +206,7 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
         'subtotal': subtotal,
         'dif_dir': dif_dir, 'dif_score': dif_score,
         'macd_dir': macd_dir, 'macd_score': macd_score,
-        'kd_dir': kd_dir, 'kd_score': kd_score,
+        'k_dir': k_dir, 'd_dir': d_dir, 'kd_dir': kd_dir, 'kd_score': kd_score,
         'breadth_diff': b_diff, 'breadth_score': b_score,
         'total': total,
     })

@@ -1,8 +1,10 @@
-"""多空轉折模型：市值前 150 檔成分、現貨檔數差與分數組成（不需 finlab）。"""
+"""多空轉折模型：市值前 150 檔成分、審核時程、現貨檔數差（純 pandas，不需 finlab／ta-lib）。
+
+指標計算與總分組合需要 ta-lib 與 strategy_class，放在 tests/integration/test_market_regime_components.py。
+"""
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from alan_dashboard.market_regime_model import (
     breadth_score, listed_common_stocks, ma_direction_breadth, review_schedule, top_n_membership,
@@ -86,36 +88,23 @@ def test_ma_direction_breadth_counts_members_only():
     assert ma_direction_breadth(close, member).iloc[:20].eq(0).all()  # MA20 暖身期間無值
     # 成分名單資料日比收盤價早（市值晚更新）：最後幾天沿用最近一次名單
     assert ma_direction_breadth(close, member.iloc[:-3]).iloc[-1] == 1
-    # 當日個股收盤價尚未更新（全為 NaN）：無值，而不是 0
+    # 當日個股收盤價尚未更新（全為 NaN）或只更新一部分（成分股 UP、FLAT 只剩一檔有價）：無值，而不是 0
+    close.loc[dates[-1], 'UP'] = np.nan
+    assert np.isnan(ma_direction_breadth(close, member).iloc[-1])
     close.iloc[-1] = np.nan
     assert np.isnan(ma_direction_breadth(close, member).iloc[-1])
+
+
+def test_ma_direction_breadth_ignores_floating_point_noise():
+    dates = pd.bdate_range('2025-01-01', periods=30)
+    close = pd.DataFrame({'FLAT': np.full(len(dates), 100.0)}, index=dates)
+    close.iloc[-1, 0] = 100.0 + 1e-11  # 均線變動 1e-12：浮點雜訊等級，應視為持平
+    member = pd.DataFrame(True, index=dates, columns=['FLAT'])
+    assert ma_direction_breadth(close, member).iloc[-1] == 0
+    close.iloc[-1, 0] = 100.01  # 真的漲一檔：三條均線都向上
+    assert ma_direction_breadth(close, member).iloc[-1] == 1
 
 
 def test_breadth_score_threshold():
     diff = pd.Series([26, 25, 0, -25, -26])
     assert breadth_score(diff).tolist() == [1, 0, 0, 0, -1]
-
-
-def test_compute_components_total_range_and_breadth_added_last():
-    pytest.importorskip('talib')  # CI 無 ta-lib／finlab（strategy_class 需要），只在本機／容器內執行
-    from alan_dashboard.market_regime_model import compute_components
-
-    rng = np.random.default_rng(0)
-    dates = pd.bdate_range('2024-01-01', periods=300)
-    close = pd.Series(10000 + rng.normal(0, 100, len(dates)).cumsum(), index=dates)
-    ohlc = pd.DataFrame({
-        'open': close, 'high': close + 50, 'low': close - 50, 'close': close,
-    })
-    breadth = pd.Series(rng.integers(-60, 61, len(dates)), index=dates)
-
-    comp = compute_components(ohlc, 35, 21, 18, breadth_diff=breadth)
-    base = compute_components(ohlc, 35, 21, 18)
-
-    assert comp['total'].between(-10, 10).all()
-    assert base['total'].between(-9, 9).all()
-    # 現貨分只加在最後：其餘欄位不受影響
-    for col in ('ma_score', 'di_score', 'subtotal', 'dif_score', 'macd_score', 'kd_score'):
-        pd.testing.assert_series_equal(comp[col], base[col])
-    pd.testing.assert_series_equal(comp['total'], base['total'] + comp['breadth_score'],
-                                   check_names=False)
-    assert (comp['breadth_score'] == breadth_score(breadth)).all()

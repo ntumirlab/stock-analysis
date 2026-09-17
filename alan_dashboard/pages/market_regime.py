@@ -13,6 +13,7 @@ from datetime import timedelta
 
 import dash
 from dash import dcc, html, dash_table, Input, Output, callback
+from dash.dash_table.Format import Format, Scheme, Sign
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -43,6 +44,9 @@ _PERIOD_DAYS = {
     '6M': 180, '1Y': 365,
 }
 _DEFAULT_PERIOD = '2M'
+# 現貨檔數差只需要顯示範圍（最長 1Y）加 MA20 暖身；個股還原價先截到這段再算 rolling，省時間與記憶體。
+# 成分股模擬仍用全歷史市值（緩衝規則有路徑依賴，截短會改變名單）。
+_BREADTH_HISTORY_DAYS = max(_PERIOD_DAYS.values()) + 60
 
 # 市場設定（目前只有 TAIEX，保留結構方便擴充）
 # breadth：現貨分的成分股來源；None 表示該市場不計現貨分
@@ -79,7 +83,9 @@ def _tw_top150_breadth(inputs: dict) -> pd.Series:
     """台灣50 + 台灣中型100（以市值前 150、季度審核與緩衝規則模擬）三線同向檔數差（還原價）。"""
     universe = listed_common_stocks(inputs['categories'])
     membership = top_n_membership(inputs['market_value'], universe, n=TOP_N)
-    return ma_direction_breadth(inputs['adj_close'], membership)
+    adj_close = inputs['adj_close']
+    recent = adj_close.loc[adj_close.index[-1] - timedelta(days=_BREADTH_HISTORY_DAYS):]
+    return ma_direction_breadth(recent, membership)
 
 
 def _build(inputs: dict) -> dict:
@@ -113,74 +119,89 @@ def _signed(v) -> str:
     return f'+{v}' if v > 0 else str(v)
 
 
+_FMT_SIGNED = Format(sign=Sign.positive, precision=0, scheme=Scheme.fixed, nully='—')
+_FMT_INDEX  = Format(group=True, precision=0, scheme=Scheme.fixed)
+# (欄位 id, 顯示名稱, 型別)：numeric 欄以數值排序、由 Format 負責顯示；text 欄為字串
+_DETAIL_COLUMNS = [
+    ('date', '日期', 'text'), ('close', '收盤指數', 'numeric'),
+    ('ma_above', '站上均線', 'text'), ('ma_score', '均線分', 'numeric'),
+    ('di_vals', '+DI / −DI', 'text'), ('di_score', 'DMI分', 'numeric'),
+    ('subtotal', '小計', 'numeric'),
+    ('dif', 'DIF', 'text'), ('macd', 'MACD', 'text'), ('kd', 'KD', 'text'),
+    ('breadth_diff', '現貨檔數差', 'numeric'), ('breadth_score', '現貨分', 'numeric'),
+    ('total', '總分', 'numeric'), ('signal', '訊號', 'text'),
+]
+_SIGNED_NUMERIC = ['ma_score', 'di_score', 'subtotal', 'breadth_diff', 'breadth_score', 'total']
+_ARROW_COLUMNS = ['dif', 'macd', 'kd']  # 內容如「↑ +1」「↓ -1」「↑ 0」「K↑ D↓ 0」，依 +/- 著色
+
+
+_DIR_SYMBOL = {1: '↑', -1: '↓', 0: '—'}
+
+
 def _arrow(direction: int, score: int) -> str:
     """動能欄：方向箭頭 + 實際計分（小計未達門檻時方向成立但不計分，顯示 0）。"""
-    sym = {1: '↑', -1: '↓'}.get(int(direction), '—')
-    return f'{sym} {_signed(score)}'
+    return f'{_DIR_SYMBOL[int(direction)]} {_signed(score)}'
 
 
-_DETAIL_COLUMNS = [
-    ('date', '日期'), ('close', '收盤指數'),
-    ('ma_above', '站上均線'), ('ma_score', '均線分'),
-    ('di_vals', '+DI / −DI'), ('di_score', 'DMI分'),
-    ('subtotal', '小計'),
-    ('dif', 'DIF'), ('macd', 'MACD'), ('kd', 'KD'),
-    ('breadth_diff', '現貨檔數差'), ('breadth_score', '現貨分'),
-    ('total', '總分'), ('signal', '訊號'),
-]
-# 有正負色的欄位：(顯示欄, 判斷正負用的資料欄)
-_SIGNED_COLUMNS = [
-    ('ma_score', 'ma_score'), ('di_score', 'di_score'), ('subtotal', 'subtotal'),
-    ('dif', 'dif_score'), ('macd', 'macd_score'), ('kd', 'kd_score'),
-    ('breadth_diff', 'breadth_diff'), ('breadth_score', 'breadth_score'), ('total', 'total'),
-]
+def _kd_arrow(k_dir: int, d_dir: int, score: int) -> str:
+    """KD 欄：K、D 同向時同 _arrow；不同向時分別列出 K、D 方向，說明為何不計分。"""
+    if k_dir == d_dir and k_dir != 0:
+        return _arrow(k_dir, score)
+    return f'K{_DIR_SYMBOL[int(k_dir)]} D{_DIR_SYMBOL[int(d_dir)]} {_signed(score)}'
 
 
 def _detail_rows(comp: pd.DataFrame) -> list[dict]:
-    """明細表資料（最新日在前）；除顯示欄外另帶數值欄供條件式著色。"""
+    """明細表資料（最新日在前）；數值欄保留數值，顯示格式交給 DataTable 的 Format。"""
     rows = []
     for d, r in comp[::-1].iterrows():
         above = [str(w) for w, col in ((5, 'above_ma5'), (10, 'above_ma10'), (20, 'above_ma20')) if r[col]]
         emoji, sig_text, _ = _signal_badge(int(r['total']))
         rows.append({
             'date': d.strftime('%Y-%m-%d'),
-            'close': f"{r['close']:,.0f}",
+            'close': float(r['close']),
             'ma_above': '·'.join(above) if above else '—',
-            'ma_score': _signed(r['ma_score']),
+            'ma_score': int(r['ma_score']),
             'di_vals': f"{r['plus_di']:.1f} / {r['minus_di']:.1f}",
-            'di_score': _signed(r['di_score']),
-            'subtotal': _signed(r['subtotal']),
+            'di_score': int(r['di_score']),
+            'subtotal': int(r['subtotal']),
             'dif': _arrow(r['dif_dir'], r['dif_score']),
             'macd': _arrow(r['macd_dir'], r['macd_score']),
-            'kd': _arrow(r['kd_dir'], r['kd_score']),
-            'breadth_diff': '—' if pd.isna(r['breadth_diff']) else _signed(r['breadth_diff']),
-            'breadth_score': _signed(r['breadth_score']),
-            'total': _signed(r['total']),
+            'kd': _kd_arrow(r['k_dir'], r['d_dir'], r['kd_score']),
+            'breadth_diff': None if pd.isna(r['breadth_diff']) else int(r['breadth_diff']),
+            'breadth_score': int(r['breadth_score']),
+            'total': int(r['total']),
             'signal': f'{emoji} {sig_text}',
-            # 著色用數值欄（不顯示）
-            'ma_score_v': int(r['ma_score']), 'di_score_v': int(r['di_score']),
-            'subtotal_v': int(r['subtotal']),
-            'dif_score_v': int(r['dif_score']), 'macd_score_v': int(r['macd_score']),
-            'kd_score_v': int(r['kd_score']),
-            'breadth_diff_v': 0 if pd.isna(r['breadth_diff']) else int(r['breadth_diff']),
-            'breadth_score_v': int(r['breadth_score']),
-            'total_v': int(r['total']),
         })
     return rows
 
 
 def _detail_table(comp: pd.DataFrame) -> dash_table.DataTable:
     colored = []
-    for shown, value_col in _SIGNED_COLUMNS:
+    for col in _SIGNED_NUMERIC:
         colored += [
-            {'if': {'filter_query': f'{{{value_col}_v}} > 0', 'column_id': shown},
+            {'if': {'filter_query': f'{{{col}}} > 0', 'column_id': col},
              'color': _SCORE_COLOR['score_long'], 'fontWeight': '600'},
-            {'if': {'filter_query': f'{{{value_col}_v}} < 0', 'column_id': shown},
+            {'if': {'filter_query': f'{{{col}}} < 0', 'column_id': col},
              'color': _SCORE_COLOR['score_short'], 'fontWeight': '600'},
         ]
+    for col in _ARROW_COLUMNS:
+        colored += [
+            {'if': {'filter_query': f'{{{col}}} contains "+"', 'column_id': col},
+             'color': _SCORE_COLOR['score_long'], 'fontWeight': '600'},
+            {'if': {'filter_query': f'{{{col}}} contains "-"', 'column_id': col},
+             'color': _SCORE_COLOR['score_short'], 'fontWeight': '600'},
+        ]
+    columns = []
+    for cid, name, ctype in _DETAIL_COLUMNS:
+        col = {'name': name, 'id': cid, 'type': ctype}
+        if cid in _SIGNED_NUMERIC:
+            col['format'] = _FMT_SIGNED
+        elif cid == 'close':
+            col['format'] = _FMT_INDEX
+        columns.append(col)
     return dash_table.DataTable(
         data=_detail_rows(comp),
-        columns=[{'name': name, 'id': cid} for cid, name in _DETAIL_COLUMNS],
+        columns=columns,
         sort_action='native',
         page_size=20,
         style_table={'overflowX': 'auto'},
