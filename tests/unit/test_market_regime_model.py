@@ -11,10 +11,14 @@ from alan_dashboard.market_regime_model import (
 
 def test_listed_common_stocks_filters_market_and_ids():
     cat = pd.DataFrame({
-        'stock_id': ['2330', '0050', '2881A', '910861', '7610', '6488', '00631L'],
-        'name':     ['台積電', '元大台灣50', '富邦特', '神隆', '聯友金屬-創', '環球晶', '元大台灣50正2'],
-        'market':   ['sii', 'etf', 'sii', 'sii', 'sii', 'otc', 'etf'],
+        'stock_id': ['2330', '0050', '2881A', '910861', '9103', '9151', '7610', '6488', '00631L'],
+        'name':     ['台積電', '元大台灣50', '富邦特', '神隆', '美德醫療-DR', '旺旺', '聯友金屬-創', '環球晶',
+                     '元大台灣50正2'],
+        'category': ['半導體業', 'domestic_etf', '金融保險業', '存託憑證', '存託憑證', '存託憑證', '其他',
+                     '半導體業', 'domestic_etf'],
+        'market':   ['sii', 'etf', 'sii', 'sii', 'sii', 'sii', 'sii', 'otc', 'etf'],
     })
+    # 排除 ETF、特別股、存託憑證（含 4 碼與名稱沒有 -DR 的舊 TDR）、創新板、上櫃
     assert listed_common_stocks(cat) == ['2330']
 
 

@@ -37,8 +37,12 @@ EXIT_RANK = 171
 # ── 現貨：市值前 150 檔 ────────────────────────────────────────────────────────
 
 def listed_common_stocks(categories: pd.DataFrame) -> list[str]:
-    """上市普通股代號：market 為 sii、4 碼數字（排除 ETF、特別股、TDR），排除創新板（名稱 -創）。"""
-    df = categories[categories['market'] == 'sii']
+    """上市普通股代號：market 為 sii、4 碼數字（排除 ETF、特別股），排除存託憑證與創新板（名稱 -創）。
+
+    TDR（台灣存託憑證）有些是 4 碼代號（如 9103 美德醫療-DR），要用類別「存託憑證」明確排除；
+    實際上 FinLab 的市值資料（etl:market_value）沒有任何 TDR，排不進排名，這裡排除是為了與文件一致。
+    """
+    df = categories[(categories['market'] == 'sii') & (categories['category'] != '存託憑證')]
     ids = df['stock_id'].astype(str)
     names = df['name'].astype(str)
     keep = ids.str.fullmatch(r'\d{4}') & ~names.str.endswith('-創')
