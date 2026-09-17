@@ -6,11 +6,14 @@
 import pandas as pd
 import numpy as np
 
-def taiwan_kd_fast(high_df, low_df, close_df, fastk_period=9, alpha=1/3):
+def taiwan_kd_fast(high_df, low_df, close_df, fastk_period=9, alpha=1/3, verbose=True):
     """
     快速版台灣標準KD計算 - 完全向量化
+
+    verbose=False 時不 print 進度（儀表板等非互動環境使用）
     """
-    print(f"⚡ 開始計算台灣標準KD指標 ({len(close_df.columns)} 檔股票)...")
+    if verbose:
+        print(f"⚡ 開始計算台灣標準KD指標 ({len(close_df.columns)} 檔股票)...")
     
     import time
     start_time = time.time()
@@ -36,8 +39,9 @@ def taiwan_kd_fast(high_df, low_df, close_df, fastk_period=9, alpha=1/3):
     d_df = k_df.ewm(alpha=alpha, adjust=False).mean()
     
     calc_time = time.time() - start_time
-    print(f"✅ KD計算完成！耗時: {calc_time:.2f} 秒")
-    print(f"📊 K值有效數據: {k_df.count().sum()} 個")
-    print(f"📊 D值有效數據: {d_df.count().sum()} 個")
+    if verbose:
+        print(f"✅ KD計算完成！耗時: {calc_time:.2f} 秒")
+        print(f"📊 K值有效數據: {k_df.count().sum()} 個")
+        print(f"📊 D值有效數據: {d_df.count().sum()} 個")
     
     return k_df, d_df
