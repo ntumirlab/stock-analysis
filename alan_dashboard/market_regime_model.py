@@ -5,13 +5,16 @@
 也讓 ``tests/unit`` 可以在沒有 finlab 的環境測試市值前 150 檔與現貨檔數差的邏輯
 （talib 只在 ``compute_components`` 內延遲 import）。
 
-分數組成（總分 −10 ~ +10）：
+分數組成（總分 −12 ~ +12）：
 
 - 均線分（−2 ~ +2）：收盤與 MA5／MA10／MA20 的相對位置
 - DMI 分（−4 ~ +4）：+DI 與 −DI 各依門檻計分
 - 動能微調（−3 ~ +3）：小計 < 5 時 DIF／MACD／KD 下彎各 −1；小計 > −5 時上彎各 +1
 - 現貨分（−1 ~ +1）：台灣50 + 中型100（以市值前 150 檔模擬）中「三條均線同時向上」減
   「同時向下」的檔數差，> +25 為 +1、< −25 為 −1，直接加在最後，不影響動能微調的觸發條件
+- 選擇權分（−2 ~ +2）：台指選擇權未平倉量 Put/Call 比（賣權 ÷ 買權），分成當月（最近未到期月契約）
+  與遠月（其餘月契約合計，週契約不計）。當月 > 120% 為 +1、當月 < 90% 為 −1、
+  當月 > 140% 且 > 遠月再 +1、遠月 > 100% 且 > 當月再 −1；各條件可累加，同現貨分直接加在最後
 
 MACD 與 KD 採 strategy_class 的台股自訂算法（taiwan_macd：加權收盤價 (H+L+2C)/4；
 taiwan_kd_fast：alpha = 1/3），與各策略一致；DMI 用 talib。
@@ -23,6 +26,11 @@ TOP_N = 150             # 台灣50 + 台灣中型100
 BREADTH_THRESHOLD = 25  # 檔數差門檻
 BREADTH_MIN_COVERAGE = 0.9  # 當日有收盤價的成分股比例低於此值視為資料未更新（容許少數停牌）
 MA_WINDOWS = (5, 10, 20)
+# 選擇權分門檻（未平倉 P/C，%）
+PCR_NEAR_LONG = 120    # 當月 > 此值 +1
+PCR_NEAR_SHORT = 90    # 當月 < 此值 −1
+PCR_NEAR_STRONG = 140  # 當月 > 此值且 > 遠月，再 +1
+PCR_FAR_SHORT = 100    # 遠月 > 此值且 > 當月，再 −1
 MA_DIRECTION_TOL = 1e-9  # 均線變動的相對容忍值：rolling mean 滑動累加會有 1e-13 等級的浮點誤差，持平不可視為向上
 
 # 台灣50／中型100 季度審核（FTSE TWSE Taiwan Index Series Ground Rules 6.1、6.3）：
@@ -137,12 +145,15 @@ def _direction(series: pd.Series) -> pd.Series:
 
 
 def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: int,
-                       breadth_diff: pd.Series | None = None) -> pd.DataFrame:
+                       breadth_diff: pd.Series | None = None,
+                       pcr: pd.DataFrame | None = None) -> pd.DataFrame:
     """回傳每日各條件的數值與分數（DataFrame），``total`` 欄為總分。
+
+    ``pcr`` 為 ``txo_put_call_ratio`` 的輸出（near_pcr、far_pcr），無值的日期選擇權分為 0。
 
     欄位：close, above_ma5/10/20, ma_score, plus_di, minus_di, di_score, subtotal,
     dif_dir, dif_score, macd_dir, macd_score, k_dir, d_dir, kd_dir, kd_score,
-    breadth_diff, breadth_score, total
+    breadth_diff, breadth_score, pcr_near, pcr_far, options_score, total
     """
     from talib import abstract
     from strategy_class.taiwan_kd import taiwan_kd_fast
@@ -197,7 +208,14 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
         b_diff = breadth_diff.reindex(ohlc.index).astype(float)
     b_score = breadth_score(b_diff)
 
-    total = subtotal + dif_score + macd_score + kd_score + b_score
+    # 選擇權分同現貨分：資料起始（2025-09-25）前或尚未更新的日期為 NaN，計 0、明細表顯示「—」
+    if pcr is None:
+        near = far = pd.Series(float('nan'), index=ohlc.index)
+    else:
+        near, far = pcr['near_pcr'].reindex(ohlc.index), pcr['far_pcr'].reindex(ohlc.index)
+    o_score = options_score(near, far)
+
+    total = subtotal + dif_score + macd_score + kd_score + b_score + o_score
 
     return pd.DataFrame({
         'close': close,
@@ -208,5 +226,51 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
         'macd_dir': macd_dir, 'macd_score': macd_score,
         'k_dir': k_dir, 'd_dir': d_dir, 'kd_dir': kd_dir, 'kd_score': kd_score,
         'breadth_diff': b_diff, 'breadth_score': b_score,
+        'pcr_near': near, 'pcr_far': far, 'options_score': o_score,
         'total': total,
     })
+
+
+# ── 選擇權：台指選擇權未平倉 Put/Call 比 ─────────────────────────────────────
+
+# 到期月份代號：月契約為 YYYYMM（含季月）；週契約為 YYYYMMWn（週三到期）、YYYYMMFn（週二到期），不計
+_MONTHLY_EXPIRY = r'\d{6}'
+
+
+def txo_put_call_ratio(liquidity: pd.DataFrame) -> pd.DataFrame:
+    """台指選擇權（TXO）未平倉量 Put/Call 比（%），依到期月份分成當月與遠月。
+
+    ``liquidity`` 為 FinLab ``tw_taifex_option_liquidity``（逐契約未沖銷部位），
+    需要欄位 symbol、date、買賣權、到期月份(週別)、未沖銷部位。
+
+    - 當月 = 當日最近一個尚未到期的月契約；遠月 = 其餘所有月契約（含季月）合計
+    - 週契約不計；月契約到期日當天的資料已不含該契約，當月自動換成下一個月
+    - 比率 = 賣權未沖銷部位 ÷ 買權未沖銷部位 × 100；買權為 0 時無值
+
+    回傳 DataFrame（index = date）：``near_month``（當月代號 YYYYMM）、``near_pcr``、``far_pcr``。
+    """
+    df = liquidity[liquidity['symbol'] == 'TXO']
+    expiry = df['到期月份(週別)'].astype(str)
+    df = df[expiry.str.fullmatch(_MONTHLY_EXPIRY)].assign(expiry=expiry)
+    near_month = df.groupby('date')['expiry'].min()  # YYYYMM 字串排序即時間排序
+    is_near = df['expiry'] == df['date'].map(near_month)
+    oi = (df.groupby([df['date'], is_near.rename('is_near'), df['買賣權']], observed=True)['未沖銷部位'].sum()
+            .unstack('買賣權').reindex(columns=['賣權', '買權'], fill_value=0.0))
+    pcr = (oi['賣權'] / oi['買權'] * 100).where(oi['買權'] > 0).unstack('is_near').reindex(columns=[True, False])
+    return pd.DataFrame({'near_month': near_month, 'near_pcr': pcr[True], 'far_pcr': pcr[False]})
+
+
+def options_score(near_pcr: pd.Series, far_pcr: pd.Series) -> pd.Series:
+    """選擇權分（−2 ~ +2）：四個條件各自成立即計分、可累加；P/C 無值的條件視為不成立。
+
+    - 當月 > 120%：+1
+    - 當月 < 90%：−1
+    - 當月 > 140% 且當月 > 遠月：+1
+    - 遠月 > 100% 且遠月 > 當月：−1
+    """
+    return (
+        (near_pcr > PCR_NEAR_LONG).astype(int)
+        - (near_pcr < PCR_NEAR_SHORT).astype(int)
+        + ((near_pcr > PCR_NEAR_STRONG) & (near_pcr > far_pcr)).astype(int)
+        - ((far_pcr > PCR_FAR_SHORT) & (far_pcr > near_pcr)).astype(int)
+    )

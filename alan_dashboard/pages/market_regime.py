@@ -1,8 +1,8 @@
 """
 台股多空轉折模型頁面
 ====================
-顯示 TAIEX K 線 + 均線條件式 S4 分數柱狀圖，下方以明細表列出每日各條件的數值與分數。
-預設顯示最近 2 個月，可切換時間範圍（最長 1 年）。
+顯示 TAIEX K 線 + 均線條件式 S4 分數柱狀圖，下方以明細表列出每日各條件的數值與分數
+（含台指選擇權當月／遠月未平倉 P/C 與選擇權分）。預設顯示最近 2 個月，可切換時間範圍（最長 1 年）。
 
 評分邏輯見 alan_dashboard/market_regime_model.py。
 資料與分數於啟動時計算一次並快取於伺服器記憶體（見 alan_dashboard/cache.py），
@@ -13,7 +13,7 @@ from datetime import timedelta
 
 import dash
 from dash import dcc, html, dash_table, Input, Output, callback
-from dash.dash_table.Format import Format, Scheme, Sign
+from dash.dash_table.Format import Format, Scheme, Sign, Symbol
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -22,8 +22,9 @@ from finlab import data
 
 from alan_dashboard.cache import PageCache, REFRESH_LABEL
 from alan_dashboard.market_regime_model import (
-    BREADTH_THRESHOLD, TOP_N, compute_components, listed_common_stocks,
-    ma_direction_breadth, top_n_membership,
+    BREADTH_THRESHOLD, PCR_FAR_SHORT, PCR_NEAR_LONG, PCR_NEAR_SHORT, PCR_NEAR_STRONG, TOP_N,
+    compute_components, listed_common_stocks,
+    ma_direction_breadth, top_n_membership, txo_put_call_ratio,
 )
 from alan_dashboard.theme import COLOR, FONT, CARD_STYLE, kpi_card
 
@@ -50,9 +51,10 @@ _BREADTH_HISTORY_DAYS = max(_PERIOD_DAYS.values()) + 60
 
 # 市場設定（目前只有 TAIEX，保留結構方便擴充）
 # breadth：現貨分的成分股來源；None 表示該市場不計現貨分
+# options：選擇權分的 P/C 資料來源；None 表示該市場不計選擇權分
 _MARKET_CONFIG = {
-    'TAIEX': {'label': 'TAIEX（台股）', 'dmi': (35, 21, 18), 'breadth': 'tw_top150'},
-    # 未來可新增：'QQQ': {'label': 'QQQ（NASDAQ-100）', 'dmi': (41, 26, 21), 'breadth': None}
+    'TAIEX': {'label': 'TAIEX（台股）', 'dmi': (35, 21, 18), 'breadth': 'tw_top150', 'options': 'txo'},
+    # 未來可新增：'QQQ': {'label': 'QQQ（NASDAQ-100）', 'dmi': (41, 26, 21), 'breadth': None, 'options': None}
 }
 
 
@@ -76,6 +78,8 @@ def _load_inputs() -> dict:
         'adj_close': data.get('etl:adj_close'),  # 均線方向用還原價，避免除權息造成假跌
         'market_value': data.get('etl:market_value'),
         'categories': data.get('security_categories'),
+        # 台指選擇權逐契約未沖銷部位（2025-09-25 起），算當月／遠月 P/C；只留 TXO，其他商品不用
+        'txo_liquidity': data.get('tw_taifex_option_liquidity').query("symbol == 'TXO'"),
     }
 
 
@@ -91,10 +95,13 @@ def _tw_top150_breadth(inputs: dict) -> pd.Series:
 def _build(inputs: dict) -> dict:
     """對每個市場計算各條件分數；快取內容為 {market: {'ohlc': DataFrame, 'components': DataFrame}}。"""
     breadth = {'tw_top150': _tw_top150_breadth(inputs)}
+    options = {'txo': txo_put_call_ratio(inputs['txo_liquidity'])}
     markets = {}
     for market, cfg in _MARKET_CONFIG.items():
         ohlc = inputs[market]
-        components = compute_components(ohlc, *cfg['dmi'], breadth_diff=breadth.get(cfg['breadth']))
+        # P/C 資料起始前或尚未更新的日期為 NaN：計 0 分、明細表顯示「—」
+        pcr = options[cfg['options']] if cfg['options'] else None
+        components = compute_components(ohlc, *cfg['dmi'], breadth_diff=breadth.get(cfg['breadth']), pcr=pcr)
         markets[market] = {'ohlc': ohlc, 'components': components}
     return {'markets': markets}
 
@@ -106,11 +113,11 @@ _page_cache.refresh()  # 啟動時計算一次（失敗即讓 worker 啟動失�
 # ── Layout helpers ─────────────────────────────────────────────────────────────
 
 def _signal_badge(score_val: int) -> tuple[str, str, str]:
-    """回傳 (emoji, 文字, badge color)。"""
+    """回傳 (emoji, 文字, badge color)。燈號依台灣慣例：紅 = 做多、綠 = 出場，與 K 線、分數柱同色。"""
     if score_val > 0:
-        return '🟢', '做多', 'primary'
+        return '🔴', '做多', 'danger'
     if score_val < -1:
-        return '🔴', '出場', 'danger'
+        return '🟢', '出場', 'success'
     return '⚪', '觀望', 'secondary'
 
 
@@ -121,6 +128,7 @@ def _signed(v) -> str:
 
 _FMT_SIGNED = Format(sign=Sign.positive, precision=0, scheme=Scheme.fixed, nully='—')
 _FMT_INDEX  = Format(group=True, precision=0, scheme=Scheme.fixed)
+_FMT_PCT    = Format(precision=1, scheme=Scheme.fixed, nully='—').symbol(Symbol.yes).symbol_suffix('%')
 # (欄位 id, 顯示名稱, 型別)：numeric 欄以數值排序、由 Format 負責顯示；text 欄為字串
 _DETAIL_COLUMNS = [
     ('date', '日期', 'text'), ('close', '收盤指數', 'numeric'),
@@ -129,9 +137,11 @@ _DETAIL_COLUMNS = [
     ('subtotal', '小計', 'numeric'),
     ('dif', 'DIF', 'text'), ('macd', 'MACD', 'text'), ('kd', 'KD', 'text'),
     ('breadth_diff', '現貨檔數差', 'numeric'), ('breadth_score', '現貨分', 'numeric'),
+    ('pcr_near', '當月P/C', 'numeric'), ('pcr_far', '遠月P/C', 'numeric'), ('options_score', '選擇權分', 'numeric'),
     ('total', '總分', 'numeric'), ('signal', '訊號', 'text'),
 ]
-_SIGNED_NUMERIC = ['ma_score', 'di_score', 'subtotal', 'breadth_diff', 'breadth_score', 'total']
+_PCT_COLUMNS = ['pcr_near', 'pcr_far']
+_SIGNED_NUMERIC = ['ma_score', 'di_score', 'subtotal', 'breadth_diff', 'breadth_score', 'options_score', 'total']
 _ARROW_COLUMNS = ['dif', 'macd', 'kd']  # 內容如「↑ +1」「↓ -1」「↑ 0」「K↑ D↓ 0」，依 +/- 著色
 
 
@@ -148,6 +158,10 @@ def _kd_arrow(k_dir: int, d_dir: int, score: int) -> str:
     if k_dir == d_dir and k_dir != 0:
         return _arrow(k_dir, score)
     return f'K{_DIR_SYMBOL[int(k_dir)]} D{_DIR_SYMBOL[int(d_dir)]} {_signed(score)}'
+
+
+def _pct_or_none(v) -> float | None:
+    return None if pd.isna(v) else float(v)
 
 
 def _detail_rows(comp: pd.DataFrame) -> list[dict]:
@@ -170,6 +184,9 @@ def _detail_rows(comp: pd.DataFrame) -> list[dict]:
             'breadth_diff': None if pd.isna(r['breadth_diff']) else int(r['breadth_diff']),
             'breadth_score': int(r['breadth_score']),
             'total': int(r['total']),
+            'pcr_near': _pct_or_none(r['pcr_near']),
+            'pcr_far': _pct_or_none(r['pcr_far']),
+            'options_score': int(r['options_score']),
             'signal': f'{emoji} {sig_text}',
         })
     return rows
@@ -198,6 +215,8 @@ def _detail_table(comp: pd.DataFrame) -> dash_table.DataTable:
             col['format'] = _FMT_SIGNED
         elif cid == 'close':
             col['format'] = _FMT_INDEX
+        elif cid in _PCT_COLUMNS:
+            col['format'] = _FMT_PCT
         columns.append(col)
     return dash_table.DataTable(
         data=_detail_rows(comp),
@@ -294,7 +313,11 @@ layout = html.Div([
                     '均線分 + DMI分 = 小計；小計 < 5 時 DIF／MACD／KD 下彎各 −1，小計 > −5 時上彎各 +1'
                     '（箭頭為方向、數字為實際計分）；'
                     f'現貨 = 台灣50 + 中型100（市值前 {TOP_N} 檔模擬）中 5／10／20 日均線同時向上減同時向下的檔數'
-                    f'（還原價），> +{BREADTH_THRESHOLD} 為 +1、< −{BREADTH_THRESHOLD} 為 −1。',
+                    f'（還原價），> +{BREADTH_THRESHOLD} 為 +1、< −{BREADTH_THRESHOLD} 為 −1。'
+                    '選擇權 = 台指選擇權未平倉量 P/C（賣權 ÷ 買權；當月 = 最近未到期月契約、'
+                    f'遠月 = 其餘月契約合計，週契約不計）：當月 > {PCR_NEAR_LONG}% +1、< {PCR_NEAR_SHORT}% −1、'
+                    f'> {PCR_NEAR_STRONG}% 且 > 遠月再 +1；遠月 > {PCR_FAR_SHORT}% 且 > 當月 −1。'
+                    '+DI／−DI 與 P/C 以未四捨五入的原值計分，顯示值剛好等於門檻時以原值為準。',
                     style={'fontSize': '11px', 'color': COLOR['text_muted'], 'margin': '0 0 8px 8px'},
                 ),
                 html.Div(id='mr-detail-table'),
@@ -370,13 +393,14 @@ def update_chart(market, period):
         name='分數',
         marker_color=bar_colors,
         showlegend=False,
-        customdata=comp[['ma_score', 'di_score', 'dif_score', 'macd_score', 'kd_score', 'breadth_score']]
+        customdata=comp[['ma_score', 'di_score', 'dif_score', 'macd_score', 'kd_score', 'breadth_score',
+                         'options_score']]
                    .assign(breadth_diff=comp['breadth_diff'].map(
                        lambda v: '—' if pd.isna(v) else _signed(v))).to_numpy(),
         hovertemplate=(
             '總分 %{y}<br>均線 %{customdata[0]}｜DMI %{customdata[1]}｜'
             'DIF %{customdata[2]}｜MACD %{customdata[3]}｜KD %{customdata[4]}｜'
-            '現貨 %{customdata[5]}（檔數差 %{customdata[6]}）<extra></extra>'
+            '現貨 %{customdata[5]}（檔數差 %{customdata[7]}）｜選擇權 %{customdata[6]}<extra></extra>'
         ),
     ), row=2, col=1)
 
@@ -440,7 +464,7 @@ def update_chart(market, period):
     kpi_date    = kpi_card('訊號日（收盤資料）', last_date,
                            subtitle=f'供下一交易日操作參考｜資料更新：{updated}（{REFRESH_LABEL}）')
     kpi_score   = kpi_card('當前分數', _signed(last_score),
-                           subtitle='範圍 -10 ~ +10（均線 + DMI + MACD + KD + 現貨）')
+                           subtitle='範圍 -12 ~ +12（均線 + DMI + MACD + KD + 現貨 + 選擇權）')
     kpi_signal  = kpi_card('訊號', f'{emoji} {sig_text}',
                            subtitle='> 0 做多 ｜ -1 ≤ 分數 ≤ 0 觀望 ｜ < -1 出場')
 
