@@ -28,7 +28,7 @@ from alan_dashboard.theme import TZ
 
 logger = logging.getLogger(__name__)
 
-# 每日重算時間（台北）：FinLab 日資料（含分點）於 19:00 前更新完畢；
+# 每日重算時間（台北）：FinLab 日資料（含分點）於 19:00 前更新完畢、選擇權未沖銷部位約 19:20；
 # 排在 docker/crontab 的回測（21:55 起）之前，避免兩個容器同時佔用記憶體
 REFRESH_AT = dtime(21, 45)
 # 顯示於各頁「訊號日」卡片，讓使用者知道何時會換成當日資料

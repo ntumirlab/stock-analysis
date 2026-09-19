@@ -1,4 +1,4 @@
-"""多空轉折模型：市值前 150 檔成分、審核時程、現貨檔數差（純 pandas，不需 finlab／ta-lib）。
+"""多空轉折模型：市值前 150 檔成分、審核時程、現貨檔數差、選擇權 P/C（純 pandas，不需 finlab／ta-lib）。
 
 指標計算與總分組合需要 ta-lib 與 strategy_class，放在 tests/integration/test_market_regime_components.py。
 """
@@ -8,6 +8,7 @@ import pandas as pd
 
 from alan_dashboard.market_regime_model import (
     breadth_score, listed_common_stocks, ma_direction_breadth, review_schedule, top_n_membership,
+    options_score, txo_put_call_ratio,
 )
 
 
@@ -108,3 +109,47 @@ def test_ma_direction_breadth_ignores_floating_point_noise():
 def test_breadth_score_threshold():
     diff = pd.Series([26, 25, 0, -25, -26])
     assert breadth_score(diff).tolist() == [1, 0, 0, 0, -1]
+
+
+def _liquidity_rows(date, rows):
+    """rows: (到期月份, 買賣權, 未沖銷部位)"""
+    return pd.DataFrame({
+        'symbol': 'TXO', 'date': pd.Timestamp(date),
+        '到期月份(週別)': [r[0] for r in rows], '買賣權': [r[1] for r in rows],
+        '履約價格': 20000.0, '未沖銷部位': [float(r[2]) for r in rows],
+    })
+
+
+def test_txo_put_call_ratio_splits_near_and_far_months_and_skips_weeklies():
+    liq = pd.concat([
+        _liquidity_rows('2026-09-15', [
+            ('202609', '賣權', 80), ('202609', '買權', 100),      # 當月：80%
+            ('202609W4', '賣權', 900), ('202609W4', '買權', 100),  # 週契約（週三）不計
+            ('202609F4', '賣權', 900), ('202609F4', '買權', 100),  # 週契約（週二）不計
+            ('202610', '賣權', 30), ('202610', '買權', 50),        # 遠月：(30+20)/(50+50)
+            ('202612', '賣權', 20), ('202612', '買權', 50),
+        ]),
+        _liquidity_rows('2026-09-16', [                             # 9 月契約到期後：當月換成 10 月
+            ('202610', '賣權', 75), ('202610', '買權', 100),
+            ('202611', '賣權', 57), ('202611', '買權', 100),
+            ('202612', '賣權', 0), ('202612', '買權', 0),          # 部位為 0 不影響加總
+        ]),
+        _liquidity_rows('2026-09-17', [('202610', '賣權', 10), ('202610', '買權', 0)]),  # 買權為 0：無值
+    ], ignore_index=True)
+    liq.loc[len(liq)] = {**liq.iloc[0].to_dict(), 'symbol': 'TEO', '未沖銷部位': 1e6}  # 其他商品不計
+
+    out = txo_put_call_ratio(liq)
+
+    assert out['near_month'].tolist() == ['202609', '202610', '202610']
+    assert out['near_pcr'].round(2).tolist()[:2] == [80.0, 75.0]
+    assert out['far_pcr'].round(2).tolist()[:2] == [50.0, 57.0]
+    assert np.isnan(out.loc['2026-09-17', 'near_pcr']) and np.isnan(out.loc['2026-09-17', 'far_pcr'])
+
+
+def test_options_score_rules_accumulate_and_ignore_missing():
+    near = pd.Series([125.0, 85.0, 150.0, 150.0, 95.0, 110.0, 100.0, np.nan, 130.0])
+    far  = pd.Series([100.0, 90.0, 120.0, 160.0, 110.0, 115.0, 100.0, 110.0, np.nan])
+    # 125>120 → +1；85<90 → −1；150>140 且 >120 → +2；150 但遠月 160>100 且 >當月 → +1−1 = 0；
+    # 95：遠月 110>100 且 >當月 → −1；110：遠月 115>100 且 >當月 → −1；100/100 皆不成立 → 0；
+    # 當月無值：只有遠月條件且遠月 > NaN 不成立 → 0；遠月無值：當月 130 → +1
+    assert options_score(near, far).tolist() == [1, -1, 2, 0, -1, -1, 0, 0, 1]
