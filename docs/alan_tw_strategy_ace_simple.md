@@ -56,6 +56,8 @@
 | 創新高 | 收盤價 ≥ N 日收盤最高價 × **100%**（N 依子策略而定） |
 | 額外新高（僅 A、C） | A：收盤價 ≥ **480 天**收盤最高價 × **85%**；C：× **80%** |
 
+> 「較前一日上升」與出場條件的「下彎」判斷含相對容忍值：變動幅度未超過自身十億分之一（1e-9）者視為持平，用來濾除浮點運算殘留的誤差（適用均線、K、D、DIF、DEA；程式為 `AlanTWStrategyBase.direction_tol`）。
+
 
 MACD 以**加權收盤價 `(H+L+2C)/4`** 自算（`strategy_class/taiwan_macd.py`），匹配 XQ 等台股看盤軟體；KD 同為台股式自算。DMI／ADX 經對帳確認 talib 與 XQ 一致，詳見 `docs/20260815_EFG95_full_technical_indicator_verification.md`。
 

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from alan_dashboard.market_regime_model import (
+    _direction,
     breadth_score, listed_common_stocks, ma_direction_breadth, review_schedule, top_n_membership,
     options_score, txo_put_call_ratio,
 )
@@ -104,6 +105,11 @@ def test_ma_direction_breadth_ignores_floating_point_noise():
     assert ma_direction_breadth(close, member).iloc[-1] == 0
     close.iloc[-1, 0] = 100.01  # 真的漲一檔：三條均線都向上
     assert ma_direction_breadth(close, member).iloc[-1] == 1
+
+
+def test_direction_ignores_floating_point_noise():
+    s = pd.Series([100.0, 100.0 + 1e-11, 100.0 + 1e-11 + 0.01, 100.0, 100.0])
+    assert _direction(s).tolist() == [0, 0, 1, -1, 0]  # 無前值 0、雜訊 0、真漲 +1、真跌 −1、持平 0
 
 
 def test_breadth_score_threshold():

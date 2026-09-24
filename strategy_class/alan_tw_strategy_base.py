@@ -175,6 +175,25 @@ class AlanTWStrategyBase:
 
         return chip_buy_condition
 
+    # 「上揚／下彎」判斷的相對容忍值：變動幅度未超過自身 direction_tol 倍者視為持平。
+    # 浮點運算（rolling mean 的滑動累加、EMA 遞迴）會殘留 1e-13 等級的誤差，數值持平時
+    # （例如今天的價格與掉出窗口那天相同、均線數學上不變）會被 x > x.shift(1) 判成上揚或下彎。
+    # 均線（MA3/5/10/20/60）與指標（K/D/DIF/DEA）一體適用；與儀表板 market_regime_model 的
+    # DIRECTION_TOL 相同。設為 0 即回到嚴格比較（回測影響見 2026-09-18 容忍值比較報告）。
+    direction_tol = 1e-9
+
+    def _rising(self, s):
+        """s 較前一日上揚（依 direction_tol）"""
+        if not self.direction_tol:
+            return s > s.shift(1)
+        return (s - s.shift(1)) > s.abs() * self.direction_tol
+
+    def _falling(self, s):
+        """s 較前一日下彎（依 direction_tol）"""
+        if not self.direction_tol:
+            return s < s.shift(1)
+        return (s - s.shift(1)) < -(s.abs() * self.direction_tol)
+
     def _macd(self):
         """MACD 指標：加權收盤價 (H+L+2C)/4 自算，匹配 XQ；回傳 (dif, dea)"""
         dif, dea, _ = taiwan_macd(
@@ -219,8 +238,8 @@ class AlanTWStrategyBase:
 
         # 均線上升
         ma_up_buy_condition = (
-            (ma5 > ma5.shift(1)) & (ma10 > ma10.shift(1)) &
-            (ma20 > ma20.shift(1)) & (ma60 > ma60.shift(1))
+            self._rising(ma5) & self._rising(ma10) &
+            self._rising(ma20) & self._rising(ma60)
         )
 
         # 價格在均線之上
@@ -273,14 +292,14 @@ class AlanTWStrategyBase:
             alpha=1/3
         )
 
-        k_up_condition = k > k.shift(1)
-        d_up_condition = d > d.shift(1)
+        k_up_condition = self._rising(k)
+        d_up_condition = self._rising(d)
         kd_buy_condition = k_up_condition & d_up_condition
 
         # MACD指標
         dif, _macd_dea = self._macd()
 
-        macd_dif_buy_condition = dif > dif.shift(1)
+        macd_dif_buy_condition = self._rising(dif)
 
         # 創新高 (支援百分比，如 0.95 代表 95% 新高；基準可為收盤價或盤中最高價)
         high_base = self.adj_high if new_high_source == 'high' else self.adj_close
@@ -334,7 +353,7 @@ class AlanTWStrategyBase:
     def _sell_bare(self):
         """3日線↓ AND DIF↓"""
         ma3, _, _, dif, _, _, _ = self._sell_indicators()
-        return (ma3 < ma3.shift(1)) & (dif < dif.shift(1))
+        return self._falling(ma3) & self._falling(dif)
 
     def _sell_simple(self):
         """簡單出場：(3日線↓ AND DIF↓ AND 3日與5日乖離皆 < -0.5%)
@@ -342,8 +361,8 @@ class AlanTWStrategyBase:
         ma3, b3, b5, dif, _, _, _ = self._sell_indicators()
         return (
             (
-                (ma3 < ma3.shift(1)) &
-                (dif < dif.shift(1)) &
+                self._falling(ma3) &
+                self._falling(dif) &
                 (b3 < -0.005) & (b5 < -0.005)
             ) |
             ((b3 < -0.035) & (b5 < -0.035))
@@ -355,12 +374,12 @@ class AlanTWStrategyBase:
         ma3, b3, b5, dif, dea, minus_di, adx = self._sell_indicators()
         return (
             (
-                (ma3 < ma3.shift(1)) &
-                (dif < dif.shift(1)) &
+                self._falling(ma3) &
+                self._falling(dif) &
                 (
                     (minus_di > 21) |
                     ((b3 < -0.035) & (b5 < -0.035)) |
-                    ((dea < dea.shift(1)) & (b3 < -0.025) & (b5 < -0.025)) |
+                    (self._falling(dea) & (b3 < -0.025) & (b5 < -0.025)) |
                     ((adx > 31) & (b3 < -0.005) & (b5 < -0.005))
                 )
             ) |
