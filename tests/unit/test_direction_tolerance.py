@@ -65,7 +65,7 @@ def test_tolerance_is_relative_to_level(base_cls):
 
 
 def test_scale_keeps_threshold_near_zero_crossing(base_cls):
-    # DIF 穿越零：值 ±1e-13 是雜訊。只靠自身的相對門檻會判成方向；用股價當量尺才視為持平
+    # DIF 穿越零：值 ±1e-13 是雜訊。只靠自身的相對門檻會判成方向；用股價當基準值才視為持平
     dif = pd.DataFrame({'X': [1e-13, -1e-13, 0.0, 0.5]})
     close = pd.DataFrame({'X': [100.0] * 4})
     obj = _obj(base_cls)
@@ -73,7 +73,7 @@ def test_scale_keeps_threshold_near_zero_crossing(base_cls):
     assert not obj._falling(dif, scale=close).iloc[1].item()
     assert not obj._rising(dif, scale=close).iloc[2].item()
     assert obj._rising(dif, scale=close).iloc[3].item()            # 真的上揚仍成立
-    assert not obj._rising(dif, scale=100.0).iloc[2].item()        # 純量量尺（K/D 用 100）
+    assert not obj._rising(dif, scale=100.0).iloc[2].item()        # 純量基準值（K/D 用 100）
 
 
 def test_zero_tolerance_restores_strict_comparison(base_cls):

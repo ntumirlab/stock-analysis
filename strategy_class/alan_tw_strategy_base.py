@@ -175,16 +175,16 @@ class AlanTWStrategyBase:
 
         return chip_buy_condition
 
-    # 「上揚／下彎」判斷的相對容忍值：變動幅度未超過「量尺 × direction_tol」者視為持平。
+    # 「上揚／下彎」判斷的相對容忍值：變動幅度未超過「基準值 × direction_tol」者視為持平。
     # 浮點運算（rolling mean 的滑動累加、EMA 遞迴）會殘留 1e-13 等級的誤差，數值持平時
     # （例如今天的價格與掉出窗口那天相同、均線數學上不變）會被 x > x.shift(1) 判成上揚或下彎。
-    # 量尺預設為數值自身；會穿越零的指標（DIF/DEA 用股價、K/D 用滿刻度 100）另給量尺，
+    # 基準值預設為數值自身；會穿越零的指標（DIF/DEA 用股價、K/D 用滿刻度 100）另給基準值，
     # 否則指標接近 0 時門檻也趨近 0、雜訊濾不掉。與儀表板 market_regime_model 的 DIRECTION_TOL 相同。
     # 設為 0 即回到嚴格比較（回測影響見 2026-09-18 容忍值比較報告）。
     direction_tol = 1e-9
 
     def _direction_tol(self, s, scale):
-        """逐格容忍值 = max(|s|, |scale|) × direction_tol；scale 可為 DataFrame、純量或 None（只用 |s|）"""
+        """逐格容忍值 = max(|s|, |基準值 scale|) × direction_tol；scale 可為 DataFrame、純量或 None（只用 |s|）"""
         level = s.abs()
         if scale is not None:
             ref = scale.abs() if hasattr(scale, 'abs') else scale
