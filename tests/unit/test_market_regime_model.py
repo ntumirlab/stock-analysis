@@ -110,6 +110,11 @@ def test_ma_direction_breadth_ignores_floating_point_noise():
 def test_direction_ignores_floating_point_noise():
     s = pd.Series([100.0, 100.0 + 1e-11, 100.0 + 1e-11 + 0.01, 100.0, 100.0])
     assert _direction(s).tolist() == [0, 0, 1, -1, 0]  # 無前值 0、雜訊 0、真漲 +1、真跌 −1、持平 0
+    # 穿越零的指標：值接近 0 時只靠自身的相對門檻濾不掉雜訊，給量尺（指數 20000）才會視為持平
+    z = pd.Series([1e-13, -1e-13, 0.0, 2.0])
+    assert _direction(z).tolist() == [0, -1, 1, 1]
+    assert _direction(z, scale=pd.Series([20000.0] * 4)).tolist() == [0, 0, 0, 1]
+    assert _direction(z, scale=100.0).tolist() == [0, 0, 0, 1]
 
 
 def test_breadth_score_threshold():

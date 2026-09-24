@@ -140,9 +140,16 @@ def breadth_score(diff: pd.Series, threshold: int = BREADTH_THRESHOLD) -> pd.Ser
 
 # ── 指數本身：均線 + DMI + 動能 ─────────────────────────────────────────────────
 
-def _direction(series: pd.Series) -> pd.Series:
-    """較前一日上升 +1、下降 −1、持平或無值 0（變動未超過 DIRECTION_TOL 倍視為持平）。"""
-    delta, tol = series - series.shift(1), series.abs() * DIRECTION_TOL
+def _direction(series: pd.Series, scale=None) -> pd.Series:
+    """較前一日上升 +1、下降 −1、持平或無值 0（變動未超過 max(|值|, |量尺|) × DIRECTION_TOL 視為持平）。
+
+    會穿越零的指標要給量尺（DIF/DEA 用指數、K/D 用滿刻度 100），否則值接近 0 時門檻也趨近 0。
+    """
+    level = series.abs()
+    if scale is not None:
+        ref = scale.abs() if hasattr(scale, 'abs') else scale
+        level = level.where(level >= ref, ref)
+    delta, tol = series - series.shift(1), level * DIRECTION_TOL
     return (delta > tol).astype(int) - (delta < -tol).astype(int)
 
 
@@ -179,10 +186,10 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
     )
 
     dif, dea, _ = taiwan_macd(*frames, fastperiod=12, slowperiod=26, signalperiod=9)
-    dif_dir, macd_dir = _direction(dif['idx']), _direction(dea['idx'])
+    dif_dir, macd_dir = _direction(dif['idx'], scale=close), _direction(dea['idx'], scale=close)
 
     K, D = taiwan_kd_fast(*frames, fastk_period=9, alpha=1 / 3, verbose=False)
-    k_dir, d_dir = _direction(K['idx']), _direction(D['idx'])
+    k_dir, d_dir = _direction(K['idx'], scale=100.0), _direction(D['idx'], scale=100.0)
     kd_dir = ((k_dir == 1) & (d_dir == 1)).astype(int) - ((k_dir == -1) & (d_dir == -1)).astype(int)
 
     above = {w: close > close.rolling(w).mean() for w in MA_WINDOWS}
