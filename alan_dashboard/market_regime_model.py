@@ -31,7 +31,9 @@ PCR_NEAR_LONG = 120    # 當月 > 此值 +1
 PCR_NEAR_SHORT = 90    # 當月 < 此值 −1
 PCR_NEAR_STRONG = 140  # 當月 > 此值且 > 遠月，再 +1
 PCR_FAR_SHORT = 100    # 遠月 > 此值且 > 當月，再 −1
-MA_DIRECTION_TOL = 1e-9  # 均線變動的相對容忍值：rolling mean 滑動累加會有 1e-13 等級的浮點誤差，持平不可視為向上
+DIRECTION_TOL = 1e-9  # 上升／下降判斷的相對容忍值：浮點運算（rolling mean 滑動累加、EMA 遞迴）殘留 1e-13 等級誤差，
+                      # 變動未超過 「值與基準值取較大者」× 1e-9 者視為持平（均線基準值為自身、DIF/DEA 為指數、K/D 為 100），
+                      # 與策略 direction_tol 相同
 
 # 台灣50／中型100 季度審核（FTSE TWSE Taiwan Index Series Ground Rules 6.1、6.3）：
 # 每年 3、6、9、12 月審核，變動於該月第三個星期五收盤後生效（即下一個交易日，通常是星期一），
@@ -121,7 +123,7 @@ def ma_direction_breadth(close: pd.DataFrame, membership: pd.DataFrame) -> pd.Se
     falling = rising.copy()
     for w in MA_WINDOWS:
         ma = c.rolling(w).mean()
-        delta, tol = ma - ma.shift(1), ma.abs() * MA_DIRECTION_TOL
+        delta, tol = ma - ma.shift(1), ma.abs() * DIRECTION_TOL
         rising &= delta > tol
         falling &= delta < -tol
     diff = (rising & member).sum(axis=1) - (falling & member).sum(axis=1)
@@ -139,9 +141,17 @@ def breadth_score(diff: pd.Series, threshold: int = BREADTH_THRESHOLD) -> pd.Ser
 
 # ── 指數本身：均線 + DMI + 動能 ─────────────────────────────────────────────────
 
-def _direction(series: pd.Series) -> pd.Series:
-    """較前一日上升 +1、下降 −1、持平或無值 0。"""
-    return (series > series.shift(1)).astype(int) - (series < series.shift(1)).astype(int)
+def _direction(series: pd.Series, scale=None) -> pd.Series:
+    """較前一日上升 +1、下降 −1、持平或無值 0（變動未超過 max(|值|, |基準值|) × DIRECTION_TOL 視為持平）。
+
+    會穿越零的指標要給基準值（DIF/DEA 用指數、K/D 用滿刻度 100），否則值接近 0 時門檻也趨近 0。
+    """
+    level = series.abs()
+    if scale is not None:
+        ref = scale.abs() if hasattr(scale, 'abs') else scale
+        level = level.where(level >= ref, ref)
+    delta, tol = series - series.shift(1), level * DIRECTION_TOL
+    return (delta > tol).astype(int) - (delta < -tol).astype(int)
 
 
 def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: int,
@@ -177,10 +187,10 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
     )
 
     dif, dea, _ = taiwan_macd(*frames, fastperiod=12, slowperiod=26, signalperiod=9)
-    dif_dir, macd_dir = _direction(dif['idx']), _direction(dea['idx'])
+    dif_dir, macd_dir = _direction(dif['idx'], scale=close), _direction(dea['idx'], scale=close)
 
     K, D = taiwan_kd_fast(*frames, fastk_period=9, alpha=1 / 3, verbose=False)
-    k_dir, d_dir = _direction(K['idx']), _direction(D['idx'])
+    k_dir, d_dir = _direction(K['idx'], scale=100.0), _direction(D['idx'], scale=100.0)
     kd_dir = ((k_dir == 1) & (d_dir == 1)).astype(int) - ((k_dir == -1) & (d_dir == -1)).astype(int)
 
     above = {w: close > close.rolling(w).mean() for w in MA_WINDOWS}

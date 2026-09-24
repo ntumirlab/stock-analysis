@@ -53,6 +53,8 @@
 | 低點乖離上限 | 收盤價 ÷ 近 **15** 日最低價 ≤ **1.32**（收盤不高於近 15 日最低價的 **132%**） |
 | 創新高 | 收盤價 ≥ N 日收盤最高價 × **95%**（N 依子策略而定） |
 
+> 「較前一日上升」與出場條件的「下彎」判斷含相對容忍值：變動幅度未超過 「指標值與基準值取較大者」× 1e-9 者視為持平，用來濾除浮點運算殘留的誤差。基準值：均線用自身、DIF／DEA 用股價、K／D 用滿刻度 100（指標接近 0 時門檻才不會消失）；程式為 `AlanTWStrategyBase.direction_tol`。
+
 
 MACD 以**加權收盤價 `(H+L+2C)/4`** 自算（`strategy_class/taiwan_macd.py`），匹配 XQ 等台股看盤軟體；KD 同為台股式自算。DMI／ADX 經對帳確認 talib 與 XQ 一致，詳見 `docs/20260815_EFG95_full_technical_indicator_verification.md`。
 
