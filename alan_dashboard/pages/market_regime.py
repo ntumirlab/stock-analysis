@@ -132,17 +132,17 @@ _FMT_PCT    = Format(precision=1, scheme=Scheme.fixed, nully='—').symbol(Symbo
 # (欄位 id, 顯示名稱, 型別)：numeric 欄以數值排序、由 Format 負責顯示；text 欄為字串
 _DETAIL_COLUMNS = [
     ('date', '日期', 'text'), ('close', '收盤指數', 'numeric'),
-    ('ma_above', '站上均線', 'text'), ('ma_score', '均線分', 'numeric'),
+    ('ma_above', '站上均線', 'text'), ('kd', 'KD', 'text'), ('ma_score', '均線分', 'numeric'),
     ('di_vals', '+DI / −DI', 'text'), ('di_score', 'DMI分', 'numeric'),
     ('subtotal', '小計', 'numeric'),
-    ('dif', 'DIF', 'text'), ('macd', 'MACD', 'text'), ('kd', 'KD', 'text'),
+    ('dif', 'DIF', 'text'), ('macd', 'MACD', 'text'),
     ('breadth_diff', '現貨檔數差', 'numeric'), ('breadth_score', '現貨分', 'numeric'),
     ('pcr_near', '當月P/C', 'numeric'), ('pcr_far', '遠月P/C', 'numeric'), ('options_score', '選擇權分', 'numeric'),
     ('total', '總分', 'numeric'), ('signal', '訊號', 'text'),
 ]
 _PCT_COLUMNS = ['pcr_near', 'pcr_far']
 _SIGNED_NUMERIC = ['ma_score', 'di_score', 'subtotal', 'breadth_diff', 'breadth_score', 'options_score', 'total']
-_ARROW_COLUMNS = ['dif', 'macd', 'kd']  # 內容如「↑ +1」「↓ -1」「↑ 0」「K↑ D↓ 0」，依 +/- 著色
+_ARROW_COLUMNS = ['dif', 'macd']  # 內容如「↑ +1」「↓ -1」「↑ 0」，依 +/- 著色
 
 
 _DIR_SYMBOL = {1: '↑', -1: '↓', 0: '—'}
@@ -153,11 +153,11 @@ def _arrow(direction: int, score: int) -> str:
     return f'{_DIR_SYMBOL[int(direction)]} {_signed(score)}'
 
 
-def _kd_arrow(k_dir: int, d_dir: int, score: int) -> str:
-    """KD 欄：K、D 同向時同 _arrow；不同向時分別列出 K、D 方向，說明為何不計分。"""
-    if k_dir == d_dir and k_dir != 0:
-        return _arrow(k_dir, score)
-    return f'K{_DIR_SYMBOL[int(k_dir)]} D{_DIR_SYMBOL[int(d_dir)]} {_signed(score)}'
+def _kd_cell(k_dir: int, d_dir: int) -> str:
+    """KD 欄：K、D 同向（含同時持平）時只顯示一個符號（均線分 ±1 的確認條件）；不同向時分別列出 K、D 方向。"""
+    if k_dir == d_dir:
+        return _DIR_SYMBOL[int(k_dir)]
+    return f'K{_DIR_SYMBOL[int(k_dir)]} D{_DIR_SYMBOL[int(d_dir)]}'
 
 
 def _pct_or_none(v) -> float | None:
@@ -174,13 +174,13 @@ def _detail_rows(comp: pd.DataFrame) -> list[dict]:
             'date': d.strftime('%Y-%m-%d'),
             'close': float(r['close']),
             'ma_above': '·'.join(above) if above else '—',
+            'kd': _kd_cell(r['k_dir'], r['d_dir']),
             'ma_score': int(r['ma_score']),
             'di_vals': f"{r['plus_di']:.1f} / {r['minus_di']:.1f}",
             'di_score': int(r['di_score']),
             'subtotal': int(r['subtotal']),
             'dif': _arrow(r['dif_dir'], r['dif_score']),
             'macd': _arrow(r['macd_dir'], r['macd_score']),
-            'kd': _kd_arrow(r['k_dir'], r['d_dir'], r['kd_score']),
             'breadth_diff': None if pd.isna(r['breadth_diff']) else int(r['breadth_diff']),
             'breadth_score': int(r['breadth_score']),
             'total': int(r['total']),
@@ -208,6 +208,13 @@ def _detail_table(comp: pd.DataFrame) -> dash_table.DataTable:
             {'if': {'filter_query': f'{{{col}}} contains "-"', 'column_id': col},
              'color': _SCORE_COLOR['score_short'], 'fontWeight': '600'},
         ]
+    # KD 欄：K、D 同步上升／下降時著色，不同向（K↑ D↓）維持灰字
+    colored += [
+        {'if': {'filter_query': '{kd} = "↑"', 'column_id': 'kd'},
+         'color': _SCORE_COLOR['score_long'], 'fontWeight': '600'},
+        {'if': {'filter_query': '{kd} = "↓"', 'column_id': 'kd'},
+         'color': _SCORE_COLOR['score_short'], 'fontWeight': '600'},
+    ]
     columns = []
     for cid, name, ctype in _DETAIL_COLUMNS:
         col = {'name': name, 'id': cid, 'type': ctype}
@@ -310,13 +317,15 @@ layout = html.Div([
                     'color': COLOR['text_heading'], 'margin': '4px 0 2px 8px',
                 }),
                 html.Div(
-                    '均線分 + DMI分 = 小計；小計 < 5 時 DIF／MACD／KD 下彎各 −1，小計 > −5 時上彎各 +1'
+                    '均線分：三條均線都站上 +2、都未站上 −2；站上 MA5·10 未站上 MA20、或未站上 MA5 但站上 MA10·20，'
+                    '要 K、D 同步上升才 +1；僅站上 MA20 要 K、D 同步下降才 −1（KD 欄為 K、D 方向）。'
+                    '均線分 + DMI分 = 小計；小計 < 5 時 DIF／MACD 下彎各 −1，小計 > −5 時上彎各 +1'
                     '（箭頭為方向、數字為實際計分）；'
                     f'現貨 = 台灣50 + 中型100（市值前 {TOP_N} 檔模擬）中 5／10／20 日均線同時向上減同時向下的檔數'
                     f'（還原價），> +{BREADTH_THRESHOLD} 為 +1、< −{BREADTH_THRESHOLD} 為 −1。'
                     '選擇權 = 台指選擇權未平倉量 P/C（賣權 ÷ 買權；當月 = 最近未到期月契約、'
-                    f'遠月 = 其餘月契約合計，週契約不計）：當月 > {PCR_NEAR_LONG}% +1、< {PCR_NEAR_SHORT}% −1、'
-                    f'> {PCR_NEAR_STRONG}% 且 > 遠月再 +1；遠月 > {PCR_FAR_SHORT}% 且 > 當月 −1。'
+                    f'遠月 = 其餘月契約合計，週契約不計）：當月 > {PCR_NEAR_LONG}% 且 > 遠月 +1、< {PCR_NEAR_SHORT}% −1、'
+                    f'> {PCR_NEAR_STRONG}% 再 +1；遠月 > {PCR_FAR_SHORT}% 且 > 當月 −1。'
                     '+DI／−DI 與 P/C 以未四捨五入的原值計分，顯示值剛好等於門檻時以原值為準。',
                     style={'fontSize': '11px', 'color': COLOR['text_muted'], 'margin': '0 0 8px 8px'},
                 ),
@@ -393,14 +402,13 @@ def update_chart(market, period):
         name='分數',
         marker_color=bar_colors,
         showlegend=False,
-        customdata=comp[['ma_score', 'di_score', 'dif_score', 'macd_score', 'kd_score', 'breadth_score',
-                         'options_score']]
-                   .assign(breadth_diff=comp['breadth_diff'].map(
-                       lambda v: '—' if pd.isna(v) else _signed(v))).to_numpy(),
+        customdata=comp[['ma_score', 'di_score', 'dif_score', 'macd_score', 'breadth_score', 'options_score']]
+                   .assign(breadth_diff=comp['breadth_diff'].map(lambda v: '—' if pd.isna(v) else _signed(v)),
+                           kd=[_kd_cell(k, d) for k, d in zip(comp['k_dir'], comp['d_dir'])]).to_numpy(),
         hovertemplate=(
-            '總分 %{y}<br>均線 %{customdata[0]}｜DMI %{customdata[1]}｜'
-            'DIF %{customdata[2]}｜MACD %{customdata[3]}｜KD %{customdata[4]}｜'
-            '現貨 %{customdata[5]}（檔數差 %{customdata[7]}）｜選擇權 %{customdata[6]}<extra></extra>'
+            '總分 %{y}<br>均線 %{customdata[0]}（KD %{customdata[7]}）｜DMI %{customdata[1]}｜'
+            'DIF %{customdata[2]}｜MACD %{customdata[3]}｜'
+            '現貨 %{customdata[4]}（檔數差 %{customdata[6]}）｜選擇權 %{customdata[5]}<extra></extra>'
         ),
     ), row=2, col=1)
 
@@ -464,7 +472,7 @@ def update_chart(market, period):
     kpi_date    = kpi_card('訊號日（收盤資料）', last_date,
                            subtitle=f'供下一交易日操作參考｜資料更新：{updated}（{REFRESH_LABEL}）')
     kpi_score   = kpi_card('當前分數', _signed(last_score),
-                           subtitle='範圍 -12 ~ +12（均線 + DMI + MACD + KD + 現貨 + 選擇權）')
+                           subtitle='範圍 -11 ~ +11（均線（含 KD 確認）+ DMI + MACD + 現貨 + 選擇權）')
     kpi_signal  = kpi_card('訊號', f'{emoji} {sig_text}',
                            subtitle='> 0 做多 ｜ -1 ≤ 分數 ≤ 0 觀望 ｜ < -1 出場')
 

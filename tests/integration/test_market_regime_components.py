@@ -18,10 +18,14 @@ def test_compute_components_total_range_and_breadth_added_last():
     comp = compute_components(ohlc, 35, 21, 18, breadth_diff=breadth)
     base = compute_components(ohlc, 35, 21, 18)
 
-    assert comp['total'].between(-10, 10).all()
-    assert base['total'].between(-9, 9).all()
+    assert comp['total'].between(-9, 9).all()
+    assert base['total'].between(-8, 8).all()
+    # 均線分 ±1 需 KD 同向：均線分為 ±1 的日期 KD 方向必同號；KD 不同向或反向時均線分不會是 ±1
+    one_point = comp['ma_score'].abs() == 1
+    assert (comp.loc[one_point, 'kd_dir'] == comp.loc[one_point, 'ma_score']).all()
+    assert one_point.any()
     # 現貨分只加在最後：其餘欄位不受影響
-    for col in ('ma_score', 'di_score', 'subtotal', 'dif_score', 'macd_score', 'kd_score'):
+    for col in ('ma_score', 'di_score', 'subtotal', 'dif_score', 'macd_score', 'kd_dir'):
         pd.testing.assert_series_equal(comp[col], base[col])
     pd.testing.assert_series_equal(comp['total'], base['total'] + comp['breadth_score'],
                                    check_names=False)
@@ -53,7 +57,7 @@ def test_compute_components_aligns_pcr_to_ohlc_dates_and_adds_options_score():
     assert (comp['options_score'] == expected).all()
     assert comp['options_score'].abs().max() >= 1  # 隨機資料要真的觸發計分，否則下面的等式沒有意義
     # 選擇權分只加在最後：其餘欄位不變，總分 = 原總分 + 選擇權分
-    for col in ('ma_score', 'di_score', 'subtotal', 'dif_score', 'macd_score', 'kd_score', 'breadth_score'):
+    for col in ('ma_score', 'di_score', 'subtotal', 'dif_score', 'macd_score', 'kd_dir', 'breadth_score'):
         pd.testing.assert_series_equal(comp[col], base[col])
     pd.testing.assert_series_equal(comp['total'], base['total'] + comp['options_score'], check_names=False)
-    assert comp['total'].between(-12, 12).all()
+    assert comp['total'].between(-11, 11).all()
