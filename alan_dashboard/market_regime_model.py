@@ -5,16 +5,17 @@
 也讓 ``tests/unit`` 可以在沒有 finlab 的環境測試市值前 150 檔與現貨檔數差的邏輯
 （talib 只在 ``compute_components`` 內延遲 import）。
 
-分數組成（總分 −12 ~ +12）：
+分數組成（總分 −11 ~ +11）：
 
-- 均線分（−2 ~ +2）：收盤與 MA5／MA10／MA20 的相對位置
+- 均線分（−2 ~ +2）：收盤與 MA5／MA10／MA20 的相對位置；±1 的組合要 K、D 同步同向
+  （+1 要 K、D 都上升，−1 要 K、D 都下降）才計分，否則 0；±2 不看 KD
 - DMI 分（−4 ~ +4）：+DI 與 −DI 各依門檻計分
-- 動能微調（−3 ~ +3）：小計 < 5 時 DIF／MACD／KD 下彎各 −1；小計 > −5 時上彎各 +1
+- 動能微調（−2 ~ +2）：小計 < 5 時 DIF／MACD 下彎各 −1；小計 > −5 時上彎各 +1
 - 現貨分（−1 ~ +1）：台灣50 + 中型100（以市值前 150 檔模擬）中「三條均線同時向上」減
   「同時向下」的檔數差，> +25 為 +1、< −25 為 −1，直接加在最後，不影響動能微調的觸發條件
 - 選擇權分（−2 ~ +2）：台指選擇權未平倉量 Put/Call 比（賣權 ÷ 買權），分成當月（最近未到期月契約）
-  與遠月（其餘月契約合計，週契約不計）。當月 > 120% 為 +1、當月 < 90% 為 −1、
-  當月 > 140% 且 > 遠月再 +1、遠月 > 100% 且 > 當月再 −1；各條件可累加，同現貨分直接加在最後
+  與遠月（其餘月契約合計，週契約不計）。當月 > 120% 且 > 遠月為 +1、當月 < 90% 為 −1、
+  當月 > 140% 再 +1、遠月 > 100% 且 > 當月再 −1；各條件可累加，同現貨分直接加在最後
 
 MACD 與 KD 採 strategy_class 的台股自訂算法（taiwan_macd：加權收盤價 (H+L+2C)/4；
 taiwan_kd_fast：alpha = 1/3），與各策略一致；DMI 用 talib。
@@ -27,9 +28,9 @@ BREADTH_THRESHOLD = 25  # 檔數差門檻
 BREADTH_MIN_COVERAGE = 0.9  # 當日有收盤價的成分股比例低於此值視為資料未更新（容許少數停牌）
 MA_WINDOWS = (5, 10, 20)
 # 選擇權分門檻（未平倉 P/C，%）
-PCR_NEAR_LONG = 120    # 當月 > 此值 +1
+PCR_NEAR_LONG = 120    # 當月 > 此值且 > 遠月，+1
 PCR_NEAR_SHORT = 90    # 當月 < 此值 −1
-PCR_NEAR_STRONG = 140  # 當月 > 此值且 > 遠月，再 +1
+PCR_NEAR_STRONG = 140  # 當月 > 此值，再 +1
 PCR_FAR_SHORT = 100    # 遠月 > 此值且 > 當月，再 −1
 DIRECTION_TOL = 1e-9  # 上升／下降判斷的相對容忍值：浮點運算（rolling mean 滑動累加、EMA 遞迴）殘留 1e-13 等級誤差，
                       # 變動未超過 「值與基準值取較大者」× 1e-9 者視為持平（均線基準值為自身、DIF/DEA 為指數、K/D 為 100），
@@ -154,6 +155,26 @@ def _direction(series: pd.Series, scale=None) -> pd.Series:
     return (delta > tol).astype(int) - (delta < -tol).astype(int)
 
 
+def ma_score(a5: pd.Series, a10: pd.Series, a20: pd.Series, kd_dir: pd.Series) -> pd.Series:
+    """均線分（−2 ~ +2）：a5/a10/a20 為收盤是否站上 MA5/10/20（bool），kd_dir 為 K、D 同步方向（+1/−1/0）。
+
+    - 三條都站上：+2；三條都未站上：−2（不看 KD）
+    - 站上 MA5、MA10 未站上 MA20，或未站上 MA5 但站上 MA10、MA20：K、D 同步上升才 +1，否則 0
+    - 僅站上 MA20：K、D 同步下降才 −1，否則 0
+    - 其他組合：0
+
+    ±1 的組合要 KD 同向確認，是為了讓分數更穩定（KD 單獨計分時每天翻來翻去）。
+    """
+    kd_up, kd_down = kd_dir == 1, kd_dir == -1
+    return (
+        ( a5 &  a10 &  a20).astype(int) *  2
+      + ( a5 &  a10 & ~a20 & kd_up).astype(int) *  1
+      + (~a5 &  a10 &  a20 & kd_up).astype(int) *  1
+      + (~a5 & ~a10 &  a20 & kd_down).astype(int) * -1
+      + (~a5 & ~a10 & ~a20).astype(int) * -2
+    )
+
+
 def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: int,
                        breadth_diff: pd.Series | None = None,
                        pcr: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -161,8 +182,8 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
 
     ``pcr`` 為 ``txo_put_call_ratio`` 的輸出（near_pcr、far_pcr），無值的日期選擇權分為 0。
 
-    欄位：close, above_ma5/10/20, ma_score, plus_di, minus_di, di_score, subtotal,
-    dif_dir, dif_score, macd_dir, macd_score, k_dir, d_dir, kd_dir, kd_score,
+    欄位：close, above_ma5/10/20, k_dir, d_dir, kd_dir, ma_score, plus_di, minus_di, di_score, subtotal,
+    dif_dir, dif_score, macd_dir, macd_score,
     breadth_diff, breadth_score, pcr_near, pcr_far, options_score, total
     """
     from talib import abstract
@@ -195,21 +216,15 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
 
     above = {w: close > close.rolling(w).mean() for w in MA_WINDOWS}
     a5, a10, a20 = above[5], above[10], above[20]
-    ma_score = (
-        ( a5 &  a10 &  a20).astype(int) *  2
-      + ( a5 &  a10 & ~a20).astype(int) *  1
-      + (~a5 &  a10 &  a20).astype(int) *  1
-      + (~a5 & ~a10 &  a20).astype(int) * -1
-      + (~a5 & ~a10 & ~a20).astype(int) * -2
-    )
+    m_score = ma_score(a5, a10, a20, kd_dir)
 
-    subtotal = ma_score + di_score
+    subtotal = m_score + di_score
     lt5, gtn5 = subtotal < 5, subtotal > -5
 
     def _momentum(direction: pd.Series) -> pd.Series:
         return (gtn5 & (direction == 1)).astype(int) - (lt5 & (direction == -1)).astype(int)
 
-    dif_score, macd_score, kd_score = _momentum(dif_dir), _momentum(macd_dir), _momentum(kd_dir)
+    dif_score, macd_score = _momentum(dif_dir), _momentum(macd_dir)
 
     # 無成分股資料的日期（例如指數已更新、個股尚未更新）保留 NaN：現貨分為 0，明細表顯示「—」
     if breadth_diff is None:
@@ -225,16 +240,16 @@ def compute_components(ohlc: pd.DataFrame, dmi_hi: int, dmi_mid: int, dmi_lo: in
         near, far = pcr['near_pcr'].reindex(ohlc.index), pcr['far_pcr'].reindex(ohlc.index)
     o_score = options_score(near, far)
 
-    total = subtotal + dif_score + macd_score + kd_score + b_score + o_score
+    total = subtotal + dif_score + macd_score + b_score + o_score
 
     return pd.DataFrame({
         'close': close,
-        'above_ma5': a5, 'above_ma10': a10, 'above_ma20': a20, 'ma_score': ma_score,
+        'above_ma5': a5, 'above_ma10': a10, 'above_ma20': a20,
+        'k_dir': k_dir, 'd_dir': d_dir, 'kd_dir': kd_dir, 'ma_score': m_score,
         'plus_di': plus_di, 'minus_di': minus_di, 'di_score': di_score,
         'subtotal': subtotal,
         'dif_dir': dif_dir, 'dif_score': dif_score,
         'macd_dir': macd_dir, 'macd_score': macd_score,
-        'k_dir': k_dir, 'd_dir': d_dir, 'kd_dir': kd_dir, 'kd_score': kd_score,
         'breadth_diff': b_diff, 'breadth_score': b_score,
         'pcr_near': near, 'pcr_far': far, 'options_score': o_score,
         'total': total,
@@ -273,14 +288,14 @@ def txo_put_call_ratio(liquidity: pd.DataFrame) -> pd.DataFrame:
 def options_score(near_pcr: pd.Series, far_pcr: pd.Series) -> pd.Series:
     """選擇權分（−2 ~ +2）：四個條件各自成立即計分、可累加；P/C 無值的條件視為不成立。
 
-    - 當月 > 120%：+1
+    - 當月 > 120% 且當月 > 遠月：+1
     - 當月 < 90%：−1
-    - 當月 > 140% 且當月 > 遠月：+1
+    - 當月 > 140%：+1
     - 遠月 > 100% 且遠月 > 當月：−1
     """
     return (
-        (near_pcr > PCR_NEAR_LONG).astype(int)
+        ((near_pcr > PCR_NEAR_LONG) & (near_pcr > far_pcr)).astype(int)
         - (near_pcr < PCR_NEAR_SHORT).astype(int)
-        + ((near_pcr > PCR_NEAR_STRONG) & (near_pcr > far_pcr)).astype(int)
+        + (near_pcr > PCR_NEAR_STRONG).astype(int)
         - ((far_pcr > PCR_FAR_SHORT) & (far_pcr > near_pcr)).astype(int)
     )

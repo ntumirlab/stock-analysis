@@ -8,7 +8,7 @@ import pandas as pd
 
 from alan_dashboard.market_regime_model import (
     _direction,
-    breadth_score, listed_common_stocks, ma_direction_breadth, review_schedule, top_n_membership,
+    breadth_score, listed_common_stocks, ma_direction_breadth, ma_score, review_schedule, top_n_membership,
     options_score, txo_put_call_ratio,
 )
 
@@ -117,6 +117,17 @@ def test_direction_ignores_floating_point_noise():
     assert _direction(z, scale=100.0).tolist() == [0, 0, 0, 1]
 
 
+def test_ma_score_requires_kd_confirmation_for_one_point_cases():
+    # 站上均線組合：全站上、5·10、10·20、僅 20、全未站上、僅 5（其他組合）
+    a5  = pd.Series([True,  True,  False, False, False, True])
+    a10 = pd.Series([True,  True,  True,  False, False, False])
+    a20 = pd.Series([True,  False, True,  True,  False, False])
+    up, down, mixed = pd.Series([1] * 6), pd.Series([-1] * 6), pd.Series([0] * 6)
+    assert ma_score(a5, a10, a20, up).tolist() == [2, 1, 1, 0, -2, 0]      # KD 同步上升：+1 成立、−1 不成立
+    assert ma_score(a5, a10, a20, down).tolist() == [2, 0, 0, -1, -2, 0]   # KD 同步下降：−1 成立、+1 不成立
+    assert ma_score(a5, a10, a20, mixed).tolist() == [2, 0, 0, 0, -2, 0]   # K、D 不同向：±1 都不成立、±2 不看 KD
+
+
 def test_breadth_score_threshold():
     diff = pd.Series([26, 25, 0, -25, -26])
     assert breadth_score(diff).tolist() == [1, 0, 0, 0, -1]
@@ -158,9 +169,12 @@ def test_txo_put_call_ratio_splits_near_and_far_months_and_skips_weeklies():
 
 
 def test_options_score_rules_accumulate_and_ignore_missing():
-    near = pd.Series([125.0, 85.0, 150.0, 150.0, 95.0, 110.0, 100.0, np.nan, 130.0])
-    far  = pd.Series([100.0, 90.0, 120.0, 160.0, 110.0, 115.0, 100.0, 110.0, np.nan])
-    # 125>120 → +1；85<90 → −1；150>140 且 >120 → +2；150 但遠月 160>100 且 >當月 → +1−1 = 0；
+    near = pd.Series([125.0, 85.0, 150.0, 150.0, 125.0, 95.0, 110.0, 100.0, np.nan, 130.0, 145.0])
+    far  = pd.Series([100.0, 90.0, 120.0, 160.0, 130.0, 110.0, 115.0, 100.0, 110.0, np.nan, np.nan])
+    # 125>120 且 >遠月 → +1；85<90 → −1；150：>120 且 >遠月 +1、>140 +1 → +2；
+    # 150 但遠月 160：>120 條件因當月 < 遠月不成立、>140 +1、遠月 160>100 且 >當月 −1 → 0；
+    # 125 但遠月 130：>120 不成立、遠月 130>100 且 >當月 → −1；
     # 95：遠月 110>100 且 >當月 → −1；110：遠月 115>100 且 >當月 → −1；100/100 皆不成立 → 0；
-    # 當月無值：只有遠月條件且遠月 > NaN 不成立 → 0；遠月無值：當月 130 → +1
-    assert options_score(near, far).tolist() == [1, -1, 2, 0, -1, -1, 0, 0, 1]
+    # 當月無值：只有遠月條件且遠月 > NaN 不成立 → 0；
+    # 遠月無值：當月 130 的 >120 條件需 >遠月、與 NaN 比較不成立 → 0；當月 145 的 >140 條件不看遠月 → +1
+    assert options_score(near, far).tolist() == [1, -1, 2, 0, -1, -1, -1, 0, 0, 0, 1]
