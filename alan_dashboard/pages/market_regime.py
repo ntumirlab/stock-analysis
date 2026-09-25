@@ -154,8 +154,8 @@ def _arrow(direction: int, score: int) -> str:
 
 
 def _kd_cell(k_dir: int, d_dir: int) -> str:
-    """KD 欄：K、D 同向時只顯示一個箭頭（均線分 ±1 的確認條件）；不同向時分別列出 K、D 方向。"""
-    if k_dir == d_dir and k_dir != 0:
+    """KD 欄：K、D 同向（含同時持平）時只顯示一個符號（均線分 ±1 的確認條件）；不同向時分別列出 K、D 方向。"""
+    if k_dir == d_dir:
         return _DIR_SYMBOL[int(k_dir)]
     return f'K{_DIR_SYMBOL[int(k_dir)]} D{_DIR_SYMBOL[int(d_dir)]}'
 
