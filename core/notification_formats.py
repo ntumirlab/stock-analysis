@@ -114,3 +114,19 @@ def format_no_new_recommendations(task_name: str) -> str:
         f"週日晚間應有新清單（weekly 與 monthly 均每週更新）—— "
         f"請確認上游已上傳、drive_fetcher 是否正常。"
     )
+
+
+def format_login_retry_notice(failures: List[Exception]) -> str:
+    """券商登入重試後才成功的警告內文（登入成功、job 照常執行，僅提示券商端不穩）。
+
+    錯誤訊息可能含 token / 身分證字號，送出前由 utils.notifier 統一遮罩，這裡不處理。
+    """
+    lines = [
+        f"第 {i} 次: {type(exc).__name__}: {str(exc)[:200]}"
+        for i, exc in enumerate(failures, start=1)
+    ]
+    return (
+        f"券商登入失敗 {len(failures)} 次後重試成功，本次 job 照常執行。\n"
+        f"若頻繁出現，可能是券商伺服器不穩。\n"
+        "```\n" + "\n".join(lines) + "\n```"
+    )
