@@ -3,6 +3,7 @@
 from core.notification_formats import (
     format_fetch_failures,
     format_fetch_success,
+    format_login_retry_notice,
     format_missing_list_sunday,
     format_no_new_recommendations,
     format_order_summary,
@@ -108,3 +109,18 @@ def test_universe_missing_content():
     assert "2 檔" in body
     assert "6669、2383" in body
     assert "無法買進" in body
+
+
+def test_login_retry_notice_lists_each_failure():
+    body = format_login_retry_notice([TimeoutError("topic timed out"), ConnectionError("reset")])
+    assert "失敗 2 次後重試成功" in body
+    assert "第 1 次: TimeoutError: topic timed out" in body
+    assert "第 2 次: ConnectionError: reset" in body
+    # 錯誤訊息放在 code block：traceback 常含 _ 與 *，legacy Markdown 會誤配對
+    assert body.count("```") == 2
+
+
+def test_login_retry_notice_truncates_long_errors():
+    body = format_login_retry_notice([TimeoutError("x" * 1000)])
+    assert "x" * 200 in body
+    assert "x" * 201 not in body

@@ -17,10 +17,41 @@ try:
     from finlab.online.fugle_account import FugleAccount
 except ImportError:
     FugleAccount = None
+from core.notification_formats import format_login_retry_notice
+from core.retry import call_with_retry
 from utils.config_loader import ConfigLoader
 from utils.finlab_auth import login_finlab as finlab_login
+from utils.notifier import create_notification_manager
 
 logger = logging.getLogger(__name__)
+
+# shioaji 登入失敗後的等待秒數（共 4 次嘗試）。等待合計 100 秒，加上每次嘗試
+# 本身的逾時，08:10 下單最壞數分鐘內放棄，不影響 09:00 開盤。
+# 不分錯誤類型一律重試：無法事先確定永豐端異常會丟哪種例外；帳密/憑證錯誤
+# 的代價只是晚約 2 分鐘才報錯
+SHIOAJI_LOGIN_RETRY_DELAYS = (10, 30, 60)
+
+
+def _new_sinopac_account():
+    """建立 SinopacAccount；初始化中途失敗時先登出已建立的 session 再拋出。
+
+    SinopacAccount.__init__ 在 api.login() 之後還會 activate_ca 等，中途失敗
+    時物件不會回傳給呼叫端，session 就沒人登出。先 __new__ 拿到物件，才能在
+    失敗時取得 account.api 收尾，避免重試累積佔用 shioaji 連線數。
+    """
+    account = SinopacAccount.__new__(SinopacAccount)
+    try:
+        account.__init__()
+    except Exception:
+        api = getattr(account, "api", None)
+        if api is not None:
+            try:
+                api.logout()
+            except Exception as logout_error:
+                logger.warning(f"登入失敗後登出 shioaji session 也失敗（忽略）: {logout_error!r}")
+        raise
+    return account
+
 
 class Authenticator:
     def __init__(self, config_loader: ConfigLoader | None = None):
@@ -98,9 +129,30 @@ class Authenticator:
                 f"and that the file is present inside the container at /app/config/credentials/."
             )
 
-        account = SinopacAccount()
+        account, failures = call_with_retry(
+            _new_sinopac_account,
+            SHIOAJI_LOGIN_RETRY_DELAYS,
+            label="Shioaji login",
+            logger=logger,
+        )
         logger.info("Successfully logged into Shioaji")
+        if failures:
+            self._notify_login_retried("shioaji", failures)
         return account
+
+    def _notify_login_retried(self, broker_name: str, failures):
+        """重試後才登入成功時發 TG 警告；通知失敗不得影響已成功的登入。"""
+        try:
+            notifier = create_notification_manager(
+                self.config_loader.config.get("notification", {}), logger
+            )
+            notifier.send_warning(
+                task_name="券商登入",
+                body=format_login_retry_notice(failures),
+                broker_name=broker_name,
+            )
+        except Exception as e:
+            logger.warning(f"登入重試警告通知發送失敗（忽略）: {e!r}")
 
     def login_broker(self, broker_name: str):
         broker_name = broker_name.lower()

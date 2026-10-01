@@ -10,9 +10,53 @@ Date: 2025-11-01
 """
 
 import logging
+import os
+import re
 from datetime import datetime
 from typing import Optional, Dict, Any
 from zoneinfo import ZoneInfo
+
+
+# ---- 送出前遮罩敏感資訊 ----
+# 錯誤訊息與 traceback 會原樣進 TG 群組（2026-10-01 的 shioaji 逾時把 JWT 與
+# 身分證字號整段貼出）。兩層：格式固定的直接比對；其餘密鑰從環境變數取值比對。
+# 只作用於 TG 訊息，log 檔維持完整內容以便除錯。
+
+# 身分證／居留證：英文字母 + (1|2|8|9|A-D) + 8 位數字。保留頭尾辨識是哪個帳戶
+_PERSON_ID_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z])[1289A-D]\d{6}(\d{2})(?![0-9])")
+# JWT：三段 base64url，header 一律以 eyJ（'{"' 的編碼）開頭
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
+
+# 變數名稱含這些字即視為敏感。比對名稱片段而非完整名稱：同一個值在不同部署
+# 可能叫 SHIOAJI_API_KEY 或 KIRI_SHIOAJI_API_KEY。TELEGRAM_CHAT_ID 刻意不遮
+_SECRET_NAME_PARTS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "SESSION", "PERSON_ID", "ACCOUNT")
+# 路徑類變數（如 GOOGLE_TOKEN_PATH）的值不是秘密，遮了反而妨礙除錯
+_NON_SECRET_NAME_SUFFIXES = ("_PATH", "_DIR")
+# 太短的值會把訊息中不相干的同字串一起換掉（如值為 "1"、"true"）
+_MIN_SECRET_LENGTH = 8
+_REDACTED = "<redacted>"
+
+
+def _secret_env_values() -> list:
+    values = set()
+    for name, value in os.environ.items():
+        upper = name.upper()
+        if upper.endswith(_NON_SECRET_NAME_SUFFIXES):
+            continue
+        if any(part in upper for part in _SECRET_NAME_PARTS) and len(value) >= _MIN_SECRET_LENGTH:
+            values.add(value)
+    # 長的先換，避免某值是另一值的子字串時只遮掉一半
+    return sorted(values, key=len, reverse=True)
+
+
+def redact(text: str) -> str:
+    """遮罩 TG 訊息中的 token、身分證字號與環境變數中的密鑰。"""
+    for value in _secret_env_values():
+        text = text.replace(value, _REDACTED)
+    text = _JWT_RE.sub("<token>", text)
+    # 遮罩字元用 #：* 和 _ 在 legacy Markdown 會與訊息其他符號配對
+    text = _PERSON_ID_RE.sub(r"\1#######\2", text)
+    return text
 
 
 class TelegramNotifier:
@@ -48,7 +92,8 @@ class TelegramNotifier:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             data = {
                 "chat_id": self.chat_id,
-                "text": message,
+                # 在唯一的送出點遮罩，所有等級與所有 job 的通知都一併涵蓋
+                "text": redact(message),
                 "parse_mode": parse_mode
             }
 
