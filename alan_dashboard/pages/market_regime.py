@@ -45,6 +45,10 @@ _PERIOD_DAYS = {
     '6M': 180, '1Y': 365,
 }
 _DEFAULT_PERIOD = '2M'
+# 訊號門檻（可在頁面上以滑桿調整，只影響顯示，不會保存）：[出場門檻, 做多門檻]
+# 分數 > 做多門檻 → 做多；分數 < 出場門檻 → 出場；兩者之間（含）→ 觀望。預設即 S4：> 0 做多、−1 ~ 0 觀望、< −1 出場
+_DEFAULT_THRESHOLDS = (-1, 0)
+_THRESHOLD_RANGE = (-6, 6)
 # 現貨檔數差只需要顯示範圍（最長 1Y）加 MA20 暖身；個股還原價先截到這段再算 rolling，省時間與記憶體。
 # 成分股模擬仍用全歷史市值（緩衝規則有路徑依賴，截短會改變名單）。
 _BREADTH_HISTORY_DAYS = max(_PERIOD_DAYS.values()) + 60
@@ -112,13 +116,31 @@ _page_cache.refresh()  # 啟動時計算一次（失敗即讓 worker 啟動失�
 
 # ── Layout helpers ─────────────────────────────────────────────────────────────
 
-def _signal_badge(score_val: int) -> tuple[str, str, str]:
-    """回傳 (emoji, 文字, badge color)。燈號依台灣慣例：紅 = 做多、綠 = 出場，與 K 線、分數柱同色。"""
-    if score_val > 0:
+def _signal_badge(score_val: int, exit_below: int, long_above: int) -> tuple[str, str, str]:
+    """回傳 (emoji, 文字, badge color)。燈號依台灣慣例：紅 = 做多、綠 = 出場，與 K 線、分數柱同色。
+
+    分數 > long_above 做多、< exit_below 出場，其餘觀望。
+    """
+    if score_val > long_above:
         return '🔴', '做多', 'danger'
-    if score_val < -1:
+    if score_val < exit_below:
         return '🟢', '出場', 'success'
     return '⚪', '觀望', 'secondary'
+
+
+def _threshold_text(exit_below: int, long_above: int) -> str:
+    """門檻說明文字，如「> 0 做多 ｜ -1 ≤ 分數 ≤ 0 觀望 ｜ < -1 出場」；觀望區間只有一格時寫「= 0 觀望」。"""
+    neutral = f'= {long_above} 觀望' if exit_below == long_above else f'{exit_below} ≤ 分數 ≤ {long_above} 觀望'
+    return f'> {long_above} 做多 ｜ {neutral} ｜ < {exit_below} 出場'
+
+
+def _switch_count(scores: pd.Series, exit_below: int, long_above: int) -> int:
+    """期間內做多／出場互換的次數（觀望維持前一狀態，不算切換；期間第一個狀態不算）。"""
+    state = pd.Series(float('nan'), index=scores.index)
+    state[scores > long_above] = 1.0
+    state[scores < exit_below] = -1.0
+    state = state.ffill().dropna()
+    return int((state.diff().fillna(0) != 0).sum())
 
 
 def _signed(v) -> str:
@@ -164,12 +186,12 @@ def _pct_or_none(v) -> float | None:
     return None if pd.isna(v) else float(v)
 
 
-def _detail_rows(comp: pd.DataFrame) -> list[dict]:
+def _detail_rows(comp: pd.DataFrame, exit_below: int, long_above: int) -> list[dict]:
     """明細表資料（最新日在前）；數值欄保留數值，顯示格式交給 DataTable 的 Format。"""
     rows = []
     for d, r in comp[::-1].iterrows():
         above = [str(w) for w, col in ((5, 'above_ma5'), (10, 'above_ma10'), (20, 'above_ma20')) if r[col]]
-        emoji, sig_text, _ = _signal_badge(int(r['total']))
+        emoji, sig_text, _ = _signal_badge(int(r['total']), exit_below, long_above)
         rows.append({
             'date': d.strftime('%Y-%m-%d'),
             'close': float(r['close']),
@@ -192,7 +214,7 @@ def _detail_rows(comp: pd.DataFrame) -> list[dict]:
     return rows
 
 
-def _detail_table(comp: pd.DataFrame) -> dash_table.DataTable:
+def _detail_table(comp: pd.DataFrame, exit_below: int, long_above: int) -> dash_table.DataTable:
     colored = []
     for col in _SIGNED_NUMERIC:
         colored += [
@@ -226,7 +248,7 @@ def _detail_table(comp: pd.DataFrame) -> dash_table.DataTable:
             col['format'] = _FMT_PCT
         columns.append(col)
     return dash_table.DataTable(
-        data=_detail_rows(comp),
+        data=_detail_rows(comp, exit_below, long_above),
         columns=columns,
         sort_action='native',
         page_size=20,
@@ -278,6 +300,30 @@ layout = html.Div([
                         inline=True,
                     ),
                     width='auto', className='d-flex align-items-center',
+                ),
+                # 窄螢幕時門檻群組自成一列、內容可換行，滑桿縮到可用寬度，避免控制列橫向溢出
+                dbc.Col(
+                    html.Div([
+                        html.Span('訊號門檻', style={
+                            'fontSize': '13px', 'color': COLOR['text_muted'], 'whiteSpace': 'nowrap',
+                        }),
+                        html.Div(
+                            dcc.RangeSlider(
+                                id='mr-threshold-slider',
+                                min=_THRESHOLD_RANGE[0], max=_THRESHOLD_RANGE[1], step=1,
+                                value=list(_DEFAULT_THRESHOLDS),
+                                marks={v: str(v) for v in range(_THRESHOLD_RANGE[0], _THRESHOLD_RANGE[1] + 1)},
+                                tooltip={'placement': 'bottom', 'always_visible': False},
+                                allowCross=False,
+                                updatemode='drag',
+                            ),
+                            style={'width': '360px', 'maxWidth': '100%', 'flex': '1 1 240px'},
+                        ),
+                        html.Span(id='mr-threshold-text', style={
+                            'fontSize': '12px', 'color': COLOR['text_secondary'],
+                        }),
+                    ], className='d-flex flex-wrap align-items-center gap-2'),
+                    xs=12, lg='auto', className='d-flex align-items-center',
                 ),
             ], className='g-2 align-items-center'),
         ], fluid=True),
@@ -345,11 +391,14 @@ layout = html.Div([
     Output('mr-kpi-date', 'children'),
     Output('mr-kpi-score', 'children'),
     Output('mr-kpi-signal', 'children'),
+    Output('mr-threshold-text', 'children'),
     Input('mr-market-dropdown', 'value'),
     Input('mr-period-selector', 'value'),
+    Input('mr-threshold-slider', 'value'),
 )
-def update_chart(market, period):
-    """依 period 截切日期，繪製雙行圖表並產生明細表。"""
+def update_chart(market, period, thresholds):
+    """依 period 截切日期，繪製雙行圖表並產生明細表；訊號門檻由滑桿決定（只影響顯示）。"""
+    exit_below, long_above = (int(v) for v in (thresholds or _DEFAULT_THRESHOLDS))
     cache = _page_cache.data  # 取快照：整個 callback 只讀這一份，不受背景重算影響
     cached = cache['markets'][market]
     updated = cache['updated']
@@ -365,8 +414,8 @@ def update_chart(market, period):
 
     # Bar colors
     bar_colors = [
-        _SCORE_COLOR['score_long']    if s > 0
-        else _SCORE_COLOR['score_short']   if s < -1
+        _SCORE_COLOR['score_long']    if s > long_above
+        else _SCORE_COLOR['score_short']   if s < exit_below
         else _SCORE_COLOR['score_neutral']
         for s in scores
     ]
@@ -377,7 +426,7 @@ def update_chart(market, period):
         shared_xaxes=True,
         vertical_spacing=0.03,
         row_heights=[0.65, 0.35],
-        subplot_titles=('TAIEX 指數', '均線條件式 S4 分數'),
+        subplot_titles=('TAIEX 指數', '分數（紅 = 做多、綠 = 出場、灰 = 觀望）'),
     )
 
     # Row 1: Candlestick
@@ -412,11 +461,11 @@ def update_chart(market, period):
         ),
     ), row=2, col=1)
 
-    # Reference lines (y=0, y=-1)
-    for y_val, dash_style, label in [
-        (0,  'dash',  '0'),
-        (-1, 'dot',   '-1'),
-    ]:
+    # Reference lines：做多門檻（虛線）與出場門檻（點線）；兩者相同時只畫一條
+    ref_lines = [(long_above, 'dash', str(long_above))]
+    if exit_below != long_above:
+        ref_lines.append((exit_below, 'dot', str(exit_below)))
+    for y_val, dash_style, label in ref_lines:
         fig.add_hline(
             y=y_val, row=2, col=1,
             line_dash=dash_style,
@@ -466,14 +515,15 @@ def update_chart(market, period):
 
     # ── KPI cards ──────────────────────────────────────────────────────────
     last_score = int(scores.iloc[-1]) if len(scores) > 0 else 0
-    emoji, sig_text, _ = _signal_badge(last_score)
+    emoji, sig_text, _ = _signal_badge(last_score, exit_below, long_above)
+    threshold_text = _threshold_text(exit_below, long_above)
 
     last_date = dates[-1].strftime('%Y-%m-%d') if len(dates) > 0 else '—'
     kpi_date    = kpi_card('訊號日（收盤資料）', last_date,
                            subtitle=f'供下一交易日操作參考｜資料更新：{updated}（{REFRESH_LABEL}）')
     kpi_score   = kpi_card('當前分數', _signed(last_score),
                            subtitle='範圍 -11 ~ +11（均線（含 KD 確認）+ DMI + MACD + 現貨 + 選擇權）')
-    kpi_signal  = kpi_card('訊號', f'{emoji} {sig_text}',
-                           subtitle='> 0 做多 ｜ -1 ≤ 分數 ≤ 0 觀望 ｜ < -1 出場')
+    kpi_signal  = kpi_card('訊號', f'{emoji} {sig_text}', subtitle=threshold_text)
+    switch_text = f'{threshold_text} ｜ 期間內多空切換 {_switch_count(scores, exit_below, long_above)} 次'
 
-    return fig, _detail_table(comp), kpi_date, kpi_score, kpi_signal
+    return fig, _detail_table(comp, exit_below, long_above), kpi_date, kpi_score, kpi_signal, switch_text
