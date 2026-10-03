@@ -301,6 +301,7 @@ layout = html.Div([
                     ),
                     width='auto', className='d-flex align-items-center',
                 ),
+                # 窄螢幕時門檻群組自成一列、內容可換行，滑桿縮到可用寬度，避免控制列橫向溢出
                 dbc.Col(
                     html.Div([
                         html.Span('訊號門檻', style={
@@ -316,13 +317,13 @@ layout = html.Div([
                                 allowCross=False,
                                 updatemode='drag',
                             ),
-                            style={'width': '360px'},
+                            style={'width': '360px', 'maxWidth': '100%', 'flex': '1 1 240px'},
                         ),
                         html.Span(id='mr-threshold-text', style={
-                            'fontSize': '12px', 'color': COLOR['text_secondary'], 'whiteSpace': 'nowrap',
+                            'fontSize': '12px', 'color': COLOR['text_secondary'],
                         }),
-                    ], className='d-flex align-items-center gap-2'),
-                    className='d-flex align-items-center',
+                    ], className='d-flex flex-wrap align-items-center gap-2'),
+                    xs=12, lg='auto', className='d-flex align-items-center',
                 ),
             ], className='g-2 align-items-center'),
         ], fluid=True),
