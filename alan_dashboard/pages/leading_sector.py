@@ -181,8 +181,11 @@ def compute_screen(inputs: dict) -> dict:
 
     # 條件 1：收盤價 >= 480 天新高 * 92%（新高取「盤中最高價」而非收盤新高；還原價；與領先潛力族群策略一致）
     high_480 = adj_high.rolling(_NEW_HIGH_DAYS).max()
+    # 比較用「收盤 ≥ 最高價 × 門檻」，與策略（alan_tw_strategy_base）的乘法寫法相同；
+    # 若改成「收盤 ÷ 最高價 ≥ 門檻」，剛好落在門檻上的價格會因浮點誤差（如 20.70/22.50 = 0.91999…）
+    # 被誤判為不符，兩邊結果不一致。high_ratio 僅供表格與 hover 顯示
+    cond1 = adj_close >= high_480 * _NEW_HIGH_PCT
     high_ratio = adj_close / high_480
-    cond1 = high_ratio >= _NEW_HIGH_PCT
 
     # 條件 2 / 3：營益率增 + 買超排行（營益率為季頻，與日頻條件以 FinlabDataFrame 自動對齊）
     fund12 = operating_margin > (operating_margin.shift(1) * _COND2['op_growth'])
