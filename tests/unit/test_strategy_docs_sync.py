@@ -27,10 +27,8 @@ STRATEGIES = [
     ('alan_tw_strategy_ace_simple.md', 'alan_tw_strategy_ace_simple.py', 'AlanTWStrategyACESimple'),
     ('alan_tw_strategy_efg_not_start.md', 'alan_tw_strategy_efg_not_start.py',
      'AlanTWStrategyEFGNotStart'),
-    ('alan_tw_strategy_leading_ae90_simple.md', 'alan_tw_strategy_leading_ae90_simple.py',
-     'AlanTWStrategyLeadingAE90Simple'),
-    ('alan_tw_strategy_leading_ae95_simple.md', 'alan_tw_strategy_leading_ae95_simple.py',
-     'AlanTWStrategyLeadingAE95Simple'),
+    ('alan_tw_strategy_leading_ae_simple.md', 'alan_tw_strategy_leading_ae_simple.py',
+     'AlanTWStrategyLeadingAESimple'),
 ]
 
 # 類別名 → 檔名（跨檔繼承時解析 configs / 屬性用）
@@ -40,8 +38,7 @@ CLASS_FILES = {
     'AlanTWStrategyEFG95Full': 'alan_tw_strategy_efg95_full.py',
     'AlanTWStrategyACESimple': 'alan_tw_strategy_ace_simple.py',
     'AlanTWStrategyEFGNotStart': 'alan_tw_strategy_efg_not_start.py',
-    'AlanTWStrategyLeadingAE90Simple': 'alan_tw_strategy_leading_ae90_simple.py',
-    'AlanTWStrategyLeadingAE95Simple': 'alan_tw_strategy_leading_ae95_simple.py',
+    'AlanTWStrategyLeadingAESimple': 'alan_tw_strategy_leading_ae_simple.py',
 }
 
 # 基底類別的預設值（供子類未覆寫時回退）
@@ -286,16 +283,19 @@ def test_combo_doc_matches_code(combo_cls, expected_sell, md_file, py_file):
     assert not missing, f'{md_file} 與程式碼不符：\n  - ' + '\n  - '.join(missing)
 
 
-@pytest.mark.parametrize('py_file,cls_name,expected_pct', [
-    ('alan_tw_strategy_leading_ae90_simple.py', 'AlanTWStrategyLeadingAE90Simple', 0.90),
-    ('alan_tw_strategy_leading_ae95_simple.py', 'AlanTWStrategyLeadingAE95Simple', 0.95),
-])
-def test_leading_ae_new_high_threshold(py_file, cls_name, expected_pct):
-    """AE 90%／95% 只差 new_high_pct；95% 版繼承 configs，需確認覆寫後解析到的門檻正確，
-    且兩個子策略都以盤中最高價為基準"""
-    configs, attrs = _collect(py_file, cls_name)
-    assert attrs['new_high_pct'] == expected_pct
+def test_leading_ae_new_high_threshold():
+    """領先潛力族群策略的創新高門檻 92% 須與儀表板（leading_sector.py 的 _NEW_HIGH_PCT）一致，
+    且兩個子策略都以 480 日盤中最高價為基準"""
+    configs, attrs = _collect('alan_tw_strategy_leading_ae_simple.py', 'AlanTWStrategyLeadingAESimple')
+    assert attrs['new_high_pct'] == 0.92
     for cfg in configs:
-        assert cfg['new_high_pct'] == expected_pct, f"{cls_name} 子策略{cfg['name']} 的 new_high_pct"
+        assert cfg['new_high_pct'] == 0.92, f"子策略{cfg['name']} 的 new_high_pct"
         assert cfg['new_high_days'] == 480
         assert cfg.get('new_high_source') == 'high'
+
+    dashboard = _read(os.path.join(_ROOT, 'alan_dashboard', 'pages', 'leading_sector.py'))
+    m = re.search(r'^_NEW_HIGH_PCT = (0\.\d+)$', dashboard, re.M)
+    assert m, '儀表板找不到 _NEW_HIGH_PCT'
+    assert float(m.group(1)) == attrs['new_high_pct'], '儀表板與策略的創新高門檻不一致'
+    m = re.search(r'^_NEW_HIGH_DAYS = (\d+)$', dashboard, re.M)
+    assert m and int(m.group(1)) == 480
