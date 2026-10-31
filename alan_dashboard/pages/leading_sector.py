@@ -5,7 +5,7 @@
 並提供 date picker 瀏覽歷史分布。
 
 篩選條件（1、4、5、6 為 AND；2 與 3 之間為 OR）：
-    1. 收盤價 >= 480 天新高 * 90%（新高取盤中最高價，非收盤新高）
+    1. 收盤價 >= 480 天新高 * 92%（新高取盤中最高價，非收盤新高）
     2. 營益率增 12%  + 買超排行前 40 檔
     3. 營益率增 0.1% + 買超排行前 20 檔
     4. 60 日均線乖離 < 28%
@@ -56,7 +56,7 @@ _PALETTE = [
 
 # 條件參數
 _NEW_HIGH_DAYS = 480
-_NEW_HIGH_PCT = 0.90
+_NEW_HIGH_PCT = 0.92
 _BIAS60_MAX = 0.28
 _BIAS120_MAX = 0.45
 _LOW_RATIO_DAYS = 15
@@ -90,7 +90,7 @@ _DATASETS = {
 }
 
 _CONDITION_NOTE = (
-    '條件：收盤 ≥ 480日高×90%｜（營益率增12%+買超前40 或 營益率增0.1%+買超前20）'
+    '條件：收盤 ≥ 480日高×92%｜（營益率增12%+買超前40 或 營益率增0.1%+買超前20）'
     '｜60日乖離 < 28%｜120日乖離 < 45%｜收盤 ≤ 15日低×132%（還原價）'
 )
 
@@ -179,7 +179,7 @@ def compute_screen(inputs: dict) -> dict:
     adj_high = adj_high.loc[compute_start:]
     adj_low = adj_low.loc[compute_start:]
 
-    # 條件 1：收盤價 >= 480 天新高 * 90%（新高取「盤中最高價」而非收盤新高；還原價）
+    # 條件 1：收盤價 >= 480 天新高 * 92%（新高取「盤中最高價」而非收盤新高；還原價；與領先潛力族群策略一致）
     high_480 = adj_high.rolling(_NEW_HIGH_DAYS).max()
     high_ratio = adj_close / high_480
     cond1 = high_ratio >= _NEW_HIGH_PCT
