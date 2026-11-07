@@ -29,9 +29,20 @@ class InventoryDAO:
                 FOREIGN KEY (account_id) REFERENCES account(account_id)
             );
         """)
+        # 每次抓取都記一筆（含 0 筆持股）。inventory_history 只存持股列，
+        # 清倉後不會再有新列，光看它會以為最新快照還停在清倉前那天
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inventory_fetch_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER,
+                fetch_timestamp TEXT,
+                item_count INTEGER,
+                FOREIGN KEY (account_id) REFERENCES account(account_id)
+            );
+        """)
         conn.commit()
         conn.close()
-    
+
     def insert_inventory_data(self, account_id, inventory_data, fetch_timestamp=None):
         """
         將庫存資料寫入 inventory_history 表。
@@ -77,6 +88,11 @@ class InventoryDAO:
                 raw_data_json
             ))
         
+        cursor.execute("""
+            INSERT INTO inventory_fetch_log (account_id, fetch_timestamp, item_count)
+            VALUES (?, ?, ?)
+        """, (account_id, batch_ts_str, len(inventory_data)))
+
         conn.commit()
         conn.close()
         logger.info(f"Inserted {len(inventory_data)} inventory_history records for account_id {account_id}")
@@ -88,14 +104,21 @@ class InventoryDAO:
         未實現損益本質上是「現在」的狀態，沒有區間可言；查詢端若直接用今天，
         會在 20:30 抓取前撲空，故一律以實際存在的最新快照為準。
 
+        以抓取紀錄為準（清倉後的 0 筆抓取也算）；舊資料沒有抓取紀錄，
+        所以和持股列的日期取較新者。
+
         Returns:
             datetime.date | None: 無資料時回 None
         """
         conn = sqlite3.connect(self.db_path, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT MAX(date(fetch_timestamp)) FROM inventory_history WHERE account_id = ?
-        """, (account_id,))
+            SELECT MAX(d) FROM (
+                SELECT MAX(date(fetch_timestamp)) AS d FROM inventory_fetch_log WHERE account_id = ?
+                UNION ALL
+                SELECT MAX(date(fetch_timestamp)) AS d FROM inventory_history WHERE account_id = ?
+            )
+        """, (account_id, account_id))
         row = cursor.fetchone()
         conn.close()
 
