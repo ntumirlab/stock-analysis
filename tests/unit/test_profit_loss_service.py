@@ -168,6 +168,20 @@ def test_duplicate_snapshot_same_day_counted_once(service, daos):
     assert summary["unrealized"]["pnl"] == -300.0
 
 
+def test_unrealized_empty_after_selling_everything(service, daos):
+    # 回歸鎖（2026-11-06）：清倉後每天抓到 0 筆、不寫任何持股列，最新日期
+    # 曾一直停在清倉前那天，損益分頁持續顯示已賣掉的 3 檔
+    _, inventory_dao = daos
+    inventory_dao.insert_inventory_data(
+        1, [_holding()], fetch_timestamp=datetime.datetime(2026, 7, 30, 20, 30)
+    )
+    inventory_dao.insert_inventory_data(
+        1, [], fetch_timestamp=datetime.datetime(2026, 7, 31, 20, 30)
+    )
+
+    assert service.get_unrealized_records(1) == []
+
+
 def test_account_without_any_snapshot_returns_empty_not_crash(service):
     # 回歸鎖：帳戶完全沒有庫存快照時，取最新日期會得到 None。防呆若只做在
     # get_summary，損益分頁的表格 callback 會 AttributeError 整頁掛掉
